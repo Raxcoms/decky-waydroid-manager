@@ -75,6 +75,7 @@ async function addToSteam(shortcut: Shortcut) {
     throw new Error("Steam did not create the shortcut");
   }
   apps.SetShortcutName?.(appId, shortcut.name);
+  apps.SetShortcutLaunchOptions?.(appId, shortcut.launchOptions);
   if (shortcut.icon) {
     apps.SetShortcutIcon?.(appId, shortcut.icon);
   }
