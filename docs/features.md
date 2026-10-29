@@ -3,7 +3,7 @@
 ## Image management
 
 - Initializes the official GAPPS Waydroid image with `waydroid init --system_type GAPPS`.
-- Shows whether Waydroid is initialized, whether its container service is running, and the highest physical panel mode detected from DRM.
+- Shows whether Waydroid is installed, whether its container service is running, and the detected display resolution adjusted for the active Game Mode rotation.
 - Removes `/var/lib/waydroid`, user Waydroid data, generated Waydroid desktop entries and Steam shortcuts, and disables the container service only after confirmation.
 
 ## Lifecycle controls

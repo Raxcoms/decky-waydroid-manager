@@ -100,17 +100,17 @@ function AppRow({ app, refresh, setMessage }: { app: AndroidApp; refresh: () => 
   return (
     <PanelSectionRow>
       <ButtonItem layout="below" onClick={openMenu}>
-        <div style={{ display: "flex", alignItems: "center", gap: "12px", minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", width: "100%", minWidth: 0, minHeight: "32px", padding: "0 4px" }}>
           {app.icon ? (
-            <img src={app.icon} alt="" style={{ width: "36px", height: "36px", borderRadius: "8px", objectFit: "cover", flex: "0 0 auto" }} />
+            <img src={app.icon} alt="" style={{ width: "28px", height: "28px", borderRadius: "6px", objectFit: "cover", flex: "0 0 auto" }} />
           ) : (
-            <div style={{ width: "36px", height: "36px", borderRadius: "8px", display: "grid", placeItems: "center", background: "rgba(255, 255, 255, 0.1)", flex: "0 0 auto" }}>
+            <div style={{ width: "28px", height: "28px", borderRadius: "6px", display: "grid", placeItems: "center", background: "rgba(255, 255, 255, 0.1)", flex: "0 0 auto" }}>
               {app.name.slice(0, 1).toUpperCase()}
             </div>
           )}
-          <div style={{ minWidth: 0 }}>
-            <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{app.name}</div>
-            <div style={{ opacity: 0.65, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{app.package}</div>
+          <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+            <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", lineHeight: "20px" }}>{app.name}</div>
+            <div style={{ opacity: 0.65, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", lineHeight: "16px" }}>{app.package}</div>
           </div>
         </div>
       </ButtonItem>
@@ -139,7 +139,7 @@ function Content() {
     <div>
       <PanelSection title="Waydroid">
         <PanelSectionRow>
-          <Field label={status?.initialized ? "GAPPS image installed" : "Waydroid is not installed"} description={`Detected panel mode: ${resolution}. Nested Gamescope inherits Steam's current target size.`} />
+          <Field label={status?.initialized ? "Waydroid is installed" : "Waydroid is not installed"} description={`Detected display: ${resolution}`} />
         </PanelSectionRow>
         {status && !status.gamescopeInstalled && (
           <PanelSectionRow>
@@ -164,32 +164,9 @@ function Content() {
             <PanelSectionRow>
               <ButtonItem layout="below" onClick={run(() => getWaydroidShortcut().then(addToSteam), refresh, setMessage)}>Add Waydroid to Steam</ButtonItem>
             </PanelSectionRow>
-            <PanelSectionRow>
-              <ToggleField
-                label="Keep service warm"
-                description="Start the Waydroid container on boot for faster launches."
-                checked={status.autoStart}
-                onChange={(enabled) => run(() => setAutoStart(enabled), refresh, setMessage)()}
-              />
-            </PanelSectionRow>
           </>
         )}
       </PanelSection>
-
-      {status?.initialized && (
-        <PanelSection title="Service">
-          <PanelSectionRow>
-            <Field label={status.serviceRunning ? "Running" : "Stopped"} />
-          </PanelSectionRow>
-          <PanelSectionRow>
-            <Focusable style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
-              <DialogButton style={{ flex: "1 1 max-content", maxWidth: "100%" }} onClick={run(startService, refresh, setMessage)}>Start</DialogButton>
-              <DialogButton style={{ flex: "1 1 max-content", maxWidth: "100%" }} onClick={run(restartService, refresh, setMessage)}>Restart</DialogButton>
-              <DialogButton style={{ flex: "1 1 max-content", maxWidth: "100%" }} onClick={run(stopService, refresh, setMessage)}>Stop</DialogButton>
-            </Focusable>
-          </PanelSectionRow>
-        </PanelSection>
-      )}
 
       {status?.initialized && (
         <PanelSection title={`Android apps (${apps.length})`}>
@@ -200,6 +177,24 @@ function Content() {
 
       {status?.initialized && (
         <PanelSection title="Danger zone">
+          <PanelSectionRow>
+            <ToggleField
+              label="Keep service warm"
+              description="Start the Waydroid container on boot for faster launches."
+              checked={status.autoStart}
+              onChange={(enabled) => run(() => setAutoStart(enabled), refresh, setMessage)()}
+            />
+          </PanelSectionRow>
+          <PanelSectionRow>
+            <Field label={`Service: ${status.serviceRunning ? "Running" : "Stopped"}`} />
+          </PanelSectionRow>
+          <PanelSectionRow>
+            <Focusable style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+              <DialogButton style={{ flex: "1 1 max-content", maxWidth: "100%" }} onClick={run(startService, refresh, setMessage)}>Start</DialogButton>
+              <DialogButton style={{ flex: "1 1 max-content", maxWidth: "100%" }} onClick={run(restartService, refresh, setMessage)}>Restart</DialogButton>
+              <DialogButton style={{ flex: "1 1 max-content", maxWidth: "100%" }} onClick={run(stopService, refresh, setMessage)}>Stop</DialogButton>
+            </Focusable>
+          </PanelSectionRow>
           <PanelSectionRow>
             <ButtonItem
               layout="below"

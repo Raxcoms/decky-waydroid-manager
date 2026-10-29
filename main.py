@@ -71,6 +71,8 @@ class Plugin:
         if not resolutions:
             return None
         width, height = max(resolutions, key=lambda mode: mode[0] * mode[1])
+        if self._gamescope_orientation() in {"left", "right"}:
+            width, height = height, width
         return {"width": width, "height": height}
 
     def _launcher(self) -> Path:
@@ -78,6 +80,26 @@ class Plugin:
         if not path.is_file():
             raise RuntimeError("The bundled Waydroid launcher is missing")
         return path
+
+    def _steam_gamescope_processes(self) -> dict[str, list[bytes]]:
+        processes: dict[str, list[bytes]] = {}
+        for process in Path("/proc").glob("[0-9]*"):
+            try:
+                arguments = (process / "cmdline").read_bytes().split(b"\0")
+                if b"--steam" in arguments and any(b"gamescope" in argument for argument in arguments):
+                    processes[process.name] = arguments
+            except OSError:
+                continue
+        return processes
+
+    def _gamescope_orientation(self) -> str:
+        for arguments in self._steam_gamescope_processes().values():
+            for index, argument in enumerate(arguments):
+                if argument == b"--force-orientation" and index + 1 < len(arguments):
+                    return arguments[index + 1].decode("ascii", errors="ignore")
+                if argument.startswith(b"--force-orientation="):
+                    return argument.partition(b"=")[2].decode("ascii", errors="ignore")
+        return ""
 
     def _gamescope_socket(self, uid: int) -> str:
         runtime_dir = Path(f"/run/user/{uid}")
@@ -88,15 +110,6 @@ class Plugin:
         if len(sockets) == 1:
             return sockets[0].name
 
-        steam_pids = set()
-        for process in Path("/proc").glob("[0-9]*"):
-            try:
-                arguments = (process / "cmdline").read_bytes().split(b"\0")
-                if b"--steam" in arguments and any(b"gamescope" in argument for argument in arguments):
-                    steam_pids.add(process.name)
-            except OSError:
-                continue
-
         sockets_by_pid: dict[str, str] = {}
         result = subprocess.run(["ss", "-xlpn"], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False)
         for line in result.stdout.splitlines():
@@ -106,7 +119,7 @@ class Plugin:
             for pid in re.findall(r"pid=(\d+)", line):
                 sockets_by_pid[pid] = match.group(1)
 
-        matching_sockets = {sockets_by_pid[pid] for pid in steam_pids if pid in sockets_by_pid}
+        matching_sockets = {sockets_by_pid[pid] for pid in self._steam_gamescope_processes() if pid in sockets_by_pid}
         if len(matching_sockets) == 1:
             return matching_sockets.pop()
         raise RuntimeError("Could not identify the active Game Mode Gamescope socket")
