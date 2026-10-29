@@ -1,6 +1,7 @@
 {
   "name": "decky-waydroid-manager",
   "version": "0.1.0",
+  "type": "module",
   "packageManager": "pnpm@9.15.0",
   "description": "Decky plugin for managing Waydroid on ArmadaOS",
   "license": "MIT",
