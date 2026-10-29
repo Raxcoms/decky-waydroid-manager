@@ -26,7 +26,7 @@ type AndroidApp = { name: string; package: string; icon: string };
 
 function AndroidRobotIcon() {
   return (
-    <svg viewBox="0 0 24 24" aria-label="Android robot">
+    <svg width="1em" height="1em" viewBox="0 0 24 24" aria-label="Android robot">
       <path fill="#3DDC84" d="M7 8.2 5.4 5.5l.9-.5L8 7.7a8.3 8.3 0 0 1 8 0L17.7 5l.9.5L17 8.2c1.2 1 2 2.5 2 4.2H5c0-1.7.8-3.2 2-4.2ZM9 10.5a.7.7 0 1 0 0-1.4.7.7 0 0 0 0 1.4Zm6 0a.7.7 0 1 0 0-1.4.7.7 0 0 0 0 1.4ZM5.5 13.4h13v5.1c0 .8-.7 1.5-1.5 1.5h-1v2.5h-1.6V20H9.6v2.5H8V20H7c-.8 0-1.5-.7-1.5-1.5v-5.1ZM3 13.8h1.5v5.4H3c-.6 0-1-.4-1-1v-3.4c0-.6.4-1 1-1Zm18 0h-1.5v5.4H21c.6 0 1-.4 1-1v-3.4c0-.6-.4-1-1-1Z" />
     </svg>
   );
