@@ -4,7 +4,6 @@ import os
 import pwd
 import re
 import shutil
-import stat
 import struct
 import subprocess
 import tempfile
@@ -101,28 +100,31 @@ class Plugin:
                     return argument.partition(b"=")[2].decode("ascii", errors="ignore")
         return ""
 
-    def _gamescope_socket(self, uid: int) -> str:
-        runtime_dir = Path(f"/run/user/{uid}")
-        sockets = [
-            path for path in runtime_dir.glob("gamescope-*")
-            if re.fullmatch(r"gamescope-\d+", path.name) and stat.S_ISSOCK(path.stat().st_mode)
-        ]
-        if len(sockets) == 1:
-            return sockets[0].name
+    def _steam_graphics_environment(self, uid: int) -> dict[str, str]:
+        candidates: list[tuple[bool, dict[str, str]]] = []
+        for process in Path("/proc").glob("[0-9]*"):
+            try:
+                if process.stat().st_uid != uid:
+                    continue
+                arguments = (process / "cmdline").read_bytes().split(b"\0")
+                names = {argument.rsplit(b"/", 1)[-1] for argument in arguments}
+                if not names.intersection({b"steam", b"steamwebhelper"}):
+                    continue
 
-        sockets_by_pid: dict[str, str] = {}
-        result = subprocess.run(["ss", "-xlpn"], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False)
-        for line in result.stdout.splitlines():
-            match = re.search(rf"{re.escape(str(runtime_dir))}/(gamescope-\d+)", line)
-            if not match:
+                environment = {}
+                for value in (process / "environ").read_bytes().split(b"\0"):
+                    key, separator, content = value.partition(b"=")
+                    if separator and key in {b"DISPLAY", b"XAUTHORITY"}:
+                        environment[key.decode()] = content.decode(errors="ignore")
+                if "DISPLAY" in environment:
+                    candidates.append((b"steam" in names, environment))
+            except OSError:
                 continue
-            for pid in re.findall(r"pid=(\d+)", line):
-                sockets_by_pid[pid] = match.group(1)
 
-        matching_sockets = {sockets_by_pid[pid] for pid in self._steam_gamescope_processes() if pid in sockets_by_pid}
-        if len(matching_sockets) == 1:
-            return matching_sockets.pop()
-        raise RuntimeError("Could not identify the active Game Mode Gamescope socket")
+        if candidates:
+            candidates.sort(key=lambda candidate: not candidate[0])
+            return candidates[0][1]
+        raise RuntimeError("Could not identify Steam's active Game Mode display")
 
     def _icon_data_uri(self, value: str, home: Path) -> str:
         try:
@@ -142,19 +144,23 @@ class Plugin:
             raise RuntimeError("Gamescope is unavailable in this ArmadaOS deployment. Update or repair the deployment before launching Waydroid.")
         self._run(["systemctl", "start", SERVICE])
         user, uid, home = self._user()
-        socket = self._gamescope_socket(uid)
+        graphics_environment = self._steam_graphics_environment(uid)
         log_path = home / ".local/state/waydroid-manager/launcher.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
         os.chown(log_path.parent, uid, pwd.getpwnam(user).pw_gid)
         log_path.touch(exist_ok=True)
         os.chown(log_path, uid, pwd.getpwnam(user).pw_gid)
-        command = [
-            "runuser", "-u", user, "--", "env",
+        environment = [
             f"HOME={home}",
             f"XDG_RUNTIME_DIR=/run/user/{uid}",
             f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus",
-            f"WAYLAND_DISPLAY={socket}",
-            f"GAMESCOPE_WAYLAND_DISPLAY={socket}",
+            f"DISPLAY={graphics_environment['DISPLAY']}",
+        ]
+        if graphics_environment.get("XAUTHORITY"):
+            environment.append(f"XAUTHORITY={graphics_environment['XAUTHORITY']}")
+        command = [
+            "runuser", "-u", user, "--", "env",
+            *environment,
             str(self._launcher()), mode,
         ]
         if package:
