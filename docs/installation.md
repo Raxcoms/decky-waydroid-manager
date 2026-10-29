@@ -8,7 +8,7 @@
 
 ## Install the plugin
 
-1. Download the `waydroid-manager.zip` artifact from a GitHub Actions build.
+1. Download the `waydroid-manager` artifact from a GitHub Actions build. Its ZIP contains the plugin directory directly, with no nested ZIP.
 2. In Game Mode, open Decky Loader settings and install the ZIP.
 3. Open **Waydroid Manager** from the Decky quick-access menu.
 4. Select **Install Waydroid with GAPPS**. The plugin runs `waydroid init --system_type GAPPS`, so Waydroid selects the official image for the running architecture rather than a device-name mapping.

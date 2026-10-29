@@ -30,8 +30,7 @@ jobs:
           cp bin/waydroid-launcher package/waydroid-manager/bin/
           cp -r dist/. package/waydroid-manager/dist/
           chmod +x package/waydroid-manager/bin/waydroid-launcher
-          cd package && zip -r ../waydroid-manager.zip waydroid-manager
       - uses: actions/upload-artifact@v4
         with:
           name: waydroid-manager
-          path: waydroid-manager.zip
+          path: package/waydroid-manager

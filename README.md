@@ -25,4 +25,4 @@ pnpm run check
 pnpm run build
 ```
 
-The build produces `dist/index.js`. GitHub Actions packages the installable plugin as `waydroid-manager.zip`.
+The build produces `dist/index.js`. GitHub Actions uploads the installable `waydroid-manager` plugin directory directly as its artifact.
