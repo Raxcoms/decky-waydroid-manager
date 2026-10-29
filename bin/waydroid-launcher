@@ -29,8 +29,8 @@ export WAYDROID_MANAGER_PACKAGE="$package"
 export WAYDROID_MANAGER_LOG_DIR="$log_dir"
 unset WAYLAND_DISPLAY GAMESCOPE_WAYLAND_DISPLAY
 
-# Auto chooses the active Steam Xwayland display after Wayland variables are cleared.
-exec gamescope --expose-wayland --fullscreen --force-windows-fullscreen -- bash -c '
+# SDL uses Steam's active Xwayland display after Wayland variables are cleared.
+exec gamescope --backend sdl --expose-wayland --fullscreen --force-windows-fullscreen -- bash -c '
   set -euo pipefail
   export WAYLAND_DISPLAY="${GAMESCOPE_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:-}}"
   if [ -z "$WAYLAND_DISPLAY" ]; then

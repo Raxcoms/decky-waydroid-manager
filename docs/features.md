@@ -18,4 +18,4 @@ Waydroid generates one desktop entry for each installed Android application, as 
 
 ## Game Mode rendering
 
-The bundled launcher starts a nested Gamescope window on Steam's current Xwayland display and creates a fresh Wayland socket for every launch. It points the Waydroid session at that socket before opening Android or a selected application. This separates the Android session from Steam's compositor while inheriting the active Game Mode target size.
+The bundled launcher starts Gamescope's SDL backend on Steam's current Xwayland display and creates a fresh Wayland socket for every launch. It points the Waydroid session at that socket before opening Android or a selected application. This separates the Android session from Steam's compositor while inheriting the active Game Mode target size.
