@@ -171,5 +171,5 @@ export default definePlugin(() => ({
   name: "Waydroid Manager",
   titleView: <div className={staticClasses.Title}>Waydroid Manager</div>,
   content: <Content />,
-  icon: <FaAndroid />,
+  icon: <FaAndroid color="#3DDC84" />,
 }));
