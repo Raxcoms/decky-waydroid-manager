@@ -4,7 +4,7 @@ set -euo pipefail
 mode="${1:-full}"
 package="${2:-}"
 runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-parent_socket="${GAMESCOPE_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:-wayland-0}}"
+parent_socket="${GAMESCOPE_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:-}}"
 log_dir="${XDG_STATE_HOME:-$HOME/.local/state}/waydroid-manager"
 mkdir -p "$log_dir"
 
@@ -13,8 +13,14 @@ if ! command -v gamescope >/dev/null; then
   exit 1
 fi
 
+if [[ -z "$parent_socket" || ! -S "$runtime_dir/$parent_socket" ]]; then
+  echo "Waydroid Manager needs the active Game Mode Gamescope socket." >&2
+  exit 1
+fi
+
 if ! systemctl is-active --quiet waydroid-container.service; then
-  pkexec systemctl start waydroid-container.service
+  echo "Waydroid is stopped. Enable Keep service warm in Waydroid Manager before launching from Steam." >&2
+  exit 1
 fi
 
 export XDG_RUNTIME_DIR="$runtime_dir"
@@ -26,7 +32,17 @@ export WAYDROID_MANAGER_LOG_DIR="$log_dir"
 exec gamescope --backend wayland --expose-wayland --fullscreen --force-windows-fullscreen -- bash -c '
   set -euo pipefail
   waydroid session stop >/dev/null 2>&1 || true
-  waydroid session start >"$WAYDROID_MANAGER_LOG_DIR/session.log" 2>&1 &
+  waydroid session start >>"$WAYDROID_MANAGER_LOG_DIR/session.log" 2>&1 &
+  for _ in {1..30}; do
+    if waydroid status 2>/dev/null | grep -q "^Session:[[:space:]]*RUNNING"; then
+      break
+    fi
+    sleep 1
+  done
+  if ! waydroid status 2>/dev/null | grep -q "^Session:[[:space:]]*RUNNING"; then
+    echo "Waydroid session did not start. See $WAYDROID_MANAGER_LOG_DIR/session.log" >&2
+    exit 1
+  fi
   if [ "$WAYDROID_MANAGER_MODE" = "app" ]; then
     exec waydroid app launch "$WAYDROID_MANAGER_PACKAGE"
   fi

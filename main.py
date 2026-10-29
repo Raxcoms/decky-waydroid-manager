@@ -1,13 +1,13 @@
-import asyncio
+import base64
 import configparser
 import os
 import pwd
 import re
 import shutil
+import stat
 import struct
 import subprocess
 import tempfile
-import zlib
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +17,7 @@ import decky
 PACKAGE_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 WAYDROID_DIR = Path("/var/lib/waydroid")
 SERVICE = "waydroid-container.service"
+MAX_ICON_BYTES = 2 * 1024 * 1024
 
 
 class Plugin:
@@ -78,6 +79,31 @@ class Plugin:
             raise RuntimeError("The bundled Waydroid launcher is missing")
         return path
 
+    def _gamescope_socket(self, uid: int) -> str:
+        runtime_dir = Path(f"/run/user/{uid}")
+        primary = runtime_dir / "gamescope-0"
+        if primary.exists() and stat.S_ISSOCK(primary.stat().st_mode):
+            return primary.name
+
+        sockets = [
+            path for path in runtime_dir.glob("gamescope-*")
+            if re.fullmatch(r"gamescope-\d+", path.name) and stat.S_ISSOCK(path.stat().st_mode)
+        ]
+        if len(sockets) == 1:
+            return sockets[0].name
+        raise RuntimeError("Could not find the Game Mode Gamescope socket")
+
+    def _icon_data_uri(self, value: str, home: Path) -> str:
+        try:
+            icon = Path(value).resolve(strict=True)
+            icon.relative_to(home / ".local/share/waydroid/data/icons")
+        except (OSError, ValueError):
+            return ""
+
+        if icon.suffix.lower() != ".png" or icon.stat().st_size > MAX_ICON_BYTES:
+            return ""
+        return "data:image/png;base64," + base64.b64encode(icon.read_bytes()).decode("ascii")
+
     def _start_launcher(self, mode: str, package: str | None = None) -> None:
         if not self._initialized():
             raise RuntimeError("Install the GAPPS image before starting Waydroid")
@@ -85,10 +111,25 @@ class Plugin:
             raise RuntimeError("Gamescope is unavailable in this ArmadaOS deployment. Update or repair the deployment before launching Waydroid.")
         self._run(["systemctl", "start", SERVICE])
         user, uid, home = self._user()
-        command = ["runuser", "-u", user, "--", "env", f"HOME={home}", f"XDG_RUNTIME_DIR=/run/user/{uid}", str(self._launcher()), mode]
+        socket = self._gamescope_socket(uid)
+        log_path = home / ".local/state/waydroid-manager/launcher.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        os.chown(log_path.parent, uid, pwd.getpwnam(user).pw_gid)
+        log_path.touch(exist_ok=True)
+        os.chown(log_path, uid, pwd.getpwnam(user).pw_gid)
+        command = [
+            "runuser", "-u", user, "--", "env",
+            f"HOME={home}",
+            f"XDG_RUNTIME_DIR=/run/user/{uid}",
+            f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus",
+            f"WAYLAND_DISPLAY={socket}",
+            f"GAMESCOPE_WAYLAND_DISPLAY={socket}",
+            str(self._launcher()), mode,
+        ]
         if package:
             command.append(package)
-        subprocess.Popen(command, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        with log_path.open("a", encoding="utf-8") as log:
+            subprocess.Popen(command, start_new_session=True, stdout=log, stderr=subprocess.STDOUT)
 
     def _desktop_entries(self) -> list[dict[str, str]]:
         _, _, home = self._user()
@@ -104,10 +145,12 @@ class Plugin:
                 data = parser["Desktop Entry"]
                 if data.get("Exec") != f"waydroid app launch {package}":
                     continue
+                icon_path = data.get("Icon", "")
                 apps.append({
                     "name": data.get("Name", package),
                     "package": package,
-                    "icon": data.get("Icon", ""),
+                    "icon": self._icon_data_uri(icon_path, home),
+                    "iconPath": icon_path,
                 })
             except (OSError, KeyError, configparser.Error):
                 continue
@@ -187,42 +230,6 @@ class Plugin:
             temporary_path = Path(temporary.name)
         temporary_path.replace(path)
 
-    def _shortcut(self, name: str, package: str | None = None) -> bool:
-        user, _, home = self._user()
-        path = self._shortcuts_path(home)
-        shortcuts = self._load_shortcuts(path)
-        launcher = str(self._launcher())
-        options = "full" if package is None else f"app {package}"
-        executable = f'"{launcher}"'
-        for _, (_, item) in shortcuts.items():
-            if item.get("exe", (1, ""))[1] == executable and item.get("LaunchOptions", (1, ""))[1] == options:
-                return False
-        indexes = [int(key) for key in shortcuts if key.isdigit()]
-        index = str(max(indexes, default=-1) + 1)
-        app_id = zlib.crc32((executable + options).encode("utf-8")) | 0x80000000
-        if app_id >= 0x80000000:
-            app_id -= 0x100000000
-        shortcuts[index] = (0, {
-            "appid": (2, app_id),
-            "appname": (1, name),
-            "exe": (1, executable),
-            "StartDir": (1, f'"{home}"'),
-            "icon": (1, ""),
-            "ShortcutPath": (1, ""),
-            "LaunchOptions": (1, options),
-            "IsHidden": (2, 0),
-            "AllowDesktopConfig": (2, 1),
-            "AllowOverlay": (2, 1),
-            "OpenVR": (2, 0),
-            "Devkit": (2, 0),
-            "DevkitGameID": (1, ""),
-            "LastPlayTime": (2, 0),
-            "tags": (0, {"0": (1, "Waydroid")}),
-        })
-        self._save_shortcuts(path, shortcuts)
-        os.chown(path, pwd.getpwnam(user).pw_uid, pwd.getpwnam(user).pw_gid)
-        return True
-
     def _remove_shortcuts(self, home: Path) -> None:
         try:
             path = self._shortcuts_path(home)
@@ -250,6 +257,27 @@ class Plugin:
     async def list_apps(self) -> list[dict[str, str]]:
         return self._desktop_entries() if self._initialized() else []
 
+    def _shortcut_details(self, name: str, package: str | None = None, icon: str = "") -> dict[str, str]:
+        _, _, home = self._user()
+        return {
+            "name": name,
+            "exe": str(self._launcher()),
+            "startDir": str(home),
+            "launchOptions": "full" if package is None else f"app {package}",
+            "icon": icon,
+        }
+
+    async def get_waydroid_shortcut(self) -> dict[str, str]:
+        return self._shortcut_details("Waydroid")
+
+    async def get_app_shortcut(self, package: str) -> dict[str, str]:
+        if not PACKAGE_RE.fullmatch(package):
+            raise RuntimeError("Invalid Android package name")
+        app = next((item for item in self._desktop_entries() if item["package"] == package), None)
+        if not app:
+            raise RuntimeError("Android app is no longer installed")
+        return self._shortcut_details(app["name"], package, app["iconPath"])
+
     async def install_gapps(self) -> None:
         if self._initialized():
             raise RuntimeError("Waydroid is already initialized. Remove it before installing a new image.")
@@ -274,14 +302,6 @@ class Plugin:
         if not PACKAGE_RE.fullmatch(package):
             raise RuntimeError("Invalid Android package name")
         self._start_launcher("app", package)
-
-    async def add_waydroid_shortcut(self) -> bool:
-        return self._shortcut("Waydroid")
-
-    async def add_app_shortcut(self, package: str, name: str) -> bool:
-        if not PACKAGE_RE.fullmatch(package):
-            raise RuntimeError("Invalid Android package name")
-        return self._shortcut(name, package)
 
     async def remove_waydroid(self) -> None:
         user, _, home = self._user()

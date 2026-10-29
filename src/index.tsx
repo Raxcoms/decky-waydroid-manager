@@ -25,7 +25,8 @@ type Status = {
   resolution: Resolution;
 };
 
-type AndroidApp = { name: string; package: string; icon: string };
+type AndroidApp = { name: string; package: string; icon: string; iconPath: string };
+type Shortcut = { name: string; exe: string; startDir: string; launchOptions: string; icon: string };
 
 function AndroidRobotIcon() {
   return (
@@ -47,16 +48,33 @@ const stopService = callable<[], void>("stop_service");
 const restartService = callable<[], void>("restart_service");
 const launchWaydroid = callable<[], void>("launch_waydroid");
 const launchApp = callable<[string], void>("launch_app");
-const addWaydroidShortcut = callable<[], boolean>("add_waydroid_shortcut");
-const addAppShortcut = callable<[string, string], boolean>("add_app_shortcut");
+const getWaydroidShortcut = callable<[], Shortcut>("get_waydroid_shortcut");
+const getAppShortcut = callable<[string], Shortcut>("get_app_shortcut");
 const removeWaydroid = callable<[], void>("remove_waydroid");
 
-function run(action: () => Promise<unknown>, refresh: () => Promise<void>, setMessage: (message: string) => void) {
+function addToSteam(shortcut: Shortcut) {
+  const apps = window.SteamClient?.Apps;
+  if (!apps?.AddShortcut) {
+    throw new Error("Steam shortcut API is unavailable");
+  }
+
+  return apps.AddShortcut(shortcut.name, shortcut.exe, shortcut.startDir, shortcut.launchOptions).then((appId) => {
+    if (!appId) {
+      throw new Error("Steam did not create the shortcut");
+    }
+    apps.SetShortcutName?.(appId, shortcut.name);
+    if (shortcut.icon) {
+      apps.SetShortcutIcon?.(appId, shortcut.icon);
+    }
+  });
+}
+
+function run(action: () => Promise<unknown>, refresh: () => Promise<void>, setMessage: (message: string | null) => void) {
   return async () => {
     try {
       await action();
-      setMessage("Done");
       await refresh();
+      setMessage(null);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     }
@@ -69,19 +87,33 @@ function confirm(title: string, description: string, onConfirm: () => Promise<vo
   );
 }
 
-function AppRow({ app, refresh, setMessage }: { app: AndroidApp; refresh: () => Promise<void>; setMessage: (message: string) => void }) {
+function AppRow({ app, refresh, setMessage }: { app: AndroidApp; refresh: () => Promise<void>; setMessage: (message: string | null) => void }) {
   const openMenu = () => {
     showContextMenu(
       <Menu label={app.name}>
         <MenuItem onSelected={run(() => launchApp(app.package), refresh, setMessage)}>Launch</MenuItem>
-        <MenuItem onSelected={run(() => addAppShortcut(app.package, app.name), refresh, setMessage)}>Add to Steam</MenuItem>
+        <MenuItem onSelected={run(() => getAppShortcut(app.package).then(addToSteam), refresh, setMessage)}>Add to Steam</MenuItem>
       </Menu>,
     );
   };
 
   return (
     <PanelSectionRow>
-      <ButtonItem layout="below" label={app.name} description={app.package} onClick={openMenu} />
+      <ButtonItem layout="below" onClick={openMenu}>
+        <div style={{ display: "flex", alignItems: "center", gap: "12px", minWidth: 0 }}>
+          {app.icon ? (
+            <img src={app.icon} alt="" style={{ width: "36px", height: "36px", borderRadius: "8px", objectFit: "cover", flex: "0 0 auto" }} />
+          ) : (
+            <div style={{ width: "36px", height: "36px", borderRadius: "8px", display: "grid", placeItems: "center", background: "rgba(255, 255, 255, 0.1)", flex: "0 0 auto" }}>
+              {app.name.slice(0, 1).toUpperCase()}
+            </div>
+          )}
+          <div style={{ minWidth: 0 }}>
+            <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{app.name}</div>
+            <div style={{ opacity: 0.65, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{app.package}</div>
+          </div>
+        </div>
+      </ButtonItem>
     </PanelSectionRow>
   );
 }
@@ -89,7 +121,7 @@ function AppRow({ app, refresh, setMessage }: { app: AndroidApp; refresh: () => 
 function Content() {
   const [status, setStatus] = useState<Status | null>(null);
   const [apps, setApps] = useState<AndroidApp[]>([]);
-  const [message, setMessage] = useState("Loading status...");
+  const [message, setMessage] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     const nextStatus = await getStatus();
@@ -130,7 +162,7 @@ function Content() {
               <ButtonItem layout="below" onClick={run(launchWaydroid, refresh, setMessage)}>Launch Waydroid</ButtonItem>
             </PanelSectionRow>
             <PanelSectionRow>
-              <ButtonItem layout="below" onClick={run(addWaydroidShortcut, refresh, setMessage)}>Add Waydroid to Steam</ButtonItem>
+              <ButtonItem layout="below" onClick={run(() => getWaydroidShortcut().then(addToSteam), refresh, setMessage)}>Add Waydroid to Steam</ButtonItem>
             </PanelSectionRow>
             <PanelSectionRow>
               <ToggleField
@@ -150,10 +182,10 @@ function Content() {
             <Field label={status.serviceRunning ? "Running" : "Stopped"} />
           </PanelSectionRow>
           <PanelSectionRow>
-            <Focusable style={{ display: "flex", gap: "8px" }}>
-              <DialogButton onClick={run(startService, refresh, setMessage)}>Start</DialogButton>
-              <DialogButton onClick={run(restartService, refresh, setMessage)}>Restart</DialogButton>
-              <DialogButton onClick={run(stopService, refresh, setMessage)}>Stop</DialogButton>
+            <Focusable style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+              <DialogButton style={{ flex: "1 1 max-content", maxWidth: "100%" }} onClick={run(startService, refresh, setMessage)}>Start</DialogButton>
+              <DialogButton style={{ flex: "1 1 max-content", maxWidth: "100%" }} onClick={run(restartService, refresh, setMessage)}>Restart</DialogButton>
+              <DialogButton style={{ flex: "1 1 max-content", maxWidth: "100%" }} onClick={run(stopService, refresh, setMessage)}>Stop</DialogButton>
             </Focusable>
           </PanelSectionRow>
         </PanelSection>
@@ -179,7 +211,7 @@ function Content() {
         </PanelSection>
       )}
 
-      <div className={staticClasses.PanelSectionRow} style={{ padding: "8px 16px", opacity: 0.8 }}>{message}</div>
+      {message && <div className={staticClasses.PanelSectionRow} style={{ padding: "8px 16px", opacity: 0.8 }}>{message}</div>}
     </div>
   );
 }

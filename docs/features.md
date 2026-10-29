@@ -14,7 +14,7 @@
 
 ## Android application library
 
-Waydroid generates one desktop entry for each installed Android application, as KDE exposes in its application menu. The plugin reads those `waydroid.<package>.desktop` files and only accepts entries whose main command is `waydroid app launch <package>`. Selecting an app opens Decky's native action menu, where it can be launched or added to Steam individually.
+Waydroid generates one desktop entry for each installed Android application, as KDE exposes in its application menu. The plugin reads those `waydroid.<package>.desktop` files and only accepts entries whose main command is `waydroid app launch <package>`. It displays the icon from the same desktop-entry path used by KDE. Selecting an app opens Decky's native action menu, where it can be launched or added to Steam individually.
 
 ## Game Mode rendering
 
