@@ -34,10 +34,12 @@ class Plugin:
         return result.stdout.strip()
 
     def _user(self) -> tuple[str, int, Path]:
-        home = Path(getattr(decky, "DECKY_USER_HOME", ""))
-        if home.is_dir():
-            account = pwd.getpwuid(home.stat().st_uid)
-            return account.pw_name, account.pw_uid, home
+        user_home = getattr(decky, "DECKY_USER_HOME", None)
+        if user_home:
+            home = Path(user_home)
+            if home.is_dir():
+                account = pwd.getpwuid(home.stat().st_uid)
+                return account.pw_name, account.pw_uid, home
 
         for account in pwd.getpwall():
             if account.pw_uid >= 1000 and Path(account.pw_dir).is_dir():

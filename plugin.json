@@ -1,7 +1,7 @@
 {
   "name": "Waydroid Manager",
   "author": "Raxcoms",
-  "flags": ["_root"],
+  "flags": ["root"],
   "api_version": 1,
   "publish": {
     "tags": ["waydroid", "armadaos", "android"],
