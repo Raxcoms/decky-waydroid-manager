@@ -81,17 +81,35 @@ class Plugin:
 
     def _gamescope_socket(self, uid: int) -> str:
         runtime_dir = Path(f"/run/user/{uid}")
-        primary = runtime_dir / "gamescope-0"
-        if primary.exists() and stat.S_ISSOCK(primary.stat().st_mode):
-            return primary.name
-
         sockets = [
             path for path in runtime_dir.glob("gamescope-*")
             if re.fullmatch(r"gamescope-\d+", path.name) and stat.S_ISSOCK(path.stat().st_mode)
         ]
         if len(sockets) == 1:
             return sockets[0].name
-        raise RuntimeError("Could not find the Game Mode Gamescope socket")
+
+        steam_pids = set()
+        for process in Path("/proc").glob("[0-9]*"):
+            try:
+                arguments = (process / "cmdline").read_bytes().split(b"\0")
+                if b"--steam" in arguments and any(b"gamescope" in argument for argument in arguments):
+                    steam_pids.add(process.name)
+            except OSError:
+                continue
+
+        sockets_by_pid: dict[str, str] = {}
+        result = subprocess.run(["ss", "-xlpn"], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False)
+        for line in result.stdout.splitlines():
+            match = re.search(rf"{re.escape(str(runtime_dir))}/(gamescope-\d+)", line)
+            if not match:
+                continue
+            for pid in re.findall(r"pid=(\d+)", line):
+                sockets_by_pid[pid] = match.group(1)
+
+        matching_sockets = {sockets_by_pid[pid] for pid in steam_pids if pid in sockets_by_pid}
+        if len(matching_sockets) == 1:
+            return matching_sockets.pop()
+        raise RuntimeError("Could not identify the active Game Mode Gamescope socket")
 
     def _icon_data_uri(self, value: str, home: Path) -> str:
         try:
