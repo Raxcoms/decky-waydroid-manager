@@ -1,0 +1,11 @@
+{
+  "name": "Waydroid Manager",
+  "author": "Raxcoms",
+  "flags": ["_root"],
+  "api_version": 1,
+  "publish": {
+    "tags": ["waydroid", "armadaos", "android"],
+    "description": "Install and launch Waydroid from ArmadaOS Game Mode.",
+    "image": ""
+  }
+}
