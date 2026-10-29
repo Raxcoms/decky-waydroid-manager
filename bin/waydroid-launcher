@@ -27,7 +27,7 @@ export XDG_RUNTIME_DIR="$runtime_dir"
 export WAYDROID_MANAGER_MODE="$mode"
 export WAYDROID_MANAGER_PACKAGE="$package"
 export WAYDROID_MANAGER_LOG_DIR="$log_dir"
-unset WAYLAND_DISPLAY GAMESCOPE_WAYLAND_DISPLAY
+unset WAYLAND_DISPLAY GAMESCOPE_WAYLAND_DISPLAY ENABLE_GAMESCOPE_WSI
 
 # SDL uses Steam's active Xwayland display after Wayland variables are cleared.
 exec gamescope --backend sdl --expose-wayland --fullscreen --force-windows-fullscreen -- bash -c '
@@ -37,7 +37,6 @@ exec gamescope --backend sdl --expose-wayland --fullscreen --force-windows-fulls
     echo "Nested Gamescope did not expose a Wayland socket." >&2
     exit 1
   fi
-  waydroid session stop >/dev/null 2>&1 || true
   waydroid session start >>"$WAYDROID_MANAGER_LOG_DIR/session.log" 2>&1 &
   for _ in {1..30}; do
     if waydroid status 2>/dev/null | grep -q "^Session:[[:space:]]*RUNNING"; then

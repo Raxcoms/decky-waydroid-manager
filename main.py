@@ -1,5 +1,6 @@
 import base64
 import configparser
+import json
 import os
 import pwd
 import re
@@ -17,6 +18,7 @@ PACKAGE_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 WAYDROID_DIR = Path("/var/lib/waydroid")
 SERVICE = "waydroid-container.service"
 MAX_ICON_BYTES = 2 * 1024 * 1024
+WAYDROID_SHORTCUT_KEY = "waydroid"
 
 
 class Plugin:
@@ -168,10 +170,73 @@ class Plugin:
         with log_path.open("a", encoding="utf-8") as log:
             subprocess.Popen(command, start_new_session=True, stdout=log, stderr=subprocess.STDOUT)
 
-    def _desktop_entries(self) -> list[dict[str, str]]:
+    def _state_path(self, home: Path) -> Path:
+        return home / ".config/waydroid-manager/state.json"
+
+    def _load_state(self, home: Path) -> dict[str, Any]:
+        state: dict[str, Any] = {
+            "autoAddApps": False,
+            "observedApps": [],
+            "pendingApps": [],
+            "shortcuts": {},
+            "removedShortcuts": [],
+        }
+        try:
+            saved = json.loads(self._state_path(home).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return state
+        if not isinstance(saved, dict):
+            return state
+        for key in state:
+            if isinstance(saved.get(key), type(state[key])):
+                state[key] = saved[key]
+        return state
+
+    def _save_state(self, home: Path, state: dict[str, Any]) -> None:
+        path = self._state_path(home)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        owner = home.stat()
+        os.chown(path.parent, owner.st_uid, owner.st_gid)
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as temporary:
+            json.dump(state, temporary, sort_keys=True)
+            temporary_path = Path(temporary.name)
+        os.chown(temporary_path, owner.st_uid, owner.st_gid)
+        temporary_path.replace(path)
+
+    def _shortcut_ids(self, home: Path) -> dict[str, int]:
+        state = self._load_state(home)
+        shortcuts = state["shortcuts"]
+        if not isinstance(shortcuts, dict):
+            return {}
+        ids = {key: value for key, value in shortcuts.items() if isinstance(key, str) and isinstance(value, int)}
+        removed = set(state["removedShortcuts"])
+        try:
+            saved_shortcuts = self._load_shortcuts(self._shortcuts_path(home))
+        except (OSError, RuntimeError, ValueError):
+            return ids
+
+        launcher = str(self._launcher())
+        for _, (_, shortcut) in saved_shortcuts.items():
+            exe = str(shortcut.get("exe", (1, ""))[1]).strip('"')
+            options = str(shortcut.get("LaunchOptions", (1, ""))[1])
+            app_id = shortcut.get("appid", (2, 0))[1]
+            if exe != launcher or not isinstance(app_id, int):
+                continue
+            if options == "full":
+                key = WAYDROID_SHORTCUT_KEY
+            elif options.startswith("app ") and PACKAGE_RE.fullmatch(options.removeprefix("app ")):
+                key = options.removeprefix("app ")
+            else:
+                continue
+            if key not in ids and key not in removed:
+                ids[key] = app_id
+        return ids
+
+    def _desktop_entries(self) -> list[dict[str, Any]]:
         _, _, home = self._user()
         directory = home / ".local/share/applications"
-        apps: list[dict[str, str]] = []
+        shortcut_ids = self._shortcut_ids(home)
+        apps: list[dict[str, Any]] = []
         for entry in sorted(directory.glob("waydroid.*.desktop")):
             package = entry.stem.removeprefix("waydroid.")
             if not PACKAGE_RE.fullmatch(package):
@@ -188,6 +253,7 @@ class Plugin:
                     "package": package,
                     "icon": self._icon_data_uri(icon_path, home),
                     "iconPath": icon_path,
+                    "shortcutId": shortcut_ids.get(package),
                 })
             except (OSError, KeyError, configparser.Error):
                 continue
@@ -283,15 +349,20 @@ class Plugin:
             os.chown(path, owner.st_uid, owner.st_gid)
 
     async def get_status(self) -> dict[str, Any]:
+        _, _, home = self._user()
+        state = self._load_state(home)
+        shortcut_ids = self._shortcut_ids(home)
         return {
             "initialized": self._initialized(),
             "serviceRunning": self._service_state("active"),
             "autoStart": self._service_state("enabled"),
             "gamescopeInstalled": shutil.which("gamescope") is not None,
             "resolution": self._panel_resolution(),
+            "autoAddApps": state["autoAddApps"],
+            "waydroidShortcutId": shortcut_ids.get(WAYDROID_SHORTCUT_KEY),
         }
 
-    async def list_apps(self) -> list[dict[str, str]]:
+    async def list_apps(self) -> list[dict[str, Any]]:
         return self._desktop_entries() if self._initialized() else []
 
     def _shortcut_details(self, name: str, package: str | None = None, icon: str = "") -> dict[str, str]:
@@ -302,7 +373,65 @@ class Plugin:
             "startDir": str(home),
             "launchOptions": "full" if package is None else f"app {package}",
             "icon": icon,
+            "key": WAYDROID_SHORTCUT_KEY if package is None else package,
         }
+
+    def _validate_shortcut_key(self, key: str) -> None:
+        if key == WAYDROID_SHORTCUT_KEY:
+            return
+        if not PACKAGE_RE.fullmatch(key):
+            raise RuntimeError("Invalid Android package name")
+
+    async def record_shortcut(self, key: str, app_id: int) -> None:
+        self._validate_shortcut_key(key)
+        if not isinstance(app_id, int) or app_id == 0:
+            raise RuntimeError("Steam did not return a valid shortcut ID")
+        _, _, home = self._user()
+        state = self._load_state(home)
+        state["shortcuts"][key] = app_id
+        state["removedShortcuts"] = [item for item in state["removedShortcuts"] if item != key]
+        state["pendingApps"] = [item for item in state["pendingApps"] if item != key]
+        self._save_state(home, state)
+
+    async def remove_shortcut_record(self, key: str) -> None:
+        self._validate_shortcut_key(key)
+        _, _, home = self._user()
+        state = self._load_state(home)
+        state["shortcuts"].pop(key, None)
+        state["pendingApps"] = [item for item in state["pendingApps"] if item != key]
+        if key not in state["removedShortcuts"]:
+            state["removedShortcuts"].append(key)
+        self._save_state(home, state)
+
+    async def set_auto_add_apps(self, enabled: bool) -> None:
+        _, _, home = self._user()
+        state = self._load_state(home)
+        state["autoAddApps"] = enabled
+        if enabled:
+            state["observedApps"] = sorted({*state["observedApps"], *(app["package"] for app in self._desktop_entries())})
+        self._save_state(home, state)
+
+    async def pending_auto_shortcuts(self) -> list[dict[str, str]]:
+        _, _, home = self._user()
+        state = self._load_state(home)
+        if not state["autoAddApps"]:
+            return []
+
+        apps = self._desktop_entries()
+        installed = {app["package"]: app for app in apps}
+        observed = set(state["observedApps"])
+        removed = set(state["removedShortcuts"])
+        recorded = set(state["shortcuts"])
+        pending = set(state["pendingApps"])
+        pending.update(package for package in installed if package not in observed and package not in removed and package not in recorded)
+        state["observedApps"] = sorted(observed | set(installed))
+        state["pendingApps"] = sorted(pending & set(installed))
+        self._save_state(home, state)
+        return [
+            self._shortcut_details(app["name"], package, app["iconPath"])
+            for package, app in installed.items()
+            if package in state["pendingApps"]
+        ]
 
     async def get_waydroid_shortcut(self) -> dict[str, str]:
         return self._shortcut_details("Waydroid")
@@ -349,6 +478,7 @@ class Plugin:
         for entry in (home / ".local/share/applications").glob("waydroid.*.desktop"):
             entry.unlink(missing_ok=True)
         self._remove_shortcuts(home)
+        self._state_path(home).unlink(missing_ok=True)
         decky.logger.info("Removed Waydroid data for %s", user)
 
     async def _main(self):
