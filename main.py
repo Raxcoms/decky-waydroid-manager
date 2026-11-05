@@ -440,7 +440,6 @@ class Plugin:
         return {
             "initialized": self._initialized(),
             "serviceRunning": self._service_state("active"),
-            "autoStart": self._service_state("enabled"),
             "gamescopeInstalled": shutil.which("gamescope") is not None,
             "resolution": self._panel_resolution(),
             "autoAddApps": state["autoAddApps"],
@@ -585,9 +584,6 @@ class Plugin:
             raise RuntimeError("This XAPK is not a valid archive") from error
         finally:
             shutil.rmtree(host_dir, ignore_errors=True)
-
-    async def set_auto_start(self, enabled: bool) -> None:
-        self._run(["systemctl", "enable" if enabled else "disable", SERVICE])
 
     async def start_service(self) -> None:
         self._run(["systemctl", "start", SERVICE])

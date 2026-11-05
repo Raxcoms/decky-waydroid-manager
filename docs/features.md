@@ -9,7 +9,6 @@
 ## Lifecycle controls
 
 - Start, stop, and restart `waydroid-container.service`.
-- Enable or disable the service for boot. Keeping it enabled gives a warm container for faster Game Mode launches.
 - Verifies that ArmadaOS's bundled Gamescope runtime is available before launching Android.
 - Starts with a minimal environment, passes Steam's shared frame limiter, and disables Gamescope WSI so Android games do not inherit the host Vulkan swapchain layer.
 - Mirrors Steam Input's virtual controller into Android while leaving Armada's physical-controller bridge in control of physical devices.

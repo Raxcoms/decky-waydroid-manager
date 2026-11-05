@@ -21,7 +21,6 @@ type Resolution = { width: number; height: number } | null;
 type Status = {
   initialized: boolean;
   serviceRunning: boolean;
-  autoStart: boolean;
   gamescopeInstalled: boolean;
   resolution: Resolution;
   autoAddApps: boolean;
@@ -45,7 +44,6 @@ function AndroidRobotIcon() {
 const getStatus = callable<[], Status>("get_status");
 const listApps = callable<[], AndroidApp[]>("list_apps");
 const installGapps = callable<[], void>("install_gapps");
-const setAutoStart = callable<[boolean], void>("set_auto_start");
 const startService = callable<[], void>("start_service");
 const stopService = callable<[], void>("stop_service");
 const restartService = callable<[], void>("restart_service");
@@ -399,14 +397,6 @@ function Content() {
 
       {status?.initialized && (
         <PanelSection title={t("dangerZone")}>
-          <PanelSectionRow>
-            <ToggleField
-              label={t("keepWarm")}
-              description={t("keepWarmDescription")}
-              checked={status.autoStart}
-              onChange={(enabled) => run(() => setAutoStart(enabled), refresh, setMessage)()}
-            />
-          </PanelSectionRow>
           <PanelSectionRow>
             <Field label={t("service", { state: status.serviceRunning ? t("running") : t("stopped") })} />
           </PanelSectionRow>
