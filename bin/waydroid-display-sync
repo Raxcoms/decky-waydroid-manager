@@ -1,0 +1,82 @@
+#!/usr/bin/python3
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import time
+
+
+def run(*args: str, display: str = "") -> str:
+    environment = os.environ.copy()
+    if display:
+        environment["DISPLAY"] = display
+    result = subprocess.run(args, env=environment, capture_output=True, text=True, timeout=2)
+    return result.stdout if result.returncode == 0 else ""
+
+
+def properties(display: str) -> dict[str, int]:
+    output = run("xprop", "-root", "GAMESCOPE_FPS_LIMIT", "GAMESCOPE_DYNAMIC_REFRESH", display=display)
+    return {name: int(value) for name, value in re.findall(r"(GAMESCOPE_\w+)\(CARDINAL\) = (\d+)", output)}
+
+
+def primary_display() -> str:
+    processes = []
+    for process in Path("/proc").glob("[0-9]*"):
+        try:
+            if process.stat().st_uid != os.getuid():
+                continue
+            args = (process / "cmdline").read_bytes().split(b"\0")
+            parent = int((process / "stat").read_text().rsplit(")", 1)[1].split()[1])
+            processes.append((int(process.name), parent, args))
+        except (OSError, ValueError, IndexError):
+            continue
+    owners = {pid for pid, _, args in processes if b"--steam" in args and b"gamescope" in Path(os.fsdecode(args[0])).name.encode()}
+
+    def sockets(pid: int) -> set[str]:
+        result = set()
+        for fd in (Path('/proc') / str(pid) / 'fd').glob('*'):
+            try:
+                link = os.readlink(fd)
+                if link.startswith('socket:'):
+                    result.add(link)
+            except OSError:
+                continue
+        return result
+
+    owner_sockets = set().union(*(sockets(pid) for pid in owners))
+    for pid, parent, args in processes:
+        if b"Xwayland" not in Path(os.fsdecode(args[0])).name.encode():
+            continue
+        # Gamescope's Xwayland servers can be reparented to the user service manager.
+        if parent not in owners and not sockets(pid).intersection(owner_sockets):
+            continue
+        for argument in args:
+            display = os.fsdecode(argument)
+            if re.fullmatch(r":\d+", display) and properties(display):
+                return display
+    return ""
+
+
+def main() -> None:
+    control = primary_display()
+    if not control:
+        raise SystemExit("Could not find Steam's primary Gamescope control display")
+    if len(sys.argv) > 1 and sys.argv[1] == "--refresh":
+        print(properties(control).get("GAMESCOPE_DYNAMIC_REFRESH", 0))
+        return
+    target = os.environ["DISPLAY"]
+    previous = None
+    while True:
+        try:
+            limit = properties(control).get("GAMESCOPE_FPS_LIMIT")
+            if limit is not None and limit != previous:
+                run("xprop", "-root", "-f", "GAMESCOPE_FPS_LIMIT", "32c", "-set", "GAMESCOPE_FPS_LIMIT", str(limit), display=target)
+                previous = limit
+        except (OSError, subprocess.SubprocessError):
+            pass
+        time.sleep(0.5)
+
+
+if __name__ == "__main__":
+    main()

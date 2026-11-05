@@ -27,9 +27,9 @@ jobs:
           mkdir -p package/waydroid-manager/bin package/waydroid-manager/dist
           cp plugin.json package.json README.md LICENSE main.py package/waydroid-manager/
           cp -r docs package/waydroid-manager/
-          cp bin/waydroid-launcher bin/waydroid-session bin/waydroid-input-sync package/waydroid-manager/bin/
+          cp bin/waydroid-launcher bin/waydroid-session bin/waydroid-input-sync bin/waydroid-display-sync package/waydroid-manager/bin/
           cp -r dist/. package/waydroid-manager/dist/
-          chmod +x package/waydroid-manager/bin/waydroid-launcher package/waydroid-manager/bin/waydroid-session package/waydroid-manager/bin/waydroid-input-sync
+          chmod +x package/waydroid-manager/bin/*
       - uses: actions/upload-artifact@v4
         with:
           name: waydroid-manager
