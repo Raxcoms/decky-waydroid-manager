@@ -23,6 +23,10 @@ if [[ "${WAYDROID_MANAGER_CLEAN_ENV:-}" != 1 ]]; then
     DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}" \
     DISPLAY="$parent_display" XAUTHORITY="${XAUTHORITY:-}" \
     GAMESCOPE_WAYLAND_DISPLAY="$parent_wayland" WAYLAND_DISPLAY="$parent_wayland" \
+    GAMESCOPE_LIMITER_FILE="${GAMESCOPE_LIMITER_FILE:-}" \
+    MANGOHUD_CONFIGFILE="${MANGOHUD_CONFIGFILE:-}" \
+    SteamAppId="${SteamAppId:-}" SteamGameId="${SteamGameId:-}" \
+    SteamOverlayGameId="${SteamOverlayGameId:-}" SteamGamepadUI="${SteamGamepadUI:-}" \
     WAYDROID_MANAGER_WIDTH="$output_width" WAYDROID_MANAGER_HEIGHT="$output_height" \
     XDG_STATE_HOME="${XDG_STATE_HOME:-}" \
     WAYDROID_MANAGER_SESSION_RUNNER="$session_runner" \
@@ -96,6 +100,12 @@ exec gamescope --backend wayland --expose-wayland --fullscreen --force-windows-f
         --setenv="XAUTHORITY=${XAUTHORITY:-}" \
         --setenv="GAMESCOPE_WAYLAND_DISPLAY=$GAMESCOPE_WAYLAND_DISPLAY" \
         --setenv="WAYLAND_DISPLAY=$WAYLAND_DISPLAY" \
+        --setenv="GAMESCOPE_LIMITER_FILE=${GAMESCOPE_LIMITER_FILE:-}" \
+        --setenv="MANGOHUD_CONFIGFILE=${MANGOHUD_CONFIGFILE:-}" \
+        --setenv="SteamAppId=${SteamAppId:-}" \
+        --setenv="SteamGameId=${SteamGameId:-}" \
+        --setenv="SteamOverlayGameId=${SteamOverlayGameId:-}" \
+        --setenv="SteamGamepadUI=${SteamGamepadUI:-}" \
         --setenv="WAYDROID_MANAGER_LOG_DIR=$WAYDROID_MANAGER_LOG_DIR" \
         "$WAYDROID_MANAGER_SESSION_RUNNER" "$$"
       owns_session=1
@@ -116,6 +126,7 @@ exec gamescope --backend wayland --expose-wayland --fullscreen --force-windows-f
       exit 1
     fi
   fi
+  waydroid prop set persist.waydroid.uevent true >/dev/null 2>&1 || true
   for _ in {1..20}; do
     if waydroid app list 2>/dev/null | grep -q "^Name:"; then
       break
