@@ -106,6 +106,16 @@ exec gamescope --backend wayland --expose-wayland --fullscreen --force-windows-f
     echo "Waydroid session did not start. See $WAYDROID_MANAGER_LOG_DIR/session.log" >&2
     exit 1
   fi
+  if [ "$owns_session" = 1 ]; then
+    for _ in {1..90}; do
+      [ -f "$WAYDROID_MANAGER_LOG_DIR/android-ready" ] && break
+      sleep 1
+    done
+    if [ ! -f "$WAYDROID_MANAGER_LOG_DIR/android-ready" ]; then
+      echo "Android did not become ready. See $WAYDROID_MANAGER_LOG_DIR/session.log" >&2
+      exit 1
+    fi
+  fi
   for _ in {1..20}; do
     if waydroid app list 2>/dev/null | grep -q "^Name:"; then
       break

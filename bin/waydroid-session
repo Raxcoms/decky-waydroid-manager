@@ -4,6 +4,10 @@ set -euo pipefail
 owner_pid="${1:?missing launch process id}"
 log_dir="${WAYDROID_MANAGER_LOG_DIR:?missing log directory}"
 session_pid=""
+ready_file="$log_dir/android-ready"
+
+rm -f "$ready_file"
+: >"$log_dir/session.log"
 
 stop_session() {
   trap - EXIT HUP INT TERM
@@ -24,6 +28,15 @@ for _ in {1..45}; do
 done
 
 waydroid status 2>/dev/null | grep -q "^Session:[[:space:]]*RUNNING" || exit 1
+for _ in {1..90}; do
+  if grep -q "Android with user 0 is ready" "$log_dir/session.log"; then
+    touch "$ready_file"
+    break
+  fi
+  kill -0 "$session_pid" 2>/dev/null || exit 1
+  sleep 1
+done
+
 while kill -0 "$owner_pid" 2>/dev/null; do
   sleep 1
 done
