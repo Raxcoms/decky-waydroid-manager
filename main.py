@@ -116,7 +116,7 @@ class Plugin:
                 environment = {}
                 for value in (process / "environ").read_bytes().split(b"\0"):
                     key, separator, content = value.partition(b"=")
-                    if separator and key in {b"DISPLAY", b"XAUTHORITY"}:
+                    if separator and key in {b"DISPLAY", b"XAUTHORITY", b"WAYLAND_DISPLAY", b"GAMESCOPE_WAYLAND_DISPLAY"}:
                         environment[key.decode()] = content.decode(errors="ignore")
                 if "DISPLAY" in environment:
                     candidates.append((b"steam" in names, environment))
@@ -160,6 +160,10 @@ class Plugin:
         ]
         if graphics_environment.get("XAUTHORITY"):
             environment.append(f"XAUTHORITY={graphics_environment['XAUTHORITY']}")
+        wayland_display = graphics_environment.get("GAMESCOPE_WAYLAND_DISPLAY") or graphics_environment.get("WAYLAND_DISPLAY")
+        if wayland_display:
+            environment.append(f"GAMESCOPE_WAYLAND_DISPLAY={wayland_display}")
+            environment.append(f"WAYLAND_DISPLAY={wayland_display}")
         command = [
             "runuser", "-u", user, "--", "env",
             *environment,

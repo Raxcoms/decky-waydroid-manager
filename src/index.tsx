@@ -49,8 +49,6 @@ const setAutoStart = callable<[boolean], void>("set_auto_start");
 const startService = callable<[], void>("start_service");
 const stopService = callable<[], void>("stop_service");
 const restartService = callable<[], void>("restart_service");
-const launchWaydroid = callable<[], void>("launch_waydroid");
-const launchApp = callable<[string], void>("launch_app");
 const uninstallApp = callable<[string], void>("uninstall_app");
 const getWaydroidShortcut = callable<[], Shortcut>("get_waydroid_shortcut");
 const getAppShortcut = callable<[string], Shortcut>("get_app_shortcut");
@@ -141,17 +139,15 @@ function AppRow({ app, refresh, setMessage }: { app: AndroidApp; refresh: () => 
     await removeShortcutRecord(app.package);
   };
   const launch = async () => {
-    const shortcut = await getAppShortcut(app.package);
-    const appId = app.shortcutId ?? await addToSteam(shortcut);
     if (!app.shortcutId) {
-      await recordShortcut(shortcut.key, appId);
+      throw new Error(t("shortcutStateUnavailable"));
     }
-    launchSteamShortcut(appId);
+    launchSteamShortcut(app.shortcutId);
   };
   const openMenu = () => {
     showContextMenu(
       <Menu label={app.name}>
-        <MenuItem onSelected={run(launch, refresh, setMessage, [app.name, t("launching")])}>{t("launch")}</MenuItem>
+        {app.shortcutId && <MenuItem onSelected={run(launch, refresh, setMessage, [app.name, t("launching")])}>{t("launch")}</MenuItem>}
         {app.shortcutId ? (
           <MenuItem onSelected={run(remove, refresh, setMessage, [app.name, t("removedFromSteam")])}>{t("removeFromSteam")}</MenuItem>
         ) : (
@@ -260,12 +256,10 @@ function Content() {
     await removeShortcutRecord("waydroid");
   };
   const launchFullWaydroid = async () => {
-    const shortcut = await getWaydroidShortcut();
-    const appId = status?.waydroidShortcutId ?? await addToSteam(shortcut);
     if (!status?.waydroidShortcutId) {
-      await recordShortcut(shortcut.key, appId);
+      throw new Error(t("shortcutStateUnavailable"));
     }
-    launchSteamShortcut(appId);
+    launchSteamShortcut(status.waydroidShortcutId);
   };
 
   return (
@@ -291,9 +285,11 @@ function Content() {
         )}
         {status?.initialized && (
           <>
-            <PanelSectionRow>
-              <ButtonItem layout="below" onClick={run(launchFullWaydroid, refresh, setMessage, [t("waydroid"), t("launching")])}>{t("launchWaydroid")}</ButtonItem>
-            </PanelSectionRow>
+            {status.waydroidShortcutId && (
+              <PanelSectionRow>
+                <ButtonItem layout="below" onClick={run(launchFullWaydroid, refresh, setMessage, [t("waydroid"), t("launching")])}>{t("launchWaydroid")}</ButtonItem>
+              </PanelSectionRow>
+            )}
             <PanelSectionRow>
               <ButtonItem
                 layout="below"

@@ -5,6 +5,7 @@ mode="${1:-full}"
 package="${2:-}"
 runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 parent_display="${DISPLAY:-}"
+parent_wayland="${GAMESCOPE_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:-}}"
 log_dir="${XDG_STATE_HOME:-$HOME/.local/state}/waydroid-manager"
 mkdir -p "$log_dir"
 
@@ -17,6 +18,7 @@ if [[ "${WAYDROID_MANAGER_CLEAN_ENV:-}" != 1 ]]; then
     XDG_RUNTIME_DIR="$runtime_dir" \
     DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}" \
     DISPLAY="$parent_display" XAUTHORITY="${XAUTHORITY:-}" \
+    GAMESCOPE_WAYLAND_DISPLAY="$parent_wayland" WAYLAND_DISPLAY="$parent_wayland" \
     XDG_STATE_HOME="${XDG_STATE_HOME:-}" \
     "$0" "$@"
 fi
@@ -31,6 +33,11 @@ if [[ -z "$parent_display" ]]; then
   exit 1
 fi
 
+if [[ -z "$parent_wayland" ]]; then
+  echo "Waydroid Manager needs Steam's active Game Mode Wayland socket." >&2
+  exit 1
+fi
+
 if ! systemctl is-active --quiet waydroid-container.service; then
   echo "Waydroid is stopped. Enable Keep service warm in Waydroid Manager before launching from Steam." >&2
   exit 1
@@ -40,12 +47,11 @@ export XDG_RUNTIME_DIR="$runtime_dir"
 export WAYDROID_MANAGER_MODE="$mode"
 export WAYDROID_MANAGER_PACKAGE="$package"
 export WAYDROID_MANAGER_LOG_DIR="$log_dir"
-unset WAYLAND_DISPLAY GAMESCOPE_WAYLAND_DISPLAY ENABLE_GAMESCOPE_WSI
+unset ENABLE_GAMESCOPE_WSI
 export DISABLE_GAMESCOPE_WSI=1
-export SDL_VIDEODRIVER=x11
 
-# SDL uses Steam's active Xwayland display after Wayland variables are cleared.
-exec gamescope --backend sdl --expose-wayland --fullscreen --force-windows-fullscreen -- bash -c '
+# Gamescope nests on Steam's active Wayland socket and exposes a separate one to Waydroid.
+exec gamescope --backend wayland --expose-wayland --fullscreen --force-windows-fullscreen -- bash -c '
   set -euo pipefail
   export WAYLAND_DISPLAY="${GAMESCOPE_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:-}}"
   if [ -z "$WAYLAND_DISPLAY" ]; then
@@ -67,16 +73,15 @@ exec gamescope --backend sdl --expose-wayland --fullscreen --force-windows-fulls
     echo "Waydroid session did not start. See $WAYDROID_MANAGER_LOG_DIR/session.log" >&2
     exit 1
   fi
-  for _ in {1..60}; do
-    if waydroid shell getprop sys.boot_completed 2>/dev/null | grep -qx "1"; then
+  for _ in {1..20}; do
+    if waydroid app list 2>/dev/null | grep -q "^Name:"; then
       break
     fi
-    sleep 1
+    if [ "$WAYDROID_MANAGER_MODE" = "full" ]; then
+      waydroid show-full-ui || true
+    fi
+    sleep 3
   done
-  if ! waydroid shell getprop sys.boot_completed 2>/dev/null | grep -qx "1"; then
-    echo "Waydroid did not finish booting. See $WAYDROID_MANAGER_LOG_DIR/session.log" >&2
-    exit 1
-  fi
   if [ "$WAYDROID_MANAGER_MODE" = "app" ]; then
     waydroid app launch "$WAYDROID_MANAGER_PACKAGE"
   else
