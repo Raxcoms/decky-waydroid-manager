@@ -11,8 +11,8 @@
 - Start, stop, and restart `waydroid-container.service`.
 - Enable or disable the service for boot. Keeping it enabled gives a warm container for faster Game Mode launches.
 - Verifies that ArmadaOS's bundled Gamescope runtime is available before launching Android.
-- Starts with a minimal environment, preserves Steam's app identity and shared frame limiter, and disables Gamescope WSI so Android games do not inherit the host Vulkan swapchain layer.
-- Enables Waydroid controller hotplug so Steam Input's virtual controller is exposed to Android after the next Waydroid session starts.
+- Starts with a minimal environment, passes Steam's shared frame limiter, and disables Gamescope WSI so Android games do not inherit the host Vulkan swapchain layer.
+- Mirrors Steam Input's virtual controller into Android while leaving Armada's physical-controller bridge in control of physical devices.
 
 ## Android application library
 
@@ -28,4 +28,4 @@ Waydroid exports launcher icons but does not export Steam grid, hero, logo, or p
 
 ## Game Mode rendering
 
-The bundled launcher nests Gamescope on Steam's dynamically discovered Wayland socket and creates a fresh Wayland socket for every launch. It passes Steam's rotation-aware target size to nested Gamescope, then points the Waydroid session at that socket before opening Android or a selected application. The transient user service waits until Android reports itself ready, detects when Steam has closed the nested launcher, and stops only that session. This separates the Android session from Steam's compositor while avoiding premature app launch requests.
+The bundled launcher nests Gamescope on Steam's dynamically discovered Wayland socket and creates a fresh Wayland socket for every launch. It passes Steam's rotation-aware target size and shared limiter file to nested Gamescope, then points the Waydroid session at that socket before opening Android or a selected application. The transient user service waits until Android reports itself ready. The launcher supervises Gamescope against Steam's owning launch process and stops only that session when the shortcut closes. This separates the Android session from Steam's compositor while avoiding premature app launch requests and stale sockets.
