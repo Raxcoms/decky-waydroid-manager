@@ -15,6 +15,7 @@ import {
   staticClasses,
 } from "@decky/ui";
 import { useCallback, useEffect, useState } from "react";
+import { t } from "./i18n";
 
 type Resolution = { width: number; height: number } | null;
 type Status = {
@@ -27,12 +28,12 @@ type Status = {
   waydroidShortcutId?: number;
 };
 
-type AndroidApp = { name: string; package: string; icon: string; iconPath: string; shortcutId?: number };
+type AndroidApp = { name: string; package: string; icon: string; iconPath: string; shortcutId?: number; removable: boolean };
 type Shortcut = { name: string; exe: string; startDir: string; launchOptions: string; icon: string; key: string };
 
 function AndroidRobotIcon() {
   return (
-    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-label="Android robot">
+    <svg width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-label={t("androidRobot")}>
       <path d="M6 14a6 6 0 0 1 12 0Z" />
       <path d="m8.5 8-1.4-2M15.5 8l1.4-2" />
       <circle cx="9.5" cy="11" r=".8" fill="currentColor" stroke="none" />
@@ -50,6 +51,7 @@ const stopService = callable<[], void>("stop_service");
 const restartService = callable<[], void>("restart_service");
 const launchWaydroid = callable<[], void>("launch_waydroid");
 const launchApp = callable<[string], void>("launch_app");
+const uninstallApp = callable<[string], void>("uninstall_app");
 const getWaydroidShortcut = callable<[], Shortcut>("get_waydroid_shortcut");
 const getAppShortcut = callable<[string], Shortcut>("get_app_shortcut");
 const recordShortcut = callable<[string, number], void>("record_shortcut");
@@ -67,12 +69,12 @@ function toast(title: string, body: string) {
 async function addToSteam(shortcut: Shortcut) {
   const apps = window.SteamClient?.Apps;
   if (!apps?.AddShortcut) {
-    throw new Error("Steam shortcut API is unavailable");
+    throw new Error(t("shortcutApiUnavailable"));
   }
 
   const appId = Number(await apps.AddShortcut(shortcut.name, shortcut.exe, shortcut.startDir, shortcut.launchOptions));
   if (!appId) {
-    throw new Error("Steam did not create the shortcut");
+    throw new Error(t("shortcutNotCreated"));
   }
   apps.SetShortcutName?.(appId, shortcut.name);
   apps.SetShortcutLaunchOptions?.(appId, shortcut.launchOptions);
@@ -85,7 +87,7 @@ async function addToSteam(shortcut: Shortcut) {
 async function removeFromSteam(appId: number) {
   const apps = window.SteamClient?.Apps;
   if (!apps?.RemoveShortcut) {
-    throw new Error("Steam shortcut API is unavailable");
+    throw new Error(t("shortcutApiUnavailable"));
   }
   await apps.RemoveShortcut(appId);
 }
@@ -118,7 +120,7 @@ function AppRow({ app, refresh, setMessage }: { app: AndroidApp; refresh: () => 
   };
   const remove = async () => {
     if (!app.shortcutId) {
-      throw new Error("Steam shortcut state is unavailable");
+      throw new Error(t("shortcutStateUnavailable"));
     }
     await removeFromSteam(app.shortcutId);
     await removeShortcutRecord(app.package);
@@ -126,11 +128,20 @@ function AppRow({ app, refresh, setMessage }: { app: AndroidApp; refresh: () => 
   const openMenu = () => {
     showContextMenu(
       <Menu label={app.name}>
-        <MenuItem onSelected={run(() => launchApp(app.package), refresh, setMessage)}>Launch</MenuItem>
+        <MenuItem onSelected={run(() => launchApp(app.package), refresh, setMessage)}>{t("launch")}</MenuItem>
         {app.shortcutId ? (
-          <MenuItem onSelected={run(remove, refresh, setMessage, [app.name, "Removed from Steam."])}>Remove from Steam</MenuItem>
+          <MenuItem onSelected={run(remove, refresh, setMessage, [app.name, t("removedFromSteam")])}>{t("removeFromSteam")}</MenuItem>
         ) : (
-          <MenuItem onSelected={run(add, refresh, setMessage, [app.name, "Added to Steam."])}>Add to Steam</MenuItem>
+          <MenuItem onSelected={run(add, refresh, setMessage, [app.name, t("addedToSteam")])}>{t("addToSteam")}</MenuItem>
+        )}
+        {app.removable && (
+          <MenuItem onSelected={() => confirm(t("uninstallApp", { name: app.name }), t("uninstallAppDescription"), run(async () => {
+            await uninstallApp(app.package);
+            if (app.shortcutId) {
+              await removeFromSteam(app.shortcutId);
+              await removeShortcutRecord(app.package);
+            }
+          }, refresh, setMessage, [app.name, t("appUninstalled")]))}>{t("uninstall")}</MenuItem>
         )}
       </Menu>,
     );
@@ -139,7 +150,7 @@ function AppRow({ app, refresh, setMessage }: { app: AndroidApp; refresh: () => 
   return (
     <PanelSectionRow>
       <ButtonItem layout="below" onClick={openMenu}>
-        <div style={{ display: "flex", alignItems: "center", gap: "14px", width: "100%", minWidth: 0, minHeight: "32px", padding: 0, transform: "translateX(-16px)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "14px", width: "100%", minWidth: 0, minHeight: "32px", padding: 0, transform: "translateX(-10px)" }}>
           {app.icon ? (
             <img src={app.icon} alt="" style={{ width: "28px", height: "28px", borderRadius: "6px", objectFit: "cover", flex: "0 0 auto" }} />
           ) : (
@@ -161,6 +172,7 @@ function Content() {
   const [status, setStatus] = useState<Status | null>(null);
   const [apps, setApps] = useState<AndroidApp[]>([]);
   const [message, setMessage] = useState<string | null>(null);
+  const [visibleApps, setVisibleApps] = useState(10);
 
   const refresh = useCallback(async () => {
     const nextStatus = await getStatus();
@@ -171,6 +183,10 @@ function Content() {
   useEffect(() => {
     refresh().catch((error) => setMessage(error instanceof Error ? error.message : String(error)));
   }, [refresh]);
+
+  useEffect(() => {
+    setVisibleApps((current) => Math.min(Math.max(current, 10), apps.length));
+  }, [apps.length]);
 
   useEffect(() => {
     if (!status?.autoAddApps) {
@@ -186,7 +202,7 @@ function Content() {
           autoAddAttempted.add(shortcut.key);
           await recordShortcut(shortcut.key, await addToSteam(shortcut));
           if (!disposed) {
-            toast(shortcut.name, "Added to Steam.");
+            toast(shortcut.name, t("addedToSteam"));
           }
         }
         if (!disposed) {
@@ -206,14 +222,16 @@ function Content() {
     };
   }, [refresh, status?.autoAddApps]);
 
-  const resolution = status?.resolution ? `${status.resolution.width} × ${status.resolution.height}` : "Unavailable";
+  const resolution = status?.resolution ? `${status.resolution.width} × ${status.resolution.height}` : t("unavailable");
+  const sortedApps = [...apps].sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" }));
+  const shownApps = sortedApps.slice(0, visibleApps);
   const addWaydroid = async () => {
     const shortcut = await getWaydroidShortcut();
     await recordShortcut(shortcut.key, await addToSteam(shortcut));
   };
   const removeWaydroidShortcut = async () => {
     if (!status?.waydroidShortcutId) {
-      throw new Error("Steam shortcut state is unavailable");
+      throw new Error(t("shortcutStateUnavailable"));
     }
     await removeFromSteam(status.waydroidShortcutId);
     await removeShortcutRecord("waydroid");
@@ -221,36 +239,36 @@ function Content() {
 
   return (
     <div>
-      <PanelSection title="Waydroid">
+      <PanelSection title={t("waydroid")}>
         <PanelSectionRow>
-          <Field label={status?.initialized ? "Waydroid is installed" : "Waydroid is not installed"} description={`Detected display: ${resolution}`} />
+          <Field label={status?.initialized ? t("installed") : t("notInstalled")} description={t("detectedDisplay", { resolution })} />
         </PanelSectionRow>
         {status && !status.gamescopeInstalled && (
           <PanelSectionRow>
-            <Field label="Gamescope is unavailable" description="Gamescope is bundled by ArmadaOS. Update or repair this deployment before launching Waydroid." />
+            <Field label={t("gamescopeUnavailable")} description={t("gamescopeUnavailableDescription")} />
           </PanelSectionRow>
         )}
         {!status?.initialized && (
           <PanelSectionRow>
             <ButtonItem
               layout="below"
-              onClick={() => confirm("Install GAPPS image", "Download and initialize the official GAPPS Waydroid image for this device architecture. This may take several minutes.", run(installGapps, refresh, setMessage, ["Waydroid", "GAPPS image installed."]))}
+              onClick={() => confirm(t("installGapps"), t("installGappsDescription"), run(installGapps, refresh, setMessage, [t("waydroid"), t("gappsInstalled")]))}
             >
-              Install Waydroid with GAPPS
+              {t("installWaydroid")}
             </ButtonItem>
           </PanelSectionRow>
         )}
         {status?.initialized && (
           <>
             <PanelSectionRow>
-              <ButtonItem layout="below" onClick={run(launchWaydroid, refresh, setMessage)}>Launch Waydroid</ButtonItem>
+              <ButtonItem layout="below" onClick={run(launchWaydroid, refresh, setMessage)}>{t("launchWaydroid")}</ButtonItem>
             </PanelSectionRow>
             <PanelSectionRow>
               <ButtonItem
                 layout="below"
-                onClick={status.waydroidShortcutId ? run(removeWaydroidShortcut, refresh, setMessage, ["Waydroid", "Removed from Steam."]) : run(addWaydroid, refresh, setMessage, ["Waydroid", "Added to Steam."])}
+                onClick={status.waydroidShortcutId ? run(removeWaydroidShortcut, refresh, setMessage, [t("waydroid"), t("removedFromSteam")]) : run(addWaydroid, refresh, setMessage, [t("waydroid"), t("addedToSteam")])}
               >
-                {status.waydroidShortcutId ? "Remove Waydroid from Steam" : "Add Waydroid to Steam"}
+                {status.waydroidShortcutId ? t("removeWaydroidShortcut") : t("addWaydroid")}
               </ButtonItem>
             </PanelSectionRow>
           </>
@@ -258,46 +276,53 @@ function Content() {
       </PanelSection>
 
       {status?.initialized && (
-        <PanelSection title={`Android apps (${apps.length})`}>
-          {apps.map((app) => <AppRow key={app.package} app={app} refresh={refresh} setMessage={setMessage} />)}
-          {!apps.length && <PanelSectionRow><Field description="No generated Waydroid desktop entries were found yet." /></PanelSectionRow>}
+        <PanelSection title={t("androidApps", { count: apps.length })}>
           <PanelSectionRow>
             <ToggleField
-              label="Add new apps to Steam"
-              description="Add apps installed after this is enabled. Removed shortcuts stay removed."
+              label={t("autoAddApps")}
+              description={t("autoAddAppsDescription")}
               checked={status.autoAddApps}
               onChange={(enabled) => run(() => setAutoAddApps(enabled), refresh, setMessage)()}
             />
           </PanelSectionRow>
+          {shownApps.map((app) => <AppRow key={app.package} app={app} refresh={refresh} setMessage={setMessage} />)}
+          {!apps.length && <PanelSectionRow><Field description={t("noApps")} /></PanelSectionRow>}
+          {visibleApps < sortedApps.length && (
+            <PanelSectionRow>
+              <ButtonItem layout="below" onClick={() => setVisibleApps((count) => Math.min(count + 10, sortedApps.length))}>
+                {t("showMore", { count: Math.min(10, sortedApps.length - visibleApps) })}
+              </ButtonItem>
+            </PanelSectionRow>
+          )}
         </PanelSection>
       )}
 
       {status?.initialized && (
-        <PanelSection title="Danger zone">
+        <PanelSection title={t("dangerZone")}>
           <PanelSectionRow>
             <ToggleField
-              label="Keep service warm"
-              description="Start the Waydroid container on boot for faster launches."
+              label={t("keepWarm")}
+              description={t("keepWarmDescription")}
               checked={status.autoStart}
               onChange={(enabled) => run(() => setAutoStart(enabled), refresh, setMessage)()}
             />
           </PanelSectionRow>
           <PanelSectionRow>
-            <Field label={`Service: ${status.serviceRunning ? "Running" : "Stopped"}`} />
+            <Field label={t("service", { state: status.serviceRunning ? t("running") : t("stopped") })} />
           </PanelSectionRow>
           <PanelSectionRow>
             <Focusable style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
-              <DialogButton style={{ flex: "1 1 max-content", maxWidth: "100%" }} onClick={run(startService, refresh, setMessage)}>Start</DialogButton>
-              <DialogButton style={{ flex: "1 1 max-content", maxWidth: "100%" }} onClick={run(restartService, refresh, setMessage)}>Restart</DialogButton>
-              <DialogButton style={{ flex: "1 1 max-content", maxWidth: "100%" }} onClick={run(stopService, refresh, setMessage)}>Stop</DialogButton>
+              <DialogButton style={{ flex: "1 1 max-content", maxWidth: "100%" }} onClick={run(startService, refresh, setMessage)}>{t("start")}</DialogButton>
+              <DialogButton style={{ flex: "1 1 max-content", maxWidth: "100%" }} onClick={run(restartService, refresh, setMessage)}>{t("restart")}</DialogButton>
+              <DialogButton style={{ flex: "1 1 max-content", maxWidth: "100%" }} onClick={run(stopService, refresh, setMessage)}>{t("stop")}</DialogButton>
             </Focusable>
           </PanelSectionRow>
           <PanelSectionRow>
             <ButtonItem
               layout="below"
-              onClick={() => confirm("Remove Waydroid", "This permanently removes the Waydroid images, Android data, app entries, and disables its service. Installed Android apps cannot be recovered.", run(removeWaydroid, refresh, setMessage, ["Waydroid", "Image and data removed."]))}
+              onClick={() => confirm(t("removeWaydroid"), t("removeWaydroidDescription"), run(removeWaydroid, refresh, setMessage, [t("waydroid"), t("imageRemoved")]))}
             >
-              Remove Waydroid image and data
+              {t("removeWaydroidButton")}
             </ButtonItem>
           </PanelSectionRow>
         </PanelSection>
@@ -309,8 +334,8 @@ function Content() {
 }
 
 export default definePlugin(() => ({
-  name: "Waydroid Manager",
-  titleView: <div className={staticClasses.Title}>Waydroid Manager</div>,
+  name: t("pluginName"),
+  titleView: <div className={staticClasses.Title}>{t("pluginName")}</div>,
   content: <Content />,
   icon: <AndroidRobotIcon />,
 }));

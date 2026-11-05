@@ -8,6 +8,19 @@ parent_display="${DISPLAY:-}"
 log_dir="${XDG_STATE_HOME:-$HOME/.local/state}/waydroid-manager"
 mkdir -p "$log_dir"
 
+if [[ "${WAYDROID_MANAGER_CLEAN_ENV:-}" != 1 ]]; then
+  exec env -i \
+    WAYDROID_MANAGER_CLEAN_ENV=1 \
+    HOME="$HOME" USER="${USER:-$(id -un)}" LOGNAME="${LOGNAME:-${USER:-$(id -un)}}" \
+    PATH="${PATH:-/usr/local/bin:/usr/bin}" \
+    LANG="${LANG:-C.UTF-8}" \
+    XDG_RUNTIME_DIR="$runtime_dir" \
+    DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}" \
+    DISPLAY="$parent_display" XAUTHORITY="${XAUTHORITY:-}" \
+    XDG_STATE_HOME="${XDG_STATE_HOME:-}" \
+    "$0" "$@"
+fi
+
 if ! command -v gamescope >/dev/null; then
   echo "Gamescope is required by Waydroid Manager." >&2
   exit 1
@@ -28,6 +41,8 @@ export WAYDROID_MANAGER_MODE="$mode"
 export WAYDROID_MANAGER_PACKAGE="$package"
 export WAYDROID_MANAGER_LOG_DIR="$log_dir"
 unset WAYLAND_DISPLAY GAMESCOPE_WAYLAND_DISPLAY ENABLE_GAMESCOPE_WSI
+export DISABLE_GAMESCOPE_WSI=1
+export SDL_VIDEODRIVER=x11
 
 # SDL uses Steam's active Xwayland display after Wayland variables are cleared.
 exec gamescope --backend sdl --expose-wayland --fullscreen --force-windows-fullscreen -- bash -c '

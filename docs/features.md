@@ -11,13 +11,15 @@
 - Start, stop, and restart `waydroid-container.service`.
 - Enable or disable the service for boot. Keeping it enabled gives a warm container for faster Game Mode launches.
 - Verifies that ArmadaOS's bundled Gamescope runtime is available before launching Android.
-- Clears Steam's `ENABLE_GAMESCOPE_WSI` flag before launching Waydroid so Android games do not inherit the host Gamescope Vulkan swapchain layer.
+- Starts with a minimal Steam-independent environment and disables Gamescope WSI before launching Waydroid, so Android games do not inherit the host Vulkan swapchain layer.
 
 ## Android application library
 
 Waydroid generates one desktop entry for each installed Android application, as KDE exposes in its application menu. The plugin reads those `waydroid.<package>.desktop` files and only accepts entries whose main command is `waydroid app launch <package>`. It displays the icon from the same desktop-entry path used by KDE. Selecting an app opens Decky's native action menu, where it can be launched or added to or removed from Steam individually.
 
-The optional **Add new apps to Steam** control records the apps present when it is enabled, then queues only later discovered desktop entries. This prevents existing apps from being added unexpectedly and preserves a removal choice: an app removed from Steam is never automatically added again. Shortcut IDs are saved in the user's Waydroid Manager state and existing matching launcher shortcuts are detected from Steam's shortcut file to avoid duplicates.
+The optional **Add new apps to Steam** control appears before the app list. It records the apps present when enabled, then queues only later discovered desktop entries. This prevents existing apps from being added unexpectedly and preserves a removal choice: an app removed from Steam is never automatically added again. Shortcut IDs are saved in the user's Waydroid Manager state and existing matching launcher shortcuts are detected from Steam's shortcut file to avoid duplicates. The app list is alphabetized and initially shows ten apps; **Show more** adds ten at a time.
+
+Third-party Android packages can be removed directly from the app action menu through `waydroid app remove`. System packages are never offered this action.
 
 Waydroid exports launcher icons but does not export Steam grid, hero, logo, or portrait artwork. The plugin assigns the exported Android icon through Steam's shortcut API; Steam's other artwork remains user-configurable in the library.
 

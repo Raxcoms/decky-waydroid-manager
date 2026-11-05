@@ -208,14 +208,15 @@ class Plugin:
         shortcuts = state["shortcuts"]
         if not isinstance(shortcuts, dict):
             return {}
-        ids = {key: value for key, value in shortcuts.items() if isinstance(key, str) and isinstance(value, int)}
+        recorded = {key: value for key, value in shortcuts.items() if isinstance(key, str) and isinstance(value, int)}
         removed = set(state["removedShortcuts"])
         try:
             saved_shortcuts = self._load_shortcuts(self._shortcuts_path(home))
         except (OSError, RuntimeError, ValueError):
-            return ids
+            return recorded
 
         launcher = str(self._launcher())
+        ids: dict[str, int] = {}
         for _, (_, shortcut) in saved_shortcuts.items():
             exe = str(shortcut.get("exe", (1, ""))[1]).strip('"')
             options = str(shortcut.get("LaunchOptions", (1, ""))[1])
@@ -228,11 +229,22 @@ class Plugin:
                 key = options.removeprefix("app ")
             else:
                 continue
-            if key not in ids and key not in removed:
+            if key not in removed:
                 ids[key] = app_id
         return ids
 
-    def _desktop_entries(self) -> list[dict[str, Any]]:
+    def _removable_packages(self) -> set[str]:
+        try:
+            output = self._run(["waydroid", "shell", "pm", "list", "packages", "-3"], timeout=10)
+        except (RuntimeError, subprocess.TimeoutExpired):
+            return set()
+        return {
+            line.removeprefix("package:")
+            for line in output.splitlines()
+            if line.startswith("package:") and PACKAGE_RE.fullmatch(line.removeprefix("package:"))
+        }
+
+    def _desktop_entries(self, removable_packages: set[str] | None = None) -> list[dict[str, Any]]:
         _, _, home = self._user()
         directory = home / ".local/share/applications"
         shortcut_ids = self._shortcut_ids(home)
@@ -254,10 +266,11 @@ class Plugin:
                     "icon": self._icon_data_uri(icon_path, home),
                     "iconPath": icon_path,
                     "shortcutId": shortcut_ids.get(package),
+                    "removable": package in removable_packages if removable_packages is not None else False,
                 })
             except (OSError, KeyError, configparser.Error):
                 continue
-        return apps
+        return sorted(apps, key=lambda app: app["name"].casefold())
 
     def _shortcuts_path(self, home: Path) -> Path:
         roots = [
@@ -363,7 +376,7 @@ class Plugin:
         }
 
     async def list_apps(self) -> list[dict[str, Any]]:
-        return self._desktop_entries() if self._initialized() else []
+        return self._desktop_entries(self._removable_packages()) if self._initialized() else []
 
     def _shortcut_details(self, name: str, package: str | None = None, icon: str = "") -> dict[str, str]:
         _, _, home = self._user()
@@ -468,6 +481,13 @@ class Plugin:
         if not PACKAGE_RE.fullmatch(package):
             raise RuntimeError("Invalid Android package name")
         self._start_launcher("app", package)
+
+    async def uninstall_app(self, package: str) -> None:
+        if not PACKAGE_RE.fullmatch(package):
+            raise RuntimeError("Invalid Android package name")
+        if package not in self._removable_packages():
+            raise RuntimeError("This Android app is not removable")
+        self._run(["waydroid", "app", "remove", package], timeout=60)
 
     async def remove_waydroid(self) -> None:
         user, _, home = self._user()
