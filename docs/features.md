@@ -17,6 +17,8 @@
 
 Waydroid generates one desktop entry for each installed Android application, as KDE exposes in its application menu. The plugin reads those `waydroid.<package>.desktop` files and only accepts entries whose main command is `waydroid app launch <package>`. It displays the icon from the same desktop-entry path used by KDE. Selecting an app opens Decky's native action menu, where it can be added to or removed from Steam. Launch appears after the shortcut exists and uses that Steam entry.
 
+Use **Install APK or XAPK** to select a package from the user home folder. Waydroid must already be running. APK files use Waydroid's supported single-package installer. XAPK files are unpacked into Waydroid's temporary data directory and installed with Android's split-package installer; the temporary files are removed after the operation.
+
 The optional **Add new apps to Steam** control appears before the app list. It records the apps present when enabled, then queues only later discovered desktop entries. This prevents existing apps from being added unexpectedly and preserves a removal choice: an app removed from Steam is never automatically added again. Shortcut IDs are saved in the user's Waydroid Manager state and existing matching launcher shortcuts are detected from Steam's shortcut file to avoid duplicates. The app list is alphabetized and initially shows ten apps; **Show more** adds ten at a time.
 
 Third-party Android packages can be removed directly from the app action menu through `waydroid app remove`. System packages are never offered this action.
@@ -25,4 +27,4 @@ Waydroid exports launcher icons but does not export Steam grid, hero, logo, or p
 
 ## Game Mode rendering
 
-The bundled launcher nests Gamescope on Steam's dynamically discovered Wayland socket and creates a fresh Wayland socket for every launch. It points the Waydroid session at that socket before opening Android or a selected application. This separates the Android session from Steam's compositor while inheriting the active Game Mode target size.
+The bundled launcher nests Gamescope on Steam's dynamically discovered Wayland socket and creates a fresh Wayland socket for every launch. It points the Waydroid session at that socket before opening Android or a selected application. The session runs in a transient user service which detects when Steam has closed the nested launcher and stops only that session. This separates the Android session from Steam's compositor while inheriting the active Game Mode target size.

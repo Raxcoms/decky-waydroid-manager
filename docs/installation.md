@@ -13,6 +13,7 @@
 3. Open **Waydroid Manager** from the Decky quick-access menu.
 4. Select **Install Waydroid with GAPPS**. The plugin runs `waydroid init --system_type GAPPS`, so Waydroid selects the official image for the running architecture rather than a device-name mapping.
 5. After the download completes, select **Add Waydroid to Steam**. The launch option appears once the shortcut exists; Android performs its first boot inside a nested Gamescope session.
+6. With Waydroid running, use **Install APK or XAPK** in the Android apps section to install a package from the user home folder.
 
 The first initialization downloads Android images and can take several minutes. Installing again is intentionally blocked while an image exists, so installed Android data is not replaced accidentally.
 
@@ -20,4 +21,4 @@ The first initialization downloads Android images and can take several minutes. 
 
 Use **Add Waydroid to Steam** for the Android launcher, or **Add to Steam** beside an Android app. Steam reads new non-Steam shortcuts when Game Mode restarts. Enable **Keep service warm** if shortcuts should work immediately after a device reboot; otherwise start the service from the plugin before using a shortcut.
 
-Steam's global and per-game resolution settings control the nested Game Mode surface. The launcher does not set a hard-coded Gamescope output mode, so the nested session inherits that surface size instead of assuming a particular handheld resolution.
+Steam's global and per-game resolution settings control the nested Game Mode surface. The launcher does not set a hard-coded Gamescope output mode, so the nested session inherits that surface size instead of assuming a particular handheld resolution. Shortcuts retain Armada's game-launch wrapper, allowing Steam to apply the selected controller configuration and per-game performance settings.
