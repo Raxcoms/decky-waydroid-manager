@@ -86,6 +86,8 @@ exec gamescope --backend wayland --expose-wayland --fullscreen --force-windows-f
     fi
     if [ "$WAYDROID_MANAGER_MODE" = "full" ]; then
       waydroid show-full-ui || true
+    else
+      waydroid app launch "$WAYDROID_MANAGER_PACKAGE" || true
     fi
     sleep 3
   done
