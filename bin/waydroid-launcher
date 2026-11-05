@@ -6,6 +6,8 @@ package="${2:-}"
 runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 parent_display="${DISPLAY:-}"
 parent_wayland="${GAMESCOPE_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:-}}"
+output_width="${WAYDROID_MANAGER_WIDTH:-}"
+output_height="${WAYDROID_MANAGER_HEIGHT:-}"
 log_dir="${XDG_STATE_HOME:-$HOME/.local/state}/waydroid-manager"
 mkdir -p "$log_dir"
 
@@ -19,6 +21,7 @@ if [[ "${WAYDROID_MANAGER_CLEAN_ENV:-}" != 1 ]]; then
     DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}" \
     DISPLAY="$parent_display" XAUTHORITY="${XAUTHORITY:-}" \
     GAMESCOPE_WAYLAND_DISPLAY="$parent_wayland" WAYLAND_DISPLAY="$parent_wayland" \
+    WAYDROID_MANAGER_WIDTH="$output_width" WAYDROID_MANAGER_HEIGHT="$output_height" \
     XDG_STATE_HOME="${XDG_STATE_HOME:-}" \
     "$0" "$@"
 fi
@@ -51,7 +54,11 @@ unset ENABLE_GAMESCOPE_WSI
 export DISABLE_GAMESCOPE_WSI=1
 
 # Gamescope nests on Steam's active Wayland socket and exposes a separate one to Waydroid.
-exec gamescope --backend wayland --expose-wayland --fullscreen --force-windows-fullscreen -- bash -c '
+dimensions=()
+if [[ "$output_width" =~ ^[1-9][0-9]*$ && "$output_height" =~ ^[1-9][0-9]*$ ]]; then
+  dimensions=(-W "$output_width" -H "$output_height" -w "$output_width" -h "$output_height")
+fi
+exec gamescope --backend wayland --expose-wayland --fullscreen --force-windows-fullscreen "${dimensions[@]}" -- bash -c '
   set -euo pipefail
   export WAYLAND_DISPLAY="${GAMESCOPE_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:-}}"
   if [ -z "$WAYLAND_DISPLAY" ]; then

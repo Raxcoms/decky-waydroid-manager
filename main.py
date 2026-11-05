@@ -160,6 +160,12 @@ class Plugin:
         ]
         if graphics_environment.get("XAUTHORITY"):
             environment.append(f"XAUTHORITY={graphics_environment['XAUTHORITY']}")
+        resolution = self._panel_resolution()
+        if resolution:
+            environment.extend((
+                f"WAYDROID_MANAGER_WIDTH={resolution['width']}",
+                f"WAYDROID_MANAGER_HEIGHT={resolution['height']}",
+            ))
         wayland_display = graphics_environment.get("GAMESCOPE_WAYLAND_DISPLAY") or graphics_environment.get("WAYLAND_DISPLAY")
         if wayland_display:
             environment.append(f"GAMESCOPE_WAYLAND_DISPLAY={wayland_display}")
