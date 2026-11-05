@@ -86,8 +86,15 @@ exec gamescope --backend wayland --expose-wayland --fullscreen --force-windows-f
       systemd-run --user --collect --quiet --unit="$session_unit" \
         --property=KillMode=control-group \
         --setenv="HOME=$HOME" \
+        --setenv="USER=$USER" \
+        --setenv="LOGNAME=$LOGNAME" \
+        --setenv="PATH=$PATH" \
         --setenv="XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" \
+        --setenv="XDG_STATE_HOME=${XDG_STATE_HOME:-}" \
         --setenv="DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" \
+        --setenv="DISPLAY=$DISPLAY" \
+        --setenv="XAUTHORITY=${XAUTHORITY:-}" \
+        --setenv="GAMESCOPE_WAYLAND_DISPLAY=$GAMESCOPE_WAYLAND_DISPLAY" \
         --setenv="WAYLAND_DISPLAY=$WAYLAND_DISPLAY" \
         --setenv="WAYDROID_MANAGER_LOG_DIR=$WAYDROID_MANAGER_LOG_DIR" \
         "$WAYDROID_MANAGER_SESSION_RUNNER" "$$"
