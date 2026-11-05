@@ -21,4 +21,4 @@ The first initialization downloads Android images and can take several minutes. 
 
 Use **Add Waydroid to Steam** for the Android launcher, or **Add to Steam** beside an Android app. New shortcuts appear immediately through Steam's live shortcut API. Start the service from the plugin before using a shortcut.
 
-Android receives the primary compositor's output geometry and refresh rate. Per-game resolution overrides and live frame-limit changes remain under validation. Shortcuts retain Armada's game-launch wrapper, allowing Steam to identify the game window and apply the selected controller configuration.
+Android receives the primary compositor's output geometry and refresh rate. The QAM frame limiter is synchronized to the foreground app on Android 13; per-game resolution overrides remain under validation. Shortcuts retain Armada's game-launch wrapper, allowing Steam to identify the game window and apply the selected controller configuration.

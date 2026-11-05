@@ -30,4 +30,4 @@ pnpm run build
 
 The build produces `dist/index.js`. GitHub Actions uploads the installable `waydroid-manager` plugin directory directly as its artifact.
 
-The direct Wayland path has been tested on Thor with working app presentation, direct touch, and controller input. Frame-limit synchronization, duplicate frame reporting, repeated launches, and per-game resolution overrides remain under live validation; see the architecture notes.
+The direct Wayland path has been tested on Thor with working app presentation, direct touch, controller input, and live QAM cap changes on Android 13. Duplicate frame reporting, repeated launches, and per-game resolution overrides remain under live validation; see the architecture notes.

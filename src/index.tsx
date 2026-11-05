@@ -16,6 +16,7 @@ import {
 } from "@decky/ui";
 import { useCallback, useEffect, useState } from "react";
 import { t } from "./i18n";
+import { watchFrameLimit } from "./frameLimit";
 
 type Resolution = { width: number; height: number } | null;
 type Status = {
@@ -423,9 +424,13 @@ function Content() {
   );
 }
 
-export default definePlugin(() => ({
-  name: t("pluginName"),
-  titleView: <div className={staticClasses.Title}>{t("pluginName")}</div>,
-  content: <Content />,
-  icon: <AndroidRobotIcon />,
-}));
+export default definePlugin(() => {
+  const stopFrameLimit = watchFrameLimit();
+  return {
+    name: t("pluginName"),
+    titleView: <div className={staticClasses.Title}>{t("pluginName")}</div>,
+    content: <Content />,
+    icon: <AndroidRobotIcon />,
+    onDismount: stopFrameLimit,
+  };
+});

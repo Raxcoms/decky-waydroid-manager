@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any
 
 import decky
+from waydroid_manager.frame_limit import FrameLimiter, active_launch
+from waydroid_manager.proc import clean_env
 
 
 PACKAGE_RE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -31,6 +33,7 @@ class Plugin:
     def _run(self, command: list[str], timeout: int = 30) -> str:
         result = subprocess.run(
             command,
+            env=clean_env(),
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -60,6 +63,7 @@ class Plugin:
     def _service_state(self, action: str) -> bool:
         return subprocess.run(
             ["systemctl", "is-" + action, SERVICE],
+            env=clean_env(),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,
@@ -211,7 +215,7 @@ class Plugin:
         if package:
             command.append(package)
         with log_path.open("a", encoding="utf-8") as log:
-            subprocess.Popen(command, start_new_session=True, stdout=log, stderr=subprocess.STDOUT)
+            subprocess.Popen(command, env=clean_env(), start_new_session=True, stdout=log, stderr=subprocess.STDOUT)
 
     def _state_path(self, home: Path) -> Path:
         return home / ".config/waydroid-manager/state.json"
@@ -622,8 +626,23 @@ class Plugin:
         decky.logger.info("Removed Waydroid data for %s", user)
 
     async def _main(self):
+        self._frame_limiter = FrameLimiter(self._run)
+        self._frame_limit_lock = asyncio.Lock()
         await asyncio.to_thread(self._start_input_sync)
         decky.logger.info("Waydroid Manager loaded")
 
     async def _unload(self):
-        await asyncio.to_thread(self._stop_input_sync)
+        try:
+            async with self._frame_limit_lock:
+                await asyncio.to_thread(self._frame_limiter.restore)
+        finally:
+            await asyncio.to_thread(self._stop_input_sync)
+
+    async def sync_frame_limit(self, fps: int) -> None:
+        if type(fps) is not int or not 0 <= fps <= 1000:
+            raise RuntimeError("Invalid frame limit")
+        async with self._frame_limit_lock:
+            _, uid, _ = self._user()
+            relay = Path(decky.DECKY_PLUGIN_DIR).resolve() / "bin/waydroid-wayland-relay"
+            launch = await asyncio.to_thread(active_launch, uid, relay)
+            await asyncio.to_thread(self._frame_limiter.sync, fps, launch)
