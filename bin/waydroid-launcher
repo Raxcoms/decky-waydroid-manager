@@ -28,6 +28,7 @@ if [[ "${WAYDROID_MANAGER_CLEAN_ENV:-}" != 1 ]]; then
     DISPLAY="$parent_display" XAUTHORITY="${XAUTHORITY:-}" \
     GAMESCOPE_WAYLAND_DISPLAY="$parent_wayland" WAYLAND_DISPLAY="$parent_wayland" \
     WAYDROID_MANAGER_WIDTH="$output_width" WAYDROID_MANAGER_HEIGHT="$output_height" \
+    GAMESCOPE_LIMITER_FILE="${GAMESCOPE_LIMITER_FILE:-}" \
     XDG_STATE_HOME="${XDG_STATE_HOME:-}" \
     WAYDROID_MANAGER_SESSION_RUNNER="$session_runner" \
     WAYDROID_MANAGER_STEAM_OWNER_PID="$steam_owner_pid" \
