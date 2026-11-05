@@ -11,6 +11,10 @@ output_height="${WAYDROID_MANAGER_HEIGHT:-}"
 log_dir="${XDG_STATE_HOME:-$HOME/.local/state}/waydroid-manager"
 launcher_dir="$(cd "$(dirname "$0")" && pwd)"
 session_runner="$launcher_dir/waydroid-session"
+steam_owner_pid=""
+if [[ -n "${SteamAppId:-}${SteamGameId:-}" ]]; then
+  steam_owner_pid="$PPID"
+fi
 mkdir -p "$log_dir"
 
 if [[ "${WAYDROID_MANAGER_CLEAN_ENV:-}" != 1 ]]; then
@@ -26,6 +30,7 @@ if [[ "${WAYDROID_MANAGER_CLEAN_ENV:-}" != 1 ]]; then
     WAYDROID_MANAGER_WIDTH="$output_width" WAYDROID_MANAGER_HEIGHT="$output_height" \
     XDG_STATE_HOME="${XDG_STATE_HOME:-}" \
     WAYDROID_MANAGER_SESSION_RUNNER="$session_runner" \
+    WAYDROID_MANAGER_STEAM_OWNER_PID="$steam_owner_pid" \
     "$0" "$@"
 fi
 
@@ -71,6 +76,10 @@ exec gamescope --backend wayland --expose-wayland --fullscreen --force-windows-f
   fi
   session_unit="waydroid-manager-session-$$"
   owns_session=0
+  steam_owner_pid="${WAYDROID_MANAGER_STEAM_OWNER_PID:-}"
+  process_is_running() {
+    [ -r "/proc/$1/stat" ] && [ "$(awk "{print \$3}" "/proc/$1/stat")" != Z ]
+  }
   cleanup_session() {
     trap - EXIT HUP INT TERM
     if [ "$owns_session" = 1 ]; then
@@ -78,6 +87,14 @@ exec gamescope --backend wayland --expose-wayland --fullscreen --force-windows-f
     fi
   }
   trap cleanup_session EXIT HUP INT TERM
+  existing_display="$(waydroid status 2>/dev/null | sed -n "s/^Wayland display:[[:space:]]*//p" | head -n 1)"
+  if waydroid status 2>/dev/null | grep -q "^Session:[[:space:]]*RUNNING" && [ -n "$existing_display" ] && [ "$existing_display" != "$WAYLAND_DISPLAY" ]; then
+    waydroid session stop >/dev/null 2>&1 || true
+    for _ in {1..15}; do
+      waydroid status 2>/dev/null | grep -q "^Session:[[:space:]]*RUNNING" || break
+      sleep 1
+    done
+  fi
   for attempt in {1..45}; do
     if waydroid status 2>/dev/null | grep -q "^Session:[[:space:]]*RUNNING"; then
       break
@@ -138,7 +155,18 @@ exec gamescope --backend wayland --expose-wayland --fullscreen --force-windows-f
     waydroid show-full-ui
   fi
   while :; do
+    if [ -n "$steam_owner_pid" ] && ! process_is_running "$steam_owner_pid"; then
+      exit 0
+    fi
     sleep 3600 &
-    wait "$!"
+    if [ -n "$steam_owner_pid" ]; then
+      for _ in {1..3600}; do
+        process_is_running "$steam_owner_pid" || exit 0
+        sleep 1
+      done
+      wait "$!"
+    else
+      wait "$!"
+    fi
   done
 '

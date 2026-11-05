@@ -37,6 +37,6 @@ for _ in {1..90}; do
   sleep 1
 done
 
-while kill -0 "$owner_pid" 2>/dev/null; do
+while [ -r "/proc/$owner_pid/stat" ] && [ "$(awk '{print $3}' "/proc/$owner_pid/stat")" != Z ]; do
   sleep 1
 done
