@@ -21,4 +21,4 @@ The first initialization downloads Android images and can take several minutes. 
 
 Use **Add Waydroid to Steam** for the Android launcher, or **Add to Steam** beside an Android app. Steam reads new non-Steam shortcuts when Game Mode restarts. Enable **Keep service warm** if shortcuts should work immediately after a device reboot; otherwise start the service from the plugin before using a shortcut.
 
-Steam's global and per-game resolution settings control the nested Game Mode surface. The launcher does not set a hard-coded Gamescope output mode, so the nested session inherits that surface size instead of assuming a particular handheld resolution. Shortcuts retain Armada's game-launch wrapper, allowing Steam to apply the selected controller configuration and per-game performance settings.
+Steam's global and per-game resolution settings control the nested Game Mode surface. The launcher detects that rotation-aware target size and passes it to nested Gamescope instead of assuming a particular handheld resolution. Shortcuts retain Armada's game-launch wrapper, allowing Steam to apply the selected controller configuration and per-game performance settings.

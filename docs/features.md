@@ -27,4 +27,4 @@ Waydroid exports launcher icons but does not export Steam grid, hero, logo, or p
 
 ## Game Mode rendering
 
-The bundled launcher nests Gamescope on Steam's dynamically discovered Wayland socket and creates a fresh Wayland socket for every launch. It points the Waydroid session at that socket before opening Android or a selected application. The session runs in a transient user service which detects when Steam has closed the nested launcher and stops only that session. This separates the Android session from Steam's compositor while inheriting the active Game Mode target size.
+The bundled launcher nests Gamescope on Steam's dynamically discovered Wayland socket and creates a fresh Wayland socket for every launch. It passes Steam's rotation-aware target size to nested Gamescope, then points the Waydroid session at that socket before opening Android or a selected application. The transient user service waits until Android reports itself ready, detects when Steam has closed the nested launcher, and stops only that session. This separates the Android session from Steam's compositor while avoiding premature app launch requests.
