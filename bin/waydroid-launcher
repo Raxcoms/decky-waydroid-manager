@@ -9,7 +9,6 @@ parent_wayland="${GAMESCOPE_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:-}}"
 output_width="${WAYDROID_MANAGER_WIDTH:-}"
 output_height="${WAYDROID_MANAGER_HEIGHT:-}"
 log_dir="${XDG_STATE_HOME:-$HOME/.local/state}/waydroid-manager"
-socket_state="$runtime_dir/waydroid-manager-gamescope-socket"
 mkdir -p "$log_dir"
 
 if [[ "${WAYDROID_MANAGER_CLEAN_ENV:-}" != 1 ]]; then
@@ -54,30 +53,18 @@ export WAYDROID_MANAGER_LOG_DIR="$log_dir"
 unset ENABLE_GAMESCOPE_WSI
 export DISABLE_GAMESCOPE_WSI=1
 
-cleanup_socket() {
-  local socket=""
-  [[ -f "$socket_state" ]] && read -r socket < "$socket_state"
-  rm -f "$socket_state"
-  [[ -n "$socket" && "$socket" != "$parent_wayland" ]] || return
-  rm -f "$runtime_dir/$socket" "$runtime_dir/$socket.lock" "$runtime_dir/$socket-ei" "$runtime_dir/$socket-ei.lock"
-}
-
-cleanup_socket
-
 # Gamescope nests on Steam's active Wayland socket and exposes a separate one to Waydroid.
 dimensions=()
 if [[ "$output_width" =~ ^[1-9][0-9]*$ && "$output_height" =~ ^[1-9][0-9]*$ ]]; then
   dimensions=(-W "$output_width" -H "$output_height" -w "$output_width" -h "$output_height")
 fi
-set +e
-gamescope --backend wayland --steam --expose-wayland --fullscreen --force-windows-fullscreen "${dimensions[@]}" -- bash -c '
+exec gamescope --backend wayland --expose-wayland --fullscreen --force-windows-fullscreen "${dimensions[@]}" -- bash -c '
   set -euo pipefail
   export WAYLAND_DISPLAY="${GAMESCOPE_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:-}}"
   if [ -z "$WAYLAND_DISPLAY" ]; then
     echo "Nested Gamescope did not expose a Wayland socket." >&2
     exit 1
   fi
-  printf "%s\n" "$WAYLAND_DISPLAY" > "$XDG_RUNTIME_DIR/waydroid-manager-gamescope-socket"
   session_pid=""
   for attempt in {1..45}; do
     if waydroid status 2>/dev/null | grep -q "^Session:[[:space:]]*RUNNING"; then
@@ -111,7 +98,3 @@ gamescope --backend wayland --steam --expose-wayland --fullscreen --force-window
   fi
   wait "$session_pid"
 '
-status=$?
-set -e
-cleanup_socket
-exit "$status"
