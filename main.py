@@ -1,4 +1,5 @@
 import base64
+import asyncio
 import configparser
 import json
 import os
@@ -25,6 +26,8 @@ LAUNCH_WRAPPER = "/usr/libexec/armada/armada-game-launch"
 
 
 class Plugin:
+    INPUT_SYNC_UNIT = "waydroid-manager-input-sync.service"
+
     def _run(self, command: list[str], timeout: int = 30) -> str:
         result = subprocess.run(
             command,
@@ -84,6 +87,33 @@ class Plugin:
         if not path.is_file():
             raise RuntimeError("The bundled Waydroid launcher is missing")
         return path
+
+    def _input_sync(self) -> Path:
+        path = Path(decky.DECKY_PLUGIN_DIR) / "bin" / "waydroid-input-sync"
+        if not path.is_file():
+            raise RuntimeError("The bundled Waydroid input synchronizer is missing")
+        return path
+
+    def _start_input_sync(self) -> None:
+        subprocess.run(
+            ["systemctl", "stop", self.INPUT_SYNC_UNIT],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        self._run([
+            "systemd-run", "--quiet", "--no-block", "--collect",
+            "--unit=waydroid-manager-input-sync",
+            str(self._input_sync()),
+        ])
+
+    def _stop_input_sync(self) -> None:
+        subprocess.run(
+            ["systemctl", "stop", self.INPUT_SYNC_UNIT],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
 
     def _steam_gamescope_processes(self) -> dict[str, list[bytes]]:
         processes: dict[str, list[bytes]] = {}
@@ -596,4 +626,8 @@ class Plugin:
         decky.logger.info("Removed Waydroid data for %s", user)
 
     async def _main(self):
+        await asyncio.to_thread(self._start_input_sync)
         decky.logger.info("Waydroid Manager loaded")
+
+    async def _unload(self):
+        await asyncio.to_thread(self._stop_input_sync)

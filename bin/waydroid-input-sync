@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+is_waydroid_running() {
+  waydroid status 2>/dev/null | grep -q '^Session:[[:space:]]*RUNNING'
+}
+
+sync_steam_controller() {
+  local event vendor product major minor node
+  for event in /sys/class/input/event*; do
+    [[ -r "$event/device/id/vendor" && -r "$event/device/id/product" ]] || continue
+    vendor="$(<"$event/device/id/vendor")"
+    product="$(<"$event/device/id/product")"
+    [[ "${vendor,,}" == "28de" && "${product,,}" == "11ff" ]] || continue
+
+    node="${event##*/}"
+    if waydroid shell -- test -e "/dev/input/$node" >/dev/null 2>&1; then
+      continue
+    fi
+
+    major="$(sed -n 's/^MAJOR=//p' "$event/uevent")"
+    minor="$(sed -n 's/^MINOR=//p' "$event/uevent")"
+    [[ "$major" =~ ^[0-9]+$ && "$minor" =~ ^[0-9]+$ ]] || continue
+    waydroid shell -- mknod -m 660 "/dev/input/$node" c "$major" "$minor" >/dev/null 2>&1 || true
+  done
+}
+
+while :; do
+  if is_waydroid_running; then
+    waydroid prop set persist.waydroid.uevent true >/dev/null 2>&1 || true
+    sync_steam_controller
+  fi
+  sleep 2
+done
