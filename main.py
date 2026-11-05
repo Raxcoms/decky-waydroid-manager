@@ -220,6 +220,12 @@ class Plugin:
             return recorded
 
         launcher = str(self._launcher())
+        def shortcut_key(options: str) -> str | None:
+            if options == "full" or options.endswith(" full"):
+                return WAYDROID_SHORTCUT_KEY
+            match = re.search(r"(?:^|\\s)app\\s+([A-Za-z0-9._-]+)$", options)
+            return match.group(1) if match and PACKAGE_RE.fullmatch(match.group(1)) else None
+
         ids: dict[str, int] = {}
         saved_by_id: dict[int, dict[str, tuple[int, Any]]] = {}
         for _, (_, shortcut) in saved_shortcuts.items():
@@ -232,11 +238,8 @@ class Plugin:
             saved_by_id[normalized_id] = shortcut
             if exe != launcher:
                 continue
-            if options == "full":
-                key = WAYDROID_SHORTCUT_KEY
-            elif options.startswith("app ") and PACKAGE_RE.fullmatch(options.removeprefix("app ")):
-                key = options.removeprefix("app ")
-            else:
+            key = shortcut_key(options)
+            if key is None:
                 continue
             if key not in removed:
                 ids[key] = normalized_id
@@ -245,8 +248,7 @@ class Plugin:
             if shortcut is None or key in removed:
                 continue
             options = str(shortcut.get("LaunchOptions", (1, ""))[1])
-            expected = "full" if key == WAYDROID_SHORTCUT_KEY else f"app {key}"
-            if options == expected:
+            if shortcut_key(options) == key:
                 ids[key] = app_id & 0xFFFFFFFF
         return ids
 
