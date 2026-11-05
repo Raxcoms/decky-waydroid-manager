@@ -8,6 +8,8 @@ import shutil
 import struct
 import subprocess
 import tempfile
+import uuid
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -501,6 +503,58 @@ class Plugin:
         if self._initialized():
             raise RuntimeError("Waydroid is already initialized. Remove it before installing a new image.")
         self._run(["waydroid", "init", "--system_type", "GAPPS"], timeout=1800)
+
+    def _install_file(self, value: str) -> Path:
+        _, _, home = self._user()
+        try:
+            path = Path(value).resolve(strict=True)
+            path.relative_to(home)
+        except (OSError, ValueError):
+            raise RuntimeError("Select an APK or XAPK from your home folder")
+        if not path.is_file() or path.suffix.lower() not in {".apk", ".xapk"}:
+            raise RuntimeError("Select a valid APK or XAPK file")
+        return path
+
+    def _require_session(self) -> None:
+        try:
+            status = self._run(["waydroid", "status"])
+        except RuntimeError as error:
+            raise RuntimeError("Start Waydroid before installing an app") from error
+        if not re.search(r"^Session:\s*RUNNING$", status, re.MULTILINE):
+            raise RuntimeError("Start Waydroid before installing an app")
+
+    async def install_package(self, value: str) -> None:
+        if not self._initialized():
+            raise RuntimeError("Install the GAPPS image before installing apps")
+        path = self._install_file(value)
+        self._require_session()
+        if path.suffix.lower() == ".apk":
+            self._run(["waydroid", "app", "install", str(path)], timeout=300)
+            return
+
+        _, _, home = self._user()
+        host_dir = home / ".local/share/waydroid/data/waydroid_tmp" / f"decky-{uuid.uuid4().hex}"
+        try:
+            with zipfile.ZipFile(path) as archive:
+                packages = [item for item in archive.infolist() if not item.is_dir() and item.filename.lower().endswith(".apk")]
+                if not packages:
+                    raise RuntimeError("This XAPK does not contain any APK files")
+                host_dir.mkdir(parents=True)
+                installed: list[str] = []
+                for index, item in enumerate(packages):
+                    name = Path(item.filename).name
+                    if not name or name in installed:
+                        raise RuntimeError("This XAPK contains invalid APK names")
+                    target = host_dir / name
+                    with archive.open(item) as source, target.open("wb") as destination:
+                        shutil.copyfileobj(source, destination)
+                    installed.append(name)
+            guest_dir = f"/data/waydroid_tmp/{host_dir.name}"
+            self._run(["waydroid", "shell", "pm", "install-multiple", "-r", *[f"{guest_dir}/{name}" for name in installed]], timeout=300)
+        except zipfile.BadZipFile as error:
+            raise RuntimeError("This XAPK is not a valid archive") from error
+        finally:
+            shutil.rmtree(host_dir, ignore_errors=True)
 
     async def set_auto_start(self, enabled: bool) -> None:
         self._run(["systemctl", "enable" if enabled else "disable", SERVICE])

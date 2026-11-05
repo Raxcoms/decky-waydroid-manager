@@ -1,4 +1,4 @@
-import { callable, definePlugin, toaster } from "@decky/api";
+import { callable, definePlugin, FileSelectionType, openFilePicker, toaster } from "@decky/api";
 import {
   ButtonItem,
   ConfirmModal,
@@ -57,8 +57,10 @@ const removeShortcutRecord = callable<[string], void>("remove_shortcut_record");
 const setAutoAddApps = callable<[boolean], void>("set_auto_add_apps");
 const pendingAutoShortcuts = callable<[], Shortcut[]>("pending_auto_shortcuts");
 const removeWaydroid = callable<[], void>("remove_waydroid");
+const installPackage = callable<[string], void>("install_package");
 
 const autoAddAttempted = new Set<string>();
+let rememberedVisibleApps = 10;
 
 function toast(title: string, body: string) {
   toaster.toast({ title, body });
@@ -213,7 +215,14 @@ function Content() {
   const [status, setStatus] = useState<Status | null>(null);
   const [apps, setApps] = useState<AndroidApp[]>([]);
   const [message, setMessage] = useState<string | null>(null);
-  const [visibleApps, setVisibleApps] = useState(10);
+  const [visibleApps, setVisibleAppsState] = useState(rememberedVisibleApps);
+  const setVisibleApps = (next: number | ((current: number) => number)) => {
+    setVisibleAppsState((current) => {
+      const value = typeof next === "function" ? next(current) : next;
+      rememberedVisibleApps = value;
+      return value;
+    });
+  };
 
   const refresh = useCallback(async () => {
     const nextStatus = await getStatus();
@@ -331,6 +340,27 @@ function Content() {
 
       {status?.initialized && (
         <PanelSection title={t("androidApps", { count: apps.length })}>
+          <PanelSectionRow>
+            <ButtonItem
+              layout="below"
+              onClick={() => {
+                openFilePicker(FileSelectionType.FILE, "/var/home", true, true)
+                  .then(async (result) => {
+                    const path = result.realpath || result.path;
+                    if (!path) return;
+                    await installPackage(path);
+                    setApps(await listApps());
+                    toast(t("waydroid"), t("packageInstalled"));
+                  })
+                  .catch((error) => setMessage(error instanceof Error ? error.message : String(error)));
+              }}
+            >
+              {t("installPackage")}
+            </ButtonItem>
+          </PanelSectionRow>
+          <PanelSectionRow>
+            <Field description={t("installPackageDescription")} />
+          </PanelSectionRow>
           <PanelSectionRow>
             <ToggleField
               label={t("autoAddApps")}
