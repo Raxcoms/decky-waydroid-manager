@@ -116,7 +116,6 @@ exec gamescope --backend wayland --expose-wayland --fullscreen --force-windows-f
       exit 1
     fi
   fi
-  waydroid prop set persist.waydroid.uevent true >/dev/null 2>&1 || true
   for _ in {1..20}; do
     if waydroid app list 2>/dev/null | grep -q "^Name:"; then
       break

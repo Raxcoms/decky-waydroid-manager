@@ -1,54 +1,98 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/python3
+import os
+from pathlib import Path
+import stat
+import subprocess
+import tempfile
+import time
 
-is_waydroid_running() {
-  waydroid status 2>/dev/null | grep -q '^Session:[[:space:]]*RUNNING'
-}
 
-steam_controller_signature() {
-  local event vendor product major minor node signatures=()
-  for event in /sys/class/input/event*; do
-    [[ -r "$event/device/id/vendor" && -r "$event/device/id/product" ]] || continue
-    vendor="$(<"$event/device/id/vendor")"
-    product="$(<"$event/device/id/product")"
-    [[ "${vendor,,}" == "28de" && "${product,,}" == "11ff" ]] || continue
+LXC_PATH = "/var/lib/waydroid/lxc"
+ANDROID_INPUT_GID = 1004
 
-    node="${event##*/}"
-    major="$(sed -n 's/^MAJOR=//p' "$event/uevent")"
-    minor="$(sed -n 's/^MINOR=//p' "$event/uevent")"
-    [[ "$major" =~ ^[0-9]+$ && "$minor" =~ ^[0-9]+$ ]] || continue
-    signatures+=("$node:$major:$minor")
-  done
-  IFS=, printf '%s' "${signatures[*]}"
-}
 
-sync_steam_controller() {
-  local signature node major minor signatures=()
-  IFS=, read -r -a signatures <<<"$1"
-  for signature in "${signatures[@]}"; do
-    IFS=: read -r node major minor <<<"$signature"
-    timeout 5 waydroid shell -- test -e "/dev/input/$node" >/dev/null 2>&1 && continue
-    timeout 5 waydroid shell -- mknod -m 660 "/dev/input/$node" c "$major" "$minor" >/dev/null 2>&1 || true
-  done
-}
+def container_pid() -> str | None:
+    try:
+        result = subprocess.run(
+            ["lxc-info", "-P", LXC_PATH, "-n", "waydroid", "-pH"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except subprocess.SubprocessError:
+        return None
+    pid = result.stdout.strip()
+    return pid if result.returncode == 0 and pid.isdecimal() and int(pid) > 0 else None
 
-was_running=0
-last_signature=""
-while :; do
-  if is_waydroid_running; then
-    if (( ! was_running )); then
-      timeout 5 waydroid prop set persist.waydroid.uevent true >/dev/null 2>&1 || true
-      was_running=1
-      last_signature=""
-    fi
-    signature="$(steam_controller_signature)"
-    if [[ -n "$signature" && "$signature" != "$last_signature" ]]; then
-      sync_steam_controller "$signature"
-      last_signature="$signature"
-    fi
-  else
-    was_running=0
-    last_signature=""
-  fi
-  sleep 5
-done
+
+def steam_controllers() -> dict[str, int]:
+    controllers = {}
+    for event in Path("/sys/class/input").glob("event*"):
+        try:
+            vendor = (event / "device/id/vendor").read_text().strip().lower()
+            product = (event / "device/id/product").read_text().strip().lower()
+            source = Path("/dev/input") / event.name
+            info = source.stat()
+        except OSError:
+            continue
+        if vendor == "28de" and product == "11ff" and stat.S_ISCHR(info.st_mode):
+            controllers[event.name] = info.st_rdev
+    return controllers
+
+
+def publish_node(inputs: Path, name: str, device: int) -> None:
+    destination = inputs / name
+    try:
+        info = destination.lstat()
+        if stat.S_ISCHR(info.st_mode) and info.st_rdev == device:
+            return
+        destination.unlink()
+    except FileNotFoundError:
+        pass
+
+    with tempfile.TemporaryDirectory(prefix=".waydroid-manager-", dir=inputs.parent) as staging:
+        source = Path(staging) / name
+        os.mknod(source, stat.S_IFCHR | 0o660, device)
+        os.chown(source, 0, ANDROID_INPUT_GID)
+        source.chmod(0o660)
+        os.link(source, destination)
+
+
+def remove_node(inputs: Path, name: str, device: int) -> None:
+    try:
+        info = (inputs / name).lstat()
+        if stat.S_ISCHR(info.st_mode) and info.st_rdev == device:
+            (inputs / name).unlink()
+    except FileNotFoundError:
+        pass
+
+
+def sync(inputs: Path, controllers: dict[str, int], published: dict[str, int]) -> dict[str, int]:
+    for name, device in published.items():
+        if controllers.get(name) != device:
+            remove_node(inputs, name, device)
+    for name, device in controllers.items():
+        publish_node(inputs, name, device)
+    return controllers
+
+
+def main() -> None:
+    active_pid = None
+    published: dict[str, int] = {}
+    while True:
+        pid = container_pid()
+        if pid != active_pid:
+            active_pid = pid
+            published = {}
+        if pid:
+            inputs = Path("/proc") / pid / "root/dev/input"
+            try:
+                published = sync(inputs, steam_controllers(), published)
+            except OSError:
+                published = {}
+        time.sleep(1)
+
+
+if __name__ == "__main__":
+    main()
