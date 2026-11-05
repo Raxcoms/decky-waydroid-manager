@@ -12,7 +12,7 @@
 2. In Game Mode, open Decky Loader settings and install the ZIP.
 3. Open **Waydroid Manager** from the Decky quick-access menu.
 4. Select **Install Waydroid with GAPPS**. The plugin runs `waydroid init --system_type GAPPS`, so Waydroid selects the official image for the running architecture rather than a device-name mapping.
-5. After the download completes, select **Launch Waydroid**. Android performs its first boot inside a nested Gamescope session.
+5. After the download completes, select **Add Waydroid to Steam**. The launch option appears once the shortcut exists; Android performs its first boot inside a nested Gamescope session.
 
 The first initialization downloads Android images and can take several minutes. Installing again is intentionally blocked while an image exists, so installed Android data is not replaced accidentally.
 

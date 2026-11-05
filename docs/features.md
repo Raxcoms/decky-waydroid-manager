@@ -15,7 +15,7 @@
 
 ## Android application library
 
-Waydroid generates one desktop entry for each installed Android application, as KDE exposes in its application menu. The plugin reads those `waydroid.<package>.desktop` files and only accepts entries whose main command is `waydroid app launch <package>`. It displays the icon from the same desktop-entry path used by KDE. Selecting an app opens Decky's native action menu, where it can be launched or added to or removed from Steam individually.
+Waydroid generates one desktop entry for each installed Android application, as KDE exposes in its application menu. The plugin reads those `waydroid.<package>.desktop` files and only accepts entries whose main command is `waydroid app launch <package>`. It displays the icon from the same desktop-entry path used by KDE. Selecting an app opens Decky's native action menu, where it can be added to or removed from Steam. Launch appears after the shortcut exists and uses that Steam entry.
 
 The optional **Add new apps to Steam** control appears before the app list. It records the apps present when enabled, then queues only later discovered desktop entries. This prevents existing apps from being added unexpectedly and preserves a removal choice: an app removed from Steam is never automatically added again. Shortcut IDs are saved in the user's Waydroid Manager state and existing matching launcher shortcuts are detected from Steam's shortcut file to avoid duplicates. The app list is alphabetized and initially shows ten apps; **Show more** adds ten at a time.
 
@@ -25,4 +25,4 @@ Waydroid exports launcher icons but does not export Steam grid, hero, logo, or p
 
 ## Game Mode rendering
 
-The bundled launcher starts Gamescope's SDL backend on Steam's current Xwayland display and creates a fresh Wayland socket for every launch. It points the Waydroid session at that socket before opening Android or a selected application. This separates the Android session from Steam's compositor while inheriting the active Game Mode target size.
+The bundled launcher nests Gamescope on Steam's dynamically discovered Wayland socket and creates a fresh Wayland socket for every launch. It points the Waydroid session at that socket before opening Android or a selected application. This separates the Android session from Steam's compositor while inheriting the active Game Mode target size.
