@@ -60,6 +60,8 @@ const removeWaydroid = callable<[], void>("remove_waydroid");
 const installPackage = callable<[string], void>("install_package");
 
 const autoAddAttempted = new Set<string>();
+let cachedStatus: Status | null = null;
+let cachedApps: AndroidApp[] = [];
 let rememberedVisibleApps = 10;
 
 function toast(title: string, body: string) {
@@ -212,14 +214,28 @@ function AppRow({ app, setShortcutId, setMessage }: { app: AndroidApp; setShortc
 }
 
 function Content() {
-  const [status, setStatus] = useState<Status | null>(null);
-  const [apps, setApps] = useState<AndroidApp[]>([]);
+  const [status, setStatusState] = useState<Status | null>(cachedStatus);
+  const [apps, setAppsState] = useState<AndroidApp[]>(cachedApps);
   const [message, setMessage] = useState<string | null>(null);
   const [visibleApps, setVisibleAppsState] = useState(rememberedVisibleApps);
   const setVisibleApps = (next: number | ((current: number) => number)) => {
     setVisibleAppsState((current) => {
       const value = typeof next === "function" ? next(current) : next;
       rememberedVisibleApps = value;
+      return value;
+    });
+  };
+  const setStatus = (next: Status | null | ((current: Status | null) => Status | null)) => {
+    setStatusState((current) => {
+      const value = typeof next === "function" ? next(current) : next;
+      cachedStatus = value;
+      return value;
+    });
+  };
+  const setApps = (next: AndroidApp[] | ((current: AndroidApp[]) => AndroidApp[])) => {
+    setAppsState((current) => {
+      const value = typeof next === "function" ? next(current) : next;
+      cachedApps = value;
       return value;
     });
   };
