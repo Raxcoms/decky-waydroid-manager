@@ -46,6 +46,8 @@ def publish_node(inputs: Path, name: str, device: int) -> None:
     try:
         info = destination.lstat()
         if stat.S_ISCHR(info.st_mode) and info.st_rdev == device:
+            os.chown(destination, 0, ANDROID_INPUT_GID)
+            destination.chmod(0o660)
             return
         destination.unlink()
     except FileNotFoundError:
