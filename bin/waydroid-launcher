@@ -9,6 +9,8 @@ parent_wayland="${GAMESCOPE_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:-}}"
 output_width="${WAYDROID_MANAGER_WIDTH:-}"
 output_height="${WAYDROID_MANAGER_HEIGHT:-}"
 log_dir="${XDG_STATE_HOME:-$HOME/.local/state}/waydroid-manager"
+launcher_dir="$(cd "$(dirname "$0")" && pwd)"
+session_runner="$launcher_dir/waydroid-session"
 mkdir -p "$log_dir"
 
 if [[ "${WAYDROID_MANAGER_CLEAN_ENV:-}" != 1 ]]; then
@@ -23,6 +25,7 @@ if [[ "${WAYDROID_MANAGER_CLEAN_ENV:-}" != 1 ]]; then
     GAMESCOPE_WAYLAND_DISPLAY="$parent_wayland" WAYLAND_DISPLAY="$parent_wayland" \
     WAYDROID_MANAGER_WIDTH="$output_width" WAYDROID_MANAGER_HEIGHT="$output_height" \
     XDG_STATE_HOME="${XDG_STATE_HOME:-}" \
+    WAYDROID_MANAGER_SESSION_RUNNER="$session_runner" \
     "$0" "$@"
 fi
 
@@ -50,6 +53,7 @@ export XDG_RUNTIME_DIR="$runtime_dir"
 export WAYDROID_MANAGER_MODE="$mode"
 export WAYDROID_MANAGER_PACKAGE="$package"
 export WAYDROID_MANAGER_LOG_DIR="$log_dir"
+export WAYDROID_MANAGER_SESSION_RUNNER="$session_runner"
 unset ENABLE_GAMESCOPE_WSI
 export DISABLE_GAMESCOPE_WSI=1
 
@@ -65,12 +69,12 @@ exec gamescope --backend wayland --expose-wayland --fullscreen --force-windows-f
     echo "Nested Gamescope did not expose a Wayland socket." >&2
     exit 1
   fi
-  session_pid=""
+  session_unit="waydroid-manager-session-$$"
+  owns_session=0
   cleanup_session() {
     trap - EXIT HUP INT TERM
-    if [ -n "$session_pid" ] && kill -0 "$session_pid" 2>/dev/null; then
-      waydroid session stop >>"$WAYDROID_MANAGER_LOG_DIR/session.log" 2>&1 || true
-      wait "$session_pid" || true
+    if [ "$owns_session" = 1 ]; then
+      systemctl --user stop "$session_unit" >/dev/null 2>&1 || true
     fi
   }
   trap cleanup_session EXIT HUP INT TERM
@@ -78,9 +82,16 @@ exec gamescope --backend wayland --expose-wayland --fullscreen --force-windows-f
     if waydroid status 2>/dev/null | grep -q "^Session:[[:space:]]*RUNNING"; then
       break
     fi
-    if (( attempt == 1 )) || { (( attempt % 8 == 0 )) && ! kill -0 "$session_pid" 2>/dev/null; }; then
-      waydroid session start >>"$WAYDROID_MANAGER_LOG_DIR/session.log" 2>&1 &
-      session_pid=$!
+    if (( attempt == 1 )); then
+      systemd-run --user --collect --quiet --unit="$session_unit" \
+        --property=KillMode=control-group \
+        --setenv="HOME=$HOME" \
+        --setenv="XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" \
+        --setenv="DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" \
+        --setenv="WAYLAND_DISPLAY=$WAYLAND_DISPLAY" \
+        --setenv="WAYDROID_MANAGER_LOG_DIR=$WAYDROID_MANAGER_LOG_DIR" \
+        "$WAYDROID_MANAGER_SESSION_RUNNER" "$$"
+      owns_session=1
     fi
     sleep 1
   done
@@ -104,5 +115,8 @@ exec gamescope --backend wayland --expose-wayland --fullscreen --force-windows-f
   else
     waydroid show-full-ui
   fi
-  wait "$session_pid"
+  while :; do
+    sleep 3600 &
+    wait "$!"
+  done
 '

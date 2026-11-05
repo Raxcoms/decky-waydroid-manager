@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+owner_pid="${1:?missing launch process id}"
+log_dir="${WAYDROID_MANAGER_LOG_DIR:?missing log directory}"
+session_pid=""
+
+stop_session() {
+  trap - EXIT HUP INT TERM
+  if [[ -n "$session_pid" ]] && kill -0 "$session_pid" 2>/dev/null; then
+    waydroid session stop >>"$log_dir/session.log" 2>&1 || true
+    wait "$session_pid" || true
+  fi
+}
+
+trap stop_session EXIT HUP INT TERM
+waydroid session start >>"$log_dir/session.log" 2>&1 &
+session_pid=$!
+
+for _ in {1..45}; do
+  waydroid status 2>/dev/null | grep -q "^Session:[[:space:]]*RUNNING" && break
+  kill -0 "$session_pid" 2>/dev/null || exit 1
+  sleep 1
+done
+
+waydroid status 2>/dev/null | grep -q "^Session:[[:space:]]*RUNNING" || exit 1
+while kill -0 "$owner_pid" 2>/dev/null; do
+  sleep 1
+done
