@@ -221,11 +221,16 @@ class Plugin:
 
         launcher = str(self._launcher())
         ids: dict[str, int] = {}
+        saved_by_id: dict[int, dict[str, tuple[int, Any]]] = {}
         for _, (_, shortcut) in saved_shortcuts.items():
             exe = str(shortcut.get("exe", (1, ""))[1]).strip('"')
             options = str(shortcut.get("LaunchOptions", (1, ""))[1])
             app_id = shortcut.get("appid", (2, 0))[1]
-            if exe != launcher or not isinstance(app_id, int):
+            if not isinstance(app_id, int):
+                continue
+            normalized_id = app_id & 0xFFFFFFFF
+            saved_by_id[normalized_id] = shortcut
+            if exe != launcher:
                 continue
             if options == "full":
                 key = WAYDROID_SHORTCUT_KEY
@@ -234,7 +239,15 @@ class Plugin:
             else:
                 continue
             if key not in removed:
-                ids[key] = app_id
+                ids[key] = normalized_id
+        for key, app_id in recorded.items():
+            shortcut = saved_by_id.get(app_id & 0xFFFFFFFF)
+            if shortcut is None or key in removed:
+                continue
+            options = str(shortcut.get("LaunchOptions", (1, ""))[1])
+            expected = "full" if key == WAYDROID_SHORTCUT_KEY else f"app {key}"
+            if options == expected:
+                ids[key] = app_id & 0xFFFFFFFF
         return ids
 
     def _removable_packages(self) -> set[str]:
