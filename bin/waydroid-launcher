@@ -68,7 +68,7 @@ dimensions=()
 if [[ "$output_width" =~ ^[1-9][0-9]*$ && "$output_height" =~ ^[1-9][0-9]*$ ]]; then
   dimensions=(-W "$output_width" -H "$output_height" -w "$output_width" -h "$output_height")
 fi
-gamescope --backend wayland --expose-wayland --fullscreen --force-windows-fullscreen --force-composition "${dimensions[@]}" -- bash -c '
+gamescope --backend wayland --expose-wayland --fullscreen --force-windows-fullscreen "${dimensions[@]}" -- bash -c '
   set -euo pipefail
   export WAYLAND_DISPLAY="${GAMESCOPE_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:-}}"
   if [ -z "$WAYLAND_DISPLAY" ]; then
