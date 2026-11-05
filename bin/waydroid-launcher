@@ -62,20 +62,19 @@ export WAYDROID_MANAGER_PACKAGE="$package"
 export WAYDROID_MANAGER_LOG_DIR="$log_dir"
 export WAYDROID_MANAGER_SESSION_RUNNER="$session_runner"
 export WAYDROID_MANAGER_SESSION_UNIT="waydroid-manager-session"
-export WAYDROID_MANAGER_DISPLAY_SYNC="$launcher_dir/waydroid-display-sync"
 unset ENABLE_GAMESCOPE_WSI
 export DISABLE_GAMESCOPE_WSI=1
 
-# Gamescope nests on Steam's active Wayland socket and exposes a separate one to Waydroid.
+# Gamescope hosts on Steam's Xwayland display and exposes Wayland to Android.
 dimensions=()
-refresh="$("$WAYDROID_MANAGER_DISPLAY_SYNC" --refresh 2>/dev/null || true)"
+refresh="$("$launcher_dir/waydroid-display-info" 2>/dev/null || true)"
 if [[ "$refresh" =~ ^[1-9][0-9]*$ ]]; then
   dimensions+=(-r "$refresh")
 fi
 if [[ "$output_width" =~ ^[1-9][0-9]*$ && "$output_height" =~ ^[1-9][0-9]*$ ]]; then
   dimensions+=(-W "$output_width" -H "$output_height" -w "$output_width" -h "$output_height")
 fi
-SDL_VIDEODRIVER=x11 gamescope --backend sdl --expose-wayland --fullscreen --force-windows-fullscreen "${dimensions[@]}" -- bash -c '
+SDL_VIDEODRIVER=x11 GAMESCOPE_MANGOAPP_SOCKET_DISABLE=1 gamescope --backend sdl --expose-wayland --fullscreen --force-windows-fullscreen --default-touch-mode 4 "${dimensions[@]}" -- bash -c '
   set -euo pipefail
   export WAYLAND_DISPLAY="${GAMESCOPE_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:-}}"
   if [ -z "$WAYLAND_DISPLAY" ]; then
@@ -84,15 +83,12 @@ SDL_VIDEODRIVER=x11 gamescope --backend sdl --expose-wayland --fullscreen --forc
   fi
   session_unit="$WAYDROID_MANAGER_SESSION_UNIT"
   owns_session=0
-  "$WAYDROID_MANAGER_DISPLAY_SYNC" &
-  display_sync_pid=$!
   steam_owner_pid="${WAYDROID_MANAGER_STEAM_OWNER_PID:-}"
   process_is_running() {
     [ -r "/proc/$1/stat" ] && [ "$(awk "{print \$3}" "/proc/$1/stat")" != Z ]
   }
   cleanup_session() {
     trap - EXIT HUP INT TERM
-    kill "$display_sync_pid" >/dev/null 2>&1 || true
     if [ "$owns_session" = 1 ]; then
       systemctl --user stop "$session_unit" >/dev/null 2>&1 || true
     fi

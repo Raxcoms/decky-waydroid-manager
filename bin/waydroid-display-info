@@ -3,8 +3,6 @@ import os
 from pathlib import Path
 import re
 import subprocess
-import sys
-import time
 
 
 def run(*args: str, display: str = "") -> str:
@@ -16,7 +14,7 @@ def run(*args: str, display: str = "") -> str:
 
 
 def properties(display: str) -> dict[str, int]:
-    output = run("xprop", "-root", "GAMESCOPE_FPS_LIMIT", "GAMESCOPE_DYNAMIC_REFRESH", display=display)
+    output = run("xprop", "-root", "GAMESCOPE_DYNAMIC_REFRESH", display=display)
     return {name: int(value) for name, value in re.findall(r"(GAMESCOPE_\w+)\(CARDINAL\) = (\d+)", output)}
 
 
@@ -62,20 +60,7 @@ def main() -> None:
     control = primary_display()
     if not control:
         raise SystemExit("Could not find Steam's primary Gamescope control display")
-    if len(sys.argv) > 1 and sys.argv[1] == "--refresh":
-        print(properties(control).get("GAMESCOPE_DYNAMIC_REFRESH", 0))
-        return
-    target = os.environ["DISPLAY"]
-    previous = None
-    while True:
-        try:
-            limit = properties(control).get("GAMESCOPE_FPS_LIMIT")
-            if limit is not None and limit != previous:
-                run("xprop", "-root", "-f", "GAMESCOPE_FPS_LIMIT", "32c", "-set", "GAMESCOPE_FPS_LIMIT", str(limit), display=target)
-                previous = limit
-        except (OSError, subprocess.SubprocessError):
-            pass
-        time.sleep(0.5)
+    print(properties(control).get("GAMESCOPE_DYNAMIC_REFRESH", 0))
 
 
 if __name__ == "__main__":
