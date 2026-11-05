@@ -11,7 +11,8 @@
 - Start, stop, and restart `waydroid-container.service`.
 - Enable or disable the service for boot. Keeping it enabled gives a warm container for faster Game Mode launches.
 - Verifies that ArmadaOS's bundled Gamescope runtime is available before launching Android.
-- Starts with a minimal Steam-independent environment and disables Gamescope WSI before launching Waydroid, so Android games do not inherit the host Vulkan swapchain layer.
+- Starts with a minimal environment, preserves Steam's app identity and shared frame limiter, and disables Gamescope WSI so Android games do not inherit the host Vulkan swapchain layer.
+- Enables Waydroid controller hotplug so Steam Input's virtual controller is exposed to Android after the next Waydroid session starts.
 
 ## Android application library
 
