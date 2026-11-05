@@ -92,6 +92,21 @@ async function removeFromSteam(appId: number) {
   await apps.RemoveShortcut(appId);
 }
 
+function launchSteamShortcut(appId: number) {
+  const gameId = ((BigInt(appId >>> 0) << 32n) | 0x02000000n).toString();
+  const apps = window.SteamClient?.Apps;
+  if (apps?.RunGame) {
+    apps.RunGame(gameId, "", -1, 100);
+    return;
+  }
+  const url = (window.SteamClient as unknown as { URL?: { ExecuteSteamURL?: (url: string) => void } } | undefined)?.URL;
+  if (url?.ExecuteSteamURL) {
+    url.ExecuteSteamURL(`steam://rungameid/${gameId}`);
+    return;
+  }
+  throw new Error(t("shortcutApiUnavailable"));
+}
+
 function run(action: () => Promise<unknown>, refresh: () => Promise<void>, setMessage: (message: string | null) => void, success?: [string, string]) {
   return async () => {
     try {
@@ -125,10 +140,18 @@ function AppRow({ app, refresh, setMessage }: { app: AndroidApp; refresh: () => 
     await removeFromSteam(app.shortcutId);
     await removeShortcutRecord(app.package);
   };
+  const launch = async () => {
+    const shortcut = await getAppShortcut(app.package);
+    const appId = app.shortcutId ?? await addToSteam(shortcut);
+    if (!app.shortcutId) {
+      await recordShortcut(shortcut.key, appId);
+    }
+    launchSteamShortcut(appId);
+  };
   const openMenu = () => {
     showContextMenu(
       <Menu label={app.name}>
-        <MenuItem onSelected={run(() => launchApp(app.package), refresh, setMessage)}>{t("launch")}</MenuItem>
+        <MenuItem onSelected={run(launch, refresh, setMessage, [app.name, t("launching")])}>{t("launch")}</MenuItem>
         {app.shortcutId ? (
           <MenuItem onSelected={run(remove, refresh, setMessage, [app.name, t("removedFromSteam")])}>{t("removeFromSteam")}</MenuItem>
         ) : (
@@ -236,6 +259,14 @@ function Content() {
     await removeFromSteam(status.waydroidShortcutId);
     await removeShortcutRecord("waydroid");
   };
+  const launchFullWaydroid = async () => {
+    const shortcut = await getWaydroidShortcut();
+    const appId = status?.waydroidShortcutId ?? await addToSteam(shortcut);
+    if (!status?.waydroidShortcutId) {
+      await recordShortcut(shortcut.key, appId);
+    }
+    launchSteamShortcut(appId);
+  };
 
   return (
     <div>
@@ -261,7 +292,7 @@ function Content() {
         {status?.initialized && (
           <>
             <PanelSectionRow>
-              <ButtonItem layout="below" onClick={run(launchWaydroid, refresh, setMessage)}>{t("launchWaydroid")}</ButtonItem>
+              <ButtonItem layout="below" onClick={run(launchFullWaydroid, refresh, setMessage, [t("waydroid"), t("launching")])}>{t("launchWaydroid")}</ButtonItem>
             </PanelSectionRow>
             <PanelSectionRow>
               <ButtonItem
