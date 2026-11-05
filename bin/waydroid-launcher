@@ -66,11 +66,19 @@ exec gamescope --backend wayland --expose-wayland --fullscreen --force-windows-f
     exit 1
   fi
   session_pid=""
+  cleanup_session() {
+    trap - EXIT HUP INT TERM
+    if [ -n "$session_pid" ] && kill -0 "$session_pid" 2>/dev/null; then
+      waydroid session stop >>"$WAYDROID_MANAGER_LOG_DIR/session.log" 2>&1 || true
+      wait "$session_pid" || true
+    fi
+  }
+  trap cleanup_session EXIT HUP INT TERM
   for attempt in {1..45}; do
     if waydroid status 2>/dev/null | grep -q "^Session:[[:space:]]*RUNNING"; then
       break
     fi
-    if (( attempt == 1 || attempt % 8 == 0 )); then
+    if (( attempt == 1 )) || { (( attempt % 8 == 0 )) && ! kill -0 "$session_pid" 2>/dev/null; }; then
       waydroid session start >>"$WAYDROID_MANAGER_LOG_DIR/session.log" 2>&1 &
       session_pid=$!
     fi
