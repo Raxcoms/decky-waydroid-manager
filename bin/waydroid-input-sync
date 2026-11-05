@@ -5,8 +5,8 @@ is_waydroid_running() {
   waydroid status 2>/dev/null | grep -q '^Session:[[:space:]]*RUNNING'
 }
 
-sync_steam_controller() {
-  local event vendor product major minor node
+steam_controller_signature() {
+  local event vendor product major minor node signatures=()
   for event in /sys/class/input/event*; do
     [[ -r "$event/device/id/vendor" && -r "$event/device/id/product" ]] || continue
     vendor="$(<"$event/device/id/vendor")"
@@ -14,21 +14,41 @@ sync_steam_controller() {
     [[ "${vendor,,}" == "28de" && "${product,,}" == "11ff" ]] || continue
 
     node="${event##*/}"
-    if waydroid shell -- test -e "/dev/input/$node" >/dev/null 2>&1; then
-      continue
-    fi
-
     major="$(sed -n 's/^MAJOR=//p' "$event/uevent")"
     minor="$(sed -n 's/^MINOR=//p' "$event/uevent")"
     [[ "$major" =~ ^[0-9]+$ && "$minor" =~ ^[0-9]+$ ]] || continue
-    waydroid shell -- mknod -m 660 "/dev/input/$node" c "$major" "$minor" >/dev/null 2>&1 || true
+    signatures+=("$node:$major:$minor")
+  done
+  IFS=, printf '%s' "${signatures[*]}"
+}
+
+sync_steam_controller() {
+  local signature node major minor signatures=()
+  IFS=, read -r -a signatures <<<"$1"
+  for signature in "${signatures[@]}"; do
+    IFS=: read -r node major minor <<<"$signature"
+    timeout 5 waydroid shell -- test -e "/dev/input/$node" >/dev/null 2>&1 && continue
+    timeout 5 waydroid shell -- mknod -m 660 "/dev/input/$node" c "$major" "$minor" >/dev/null 2>&1 || true
   done
 }
 
+was_running=0
+last_signature=""
 while :; do
   if is_waydroid_running; then
-    waydroid prop set persist.waydroid.uevent true >/dev/null 2>&1 || true
-    sync_steam_controller
+    if (( ! was_running )); then
+      timeout 5 waydroid prop set persist.waydroid.uevent true >/dev/null 2>&1 || true
+      was_running=1
+      last_signature=""
+    fi
+    signature="$(steam_controller_signature)"
+    if [[ -n "$signature" && "$signature" != "$last_signature" ]]; then
+      sync_steam_controller "$signature"
+      last_signature="$signature"
+    fi
+  else
+    was_running=0
+    last_signature=""
   fi
-  sleep 2
+  sleep 5
 done
