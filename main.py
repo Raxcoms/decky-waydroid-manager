@@ -19,6 +19,7 @@ WAYDROID_DIR = Path("/var/lib/waydroid")
 SERVICE = "waydroid-container.service"
 MAX_ICON_BYTES = 2 * 1024 * 1024
 WAYDROID_SHORTCUT_KEY = "waydroid"
+LAUNCH_WRAPPER = "/usr/libexec/armada/armada-game-launch"
 
 
 class Plugin:
@@ -226,6 +227,21 @@ class Plugin:
             return recorded
 
         launcher = str(self._launcher())
+        names = {"waydroid": WAYDROID_SHORTCUT_KEY}
+        directory = home / ".local/share/applications"
+        for entry in directory.glob("waydroid.*.desktop"):
+            package = entry.stem.removeprefix("waydroid.")
+            if not PACKAGE_RE.fullmatch(package):
+                continue
+            try:
+                parser = configparser.ConfigParser(interpolation=None)
+                parser.read(entry, encoding="utf-8")
+                name = parser.get("Desktop Entry", "Name", fallback="").strip()
+            except (OSError, configparser.Error):
+                continue
+            if name:
+                names.setdefault(name.casefold(), package)
+
         def shortcut_key(options: str) -> str | None:
             if options == "full" or options.endswith(" full"):
                 return WAYDROID_SHORTCUT_KEY
@@ -237,14 +253,13 @@ class Plugin:
         for _, (_, shortcut) in saved_shortcuts.items():
             exe = str(shortcut.get("exe", (1, ""))[1]).strip('"')
             options = str(shortcut.get("LaunchOptions", (1, ""))[1])
+            name = str(shortcut.get("appname", (1, ""))[1]).strip().casefold()
             app_id = shortcut.get("appid", (2, 0))[1]
             if not isinstance(app_id, int):
                 continue
             normalized_id = app_id & 0xFFFFFFFF
             saved_by_id[normalized_id] = shortcut
-            if exe != launcher:
-                continue
-            key = shortcut_key(options)
+            key = shortcut_key(options) if exe == launcher else names.get(name)
             if key is None:
                 continue
             if key not in removed:
@@ -409,7 +424,7 @@ class Plugin:
             "name": name,
             "exe": str(self._launcher()),
             "startDir": str(home),
-            "launchOptions": "full" if package is None else f"app {package}",
+            "launchOptions": f"{LAUNCH_WRAPPER} %command% " + ("full" if package is None else f"app {package}"),
             "icon": icon,
             "key": WAYDROID_SHORTCUT_KEY if package is None else package,
         }

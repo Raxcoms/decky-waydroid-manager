@@ -80,14 +80,23 @@ async function addToSteam(shortcut: Shortcut) {
 
 async function configureSteamShortcut(appId: number, shortcut: Shortcut) {
   const apps = window.SteamClient?.Apps;
-  if (!apps?.SetShortcutExe || !apps.SetShortcutStartDir || !apps.SetShortcutLaunchOptions) {
+  if (!apps?.SetShortcutLaunchOptions) {
     throw new Error(t("shortcutApiUnavailable"));
   }
-  await apps.SetShortcutExe(appId, shortcut.exe);
-  await apps.SetShortcutStartDir(appId, shortcut.startDir);
-  await apps.SetShortcutLaunchOptions(appId, shortcut.launchOptions);
-  await apps.SetShortcutName?.(appId, shortcut.name);
-  if (shortcut.icon) await apps.SetShortcutIcon?.(appId, shortcut.icon);
+  try {
+    await apps.SetShortcutName?.(appId, shortcut.name);
+  } catch {
+  }
+  try {
+    await apps.SetShortcutLaunchOptions(appId, shortcut.launchOptions);
+  } catch {
+  }
+  if (shortcut.icon) {
+    try {
+      await apps.SetShortcutIcon?.(appId, shortcut.icon);
+    } catch {
+    }
+  }
 }
 
 async function removeFromSteam(appId: number) {
