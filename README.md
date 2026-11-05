@@ -1,11 +1,11 @@
 # Waydroid Manager
 
-Waydroid Manager is a Decky Loader plugin for ArmadaOS handhelds. It initializes the official GAPPS-enabled Waydroid image, runs Android inside a nested Gamescope session from Game Mode, exposes installed Android apps, and creates Steam library shortcuts for Android or individual apps.
+Waydroid Manager is a Decky Loader plugin for ArmadaOS handhelds. It initializes the official GAPPS-enabled Waydroid image, presents Android through Steam's existing Gamescope in Game Mode, exposes installed Android apps, and creates Steam library shortcuts for Android or individual apps.
 
 ## What it provides
 
 - One-confirmation GAPPS setup that follows the running device architecture.
-- A nested Gamescope launcher that inherits Steam's active global or per-game resolution.
+- A private Wayland socket that connects Android directly to Steam's compositor without another rendering pass.
 - Primary Steam compositor discovery for devices with separate display compositors and explicit Android touch passthrough.
 - Android app discovery from Waydroid's generated desktop entries.
 - Steam shortcut creation and launch for Waydroid or individual apps.
@@ -30,4 +30,4 @@ pnpm run build
 
 The build produces `dist/index.js`. GitHub Actions uploads the installable `waydroid-manager` plugin directory directly as its artifact.
 
-Game Mode presentation is still under live validation. Desktop Mode remains the comparison for graphics artifacts, frame pacing, and controller sensitivity; see the architecture notes for the presentation and telemetry paths.
+The direct Wayland path has been tested on Thor with working app presentation, direct touch, and controller input. Frame-limit synchronization, duplicate frame reporting, repeated launches, and per-game resolution overrides remain under live validation; see the architecture notes.

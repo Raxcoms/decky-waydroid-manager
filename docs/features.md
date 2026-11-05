@@ -10,7 +10,7 @@
 
 - Start, stop, and restart `waydroid-container.service`.
 - Verifies that ArmadaOS's bundled Gamescope runtime is available before launching Android.
-- Starts with a minimal environment, passes Steam's shared frame limiter, and disables Gamescope WSI so Android games do not inherit the host Vulkan swapchain layer.
+- Starts with a minimal environment and disables Gamescope WSI so Android games do not inherit the host Vulkan swapchain layer.
 - Mirrors Steam Input's virtual controller into Android while leaving Armada's physical-controller bridge in control of physical devices.
 
 ## Android application library
@@ -27,4 +27,6 @@ Waydroid exports launcher icons but does not export Steam grid, hero, logo, or p
 
 ## Game Mode rendering
 
-The bundled launcher nests Gamescope on Steam's dynamically discovered Wayland socket and creates a fresh Wayland socket for every launch. It passes Steam's rotation-aware target size and shared limiter file to nested Gamescope, then points the Waydroid session at that socket before opening Android or a selected application. The transient user service waits until Android reports itself ready. The launcher supervises Gamescope against Steam's owning launch process and stops only that session when the shortcut closes. This separates the Android session from Steam's compositor while avoiding premature app launch requests and stale sockets.
+The bundled launcher creates a private Wayland socket that relays Android directly to Steam's existing Gamescope. It inherits Steam's target socket rather than assuming which compositor drives the primary screen. The relay carries the shortcut's process identity, so Steam recognizes the native Android window. Direct touch and controller input were verified live on Thor. It forwards shared buffer descriptors without another rendering pass and does not modify system files.
+
+The transient user service waits until Android reports itself ready before opening the full UI or requested application. Each launch gets a new private socket, and shutdown removes that socket and stops only the owned session and relay. Frame-limit synchronization, duplicate frame reporting, repeated launches, and per-game resolution overrides remain under validation.

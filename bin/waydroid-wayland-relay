@@ -1,0 +1,200 @@
+#!/usr/bin/python3
+from __future__ import annotations
+
+import array
+from collections import deque
+from dataclasses import dataclass, field
+import os
+from pathlib import Path
+import selectors
+import signal
+import socket
+import subprocess
+import sys
+import tempfile
+
+
+MAX_PENDING = 1024 * 1024
+
+
+@dataclass(eq=False)
+class Endpoint:
+    connection: socket.socket
+    peer: Endpoint | None = None
+    pending: deque = field(default_factory=deque)
+    pending_bytes: int = 0
+
+
+def close_fds(fds: list[int]) -> None:
+    for fd in fds:
+        os.close(fd)
+
+
+class Relay:
+    def __init__(self, listener: socket.socket, parent: str):
+        self.listener = listener
+        self.parent = parent
+        self.selector = selectors.DefaultSelector()
+        self.selector.register(listener, selectors.EVENT_READ, None)
+        self.endpoints: set[Endpoint] = set()
+
+    def update(self, endpoint: Endpoint) -> None:
+        events = 0
+        if endpoint.peer.pending_bytes < MAX_PENDING:
+            events |= selectors.EVENT_READ
+        if endpoint.pending:
+            events |= selectors.EVENT_WRITE
+        try:
+            self.selector.get_key(endpoint.connection)
+            registered = True
+        except KeyError:
+            registered = False
+        if events:
+            if registered:
+                self.selector.modify(endpoint.connection, events, endpoint)
+            else:
+                self.selector.register(endpoint.connection, events, endpoint)
+        elif registered:
+            self.selector.unregister(endpoint.connection)
+
+    def disconnect(self, endpoint: Endpoint) -> None:
+        for current in (endpoint, endpoint.peer):
+            if current not in self.endpoints:
+                continue
+            self.endpoints.remove(current)
+            try:
+                self.selector.unregister(current.connection)
+            except KeyError:
+                pass
+            current.connection.close()
+            while current.pending:
+                _, fds = current.pending.popleft()
+                close_fds(fds)
+
+    def accept(self) -> None:
+        client, _ = self.listener.accept()
+        host = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            host.settimeout(3)
+            # The parent sees this Steam-owned process as the Wayland client.
+            host.connect(self.parent)
+        except OSError:
+            client.close()
+            host.close()
+            raise
+        client.setblocking(False)
+        host.setblocking(False)
+        downstream, upstream = Endpoint(client), Endpoint(host)
+        downstream.peer, upstream.peer = upstream, downstream
+        self.endpoints.update((downstream, upstream))
+        self.update(downstream)
+        self.update(upstream)
+
+    def receive(self, endpoint: Endpoint) -> None:
+        data, ancillary, flags, _ = endpoint.connection.recvmsg(
+            65536, socket.CMSG_SPACE(256 * array.array("i").itemsize), socket.MSG_CMSG_CLOEXEC,
+        )
+        fds = []
+        for level, kind, value in ancillary:
+            if level == socket.SOL_SOCKET and kind == socket.SCM_RIGHTS:
+                descriptors = array.array("i")
+                descriptors.frombytes(value)
+                fds.extend(descriptors)
+        if flags & socket.MSG_CTRUNC:
+            close_fds(fds)
+            raise OSError("Wayland file descriptors were truncated")
+        if not data:
+            close_fds(fds)
+            self.disconnect(endpoint)
+            return
+        endpoint.peer.pending.append((memoryview(data), fds))
+        endpoint.peer.pending_bytes += len(data)
+        self.update(endpoint)
+        self.update(endpoint.peer)
+
+    def send(self, endpoint: Endpoint) -> None:
+        data, fds = endpoint.pending[0]
+        ancillary = [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array("i", fds))] if fds else []
+        count = endpoint.connection.sendmsg([data], ancillary, socket.MSG_NOSIGNAL)
+        if count == 0:
+            raise OSError("Wayland connection stopped accepting data")
+        # Descriptors travel with the first byte, even when the write is partial.
+        close_fds(fds)
+        endpoint.pending_bytes -= count
+        if count == len(data):
+            endpoint.pending.popleft()
+        else:
+            endpoint.pending[0] = (data[count:], [])
+        self.update(endpoint)
+        self.update(endpoint.peer)
+
+    def step(self, timeout: float = 0.25) -> None:
+        for key, events in self.selector.select(timeout):
+            endpoint = key.data
+            if endpoint is None:
+                self.accept()
+                continue
+            if endpoint not in self.endpoints:
+                continue
+            try:
+                if events & selectors.EVENT_READ:
+                    self.receive(endpoint)
+                if endpoint in self.endpoints and events & selectors.EVENT_WRITE:
+                    self.send(endpoint)
+            except BlockingIOError:
+                continue
+            except OSError as error:
+                print(f"Wayland connection closed: {error}", file=sys.stderr)
+                self.disconnect(endpoint)
+
+    def close(self) -> None:
+        for endpoint in tuple(self.endpoints):
+            self.disconnect(endpoint)
+        self.selector.close()
+
+
+def main() -> int:
+    if len(sys.argv) < 4 or sys.argv[2] != "--":
+        raise SystemExit("Usage: waydroid-wayland-relay PARENT_SOCKET -- COMMAND [ARGS...]")
+    runtime = Path(os.environ["XDG_RUNTIME_DIR"])
+    parent = str(runtime / sys.argv[1])
+    stopping = False
+
+    def stop(*_) -> None:
+        nonlocal stopping
+        stopping = True
+
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    signal.signal(signal.SIGHUP, stop)
+    with tempfile.TemporaryDirectory(prefix="waydroid-manager-", dir=runtime) as directory:
+        path = str(Path(directory) / "wayland")
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+            listener.bind(path)
+            os.chmod(path, 0o600)
+            listener.listen(16)
+            listener.setblocking(False)
+            relay = Relay(listener, parent)
+            environment = os.environ.copy()
+            environment.update(WAYLAND_DISPLAY=path, GAMESCOPE_WAYLAND_DISPLAY=path)
+            child = subprocess.Popen(sys.argv[3:], env=environment, start_new_session=True)
+            try:
+                while not stopping and child.poll() is None:
+                    relay.step()
+                return child.returncode if child.returncode is not None else 0
+            finally:
+                try:
+                    os.killpg(child.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                if child.poll() is None:
+                    try:
+                        child.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(child.pid, signal.SIGKILL)
+                        child.wait()
+                relay.close()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

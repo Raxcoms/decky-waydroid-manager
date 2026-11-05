@@ -65,20 +65,13 @@ export WAYDROID_MANAGER_SESSION_UNIT="waydroid-manager-session"
 unset ENABLE_GAMESCOPE_WSI
 export DISABLE_GAMESCOPE_WSI=1
 
-# Gamescope hosts on Steam's Xwayland display and exposes Wayland to Android.
-dimensions=()
-refresh="$("$launcher_dir/waydroid-display-info" 2>/dev/null || true)"
-if [[ "$refresh" =~ ^[1-9][0-9]*$ ]]; then
-  dimensions+=(-r "$refresh")
-fi
-if [[ "$output_width" =~ ^[1-9][0-9]*$ && "$output_height" =~ ^[1-9][0-9]*$ ]]; then
-  dimensions+=(-W "$output_width" -H "$output_height" -w "$output_width" -h "$output_height")
-fi
-SDL_VIDEODRIVER=x11 GAMESCOPE_MANGOAPP_SOCKET_DISABLE=1 gamescope --backend sdl --expose-wayland --fullscreen --force-windows-fullscreen --default-touch-mode 4 "${dimensions[@]}" -- bash -c '
+# A private socket keeps Android attached to this Steam launch without rendering it again.
+: >"$log_dir/wayland.log"
+"$launcher_dir/waydroid-wayland-relay" "$parent_wayland" -- bash -c '
   set -euo pipefail
   export WAYLAND_DISPLAY="${GAMESCOPE_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:-}}"
   if [ -z "$WAYLAND_DISPLAY" ]; then
-    echo "Nested Gamescope did not expose a Wayland socket." >&2
+    echo "The Waydroid Wayland relay did not expose a socket." >&2
     exit 1
   fi
   session_unit="$WAYDROID_MANAGER_SESSION_UNIT"
@@ -95,7 +88,7 @@ SDL_VIDEODRIVER=x11 GAMESCOPE_MANGOAPP_SOCKET_DISABLE=1 gamescope --backend sdl 
   }
   trap cleanup_session EXIT HUP INT TERM
   systemctl --user stop "$session_unit" >/dev/null 2>&1 || true
-  # Socket names can be reused after Gamescope exits. Reconnect Android every launch.
+  # Reconnect Android to the private socket for each launch.
   if waydroid status 2>/dev/null | grep -q "^Session:[[:space:]]*RUNNING"; then
     waydroid session stop >/dev/null 2>&1 || true
     for _ in {1..30}; do
@@ -182,30 +175,29 @@ SDL_VIDEODRIVER=x11 GAMESCOPE_MANGOAPP_SOCKET_DISABLE=1 gamescope --backend sdl 
       wait "$!"
     fi
   done
-' &
-gamescope_pid=$!
+' >>"$log_dir/wayland.log" 2>&1 &
+host_pid=$!
 
-stop_gamescope() {
+stop_host() {
   trap - EXIT HUP INT TERM
   systemctl --user stop "$WAYDROID_MANAGER_SESSION_UNIT" >/dev/null 2>&1 || true
-  if kill -0 "$gamescope_pid" 2>/dev/null; then
-    kill -TERM "$gamescope_pid" 2>/dev/null || true
-    # Some compositor shutdowns wait indefinitely after Android has exited.
-    for _ in {1..50}; do
-      [[ ! -r "/proc/$gamescope_pid/stat" ]] && break
-      [[ "$(awk '{print $3}' "/proc/$gamescope_pid/stat" 2>/dev/null)" == Z ]] && break
+  if kill -0 "$host_pid" 2>/dev/null; then
+    kill -TERM "$host_pid" 2>/dev/null || true
+    for _ in {1..60}; do
+      [[ ! -r "/proc/$host_pid/stat" ]] && break
+      [[ "$(awk '{print $3}' "/proc/$host_pid/stat" 2>/dev/null)" == Z ]] && break
       sleep 0.1
     done
-    kill -KILL "$gamescope_pid" 2>/dev/null || true
-    wait "$gamescope_pid" 2>/dev/null || true
+    kill -KILL "$host_pid" 2>/dev/null || true
+    wait "$host_pid" 2>/dev/null || true
   fi
 }
 
-trap stop_gamescope EXIT HUP INT TERM
-while kill -0 "$gamescope_pid" 2>/dev/null; do
+trap stop_host EXIT HUP INT TERM
+while kill -0 "$host_pid" 2>/dev/null; do
   if [ -n "$steam_owner_pid" ] && { [ ! -r "/proc/$steam_owner_pid/stat" ] || [ "$(awk '{print $3}' "/proc/$steam_owner_pid/stat" 2>/dev/null)" = Z ]; }; then
     exit 0
   fi
   sleep 1
 done
-wait "$gamescope_pid" || true
+wait "$host_pid" || true
