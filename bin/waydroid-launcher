@@ -52,10 +52,14 @@ exec gamescope --backend sdl --expose-wayland --fullscreen --force-windows-fulls
     echo "Nested Gamescope did not expose a Wayland socket." >&2
     exit 1
   fi
-  waydroid session start >>"$WAYDROID_MANAGER_LOG_DIR/session.log" 2>&1 &
-  for _ in {1..30}; do
+  session_pid=""
+  for attempt in {1..45}; do
     if waydroid status 2>/dev/null | grep -q "^Session:[[:space:]]*RUNNING"; then
       break
+    fi
+    if (( attempt == 1 || attempt % 8 == 0 )); then
+      waydroid session start >>"$WAYDROID_MANAGER_LOG_DIR/session.log" 2>&1 &
+      session_pid=$!
     fi
     sleep 1
   done
@@ -63,8 +67,20 @@ exec gamescope --backend sdl --expose-wayland --fullscreen --force-windows-fulls
     echo "Waydroid session did not start. See $WAYDROID_MANAGER_LOG_DIR/session.log" >&2
     exit 1
   fi
-  if [ "$WAYDROID_MANAGER_MODE" = "app" ]; then
-    exec waydroid app launch "$WAYDROID_MANAGER_PACKAGE"
+  for _ in {1..60}; do
+    if waydroid shell getprop sys.boot_completed 2>/dev/null | grep -qx "1"; then
+      break
+    fi
+    sleep 1
+  done
+  if ! waydroid shell getprop sys.boot_completed 2>/dev/null | grep -qx "1"; then
+    echo "Waydroid did not finish booting. See $WAYDROID_MANAGER_LOG_DIR/session.log" >&2
+    exit 1
   fi
-  exec waydroid show-full-ui
+  if [ "$WAYDROID_MANAGER_MODE" = "app" ]; then
+    waydroid app launch "$WAYDROID_MANAGER_PACKAGE"
+  else
+    waydroid show-full-ui
+  fi
+  wait "$session_pid"
 '
