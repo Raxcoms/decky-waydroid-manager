@@ -9,6 +9,8 @@ import time
 
 LXC_PATH = "/var/lib/waydroid/lxc"
 ANDROID_INPUT_GID = 1004
+STEAM_VENDOR = "28de"
+STEAM_PRODUCT = "11ff"
 
 
 def container_pid() -> str | None:
@@ -26,19 +28,89 @@ def container_pid() -> str | None:
     return pid if result.returncode == 0 and pid.isdecimal() and int(pid) > 0 else None
 
 
+def input_identity(name: str) -> tuple[str, str] | None:
+    event = Path("/sys/class/input") / name
+    try:
+        vendor = (event / "device/id/vendor").read_text().strip().lower()
+        product = (event / "device/id/product").read_text().strip().lower()
+    except OSError:
+        return None
+    return vendor, product
+
+
 def steam_controllers() -> dict[str, int]:
     controllers = {}
     for event in Path("/sys/class/input").glob("event*"):
         try:
-            vendor = (event / "device/id/vendor").read_text().strip().lower()
-            product = (event / "device/id/product").read_text().strip().lower()
+            identity = input_identity(event.name)
             source = Path("/dev/input") / event.name
             info = source.stat()
         except OSError:
             continue
-        if vendor == "28de" and product == "11ff" and stat.S_ISCHR(info.st_mode):
+        if identity == (STEAM_VENDOR, STEAM_PRODUCT) and stat.S_ISCHR(info.st_mode):
             controllers[event.name] = info.st_rdev
     return controllers
+
+
+def shared_controller_layout(root: Path) -> tuple[str, bytes] | None:
+    try:
+        records = subprocess.run(
+            ["udevadm", "info", "--export-db", "--subsystem-match=input"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        ).stdout.split("\n\n")
+    except subprocess.SubprocessError:
+        return None
+
+    layout_root = root / "data/system/devices/keylayout"
+    for record in records:
+        properties = dict(
+            line[3:].split("=", 1)
+            for line in record.splitlines()
+            if line.startswith("E: ") and "=" in line
+        )
+        if properties.get("INPUTPLUMBER_SHARED_GAMEPAD") != "1":
+            continue
+        event = Path(properties.get("DEVNAME", "")).name
+        identity = input_identity(event)
+        if not identity:
+            continue
+        source = layout_root / f"Vendor_{identity[0]}_Product_{identity[1]}.kl"
+        try:
+            return source.name, source.read_bytes()
+        except OSError:
+            continue
+    return None
+
+
+def sync_keylayout(root: Path, layout: tuple[str, bytes] | None) -> bool:
+    directory = root / "data/system/devices/keylayout"
+    target = directory / f"Vendor_{STEAM_VENDOR}_Product_{STEAM_PRODUCT}.kl"
+    marker = directory / ".waydroid-manager-steam-layout"
+    if layout is None:
+        if not marker.exists():
+            return False
+        target.unlink(missing_ok=True)
+        marker.unlink(missing_ok=True)
+        return True
+
+    source_name, content = layout
+    try:
+        current = target.read_bytes()
+        selected = marker.read_text().strip()
+    except OSError:
+        current = b""
+        selected = ""
+    if current == content and selected == source_name:
+        return False
+    directory.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(content)
+    target.chmod(0o644)
+    marker.write_text(source_name + "\n")
+    marker.chmod(0o644)
+    return True
 
 
 def publish_node(inputs: Path, name: str, device: int) -> None:
@@ -88,8 +160,13 @@ def main() -> None:
             active_pid = pid
             published = {}
         if pid:
-            inputs = Path("/proc") / pid / "root/dev/input"
+            root = Path("/proc") / pid / "root"
+            inputs = root / "dev/input"
             try:
+                if sync_keylayout(root, shared_controller_layout(root)):
+                    for name, device in published.items():
+                        remove_node(inputs, name, device)
+                    published = {}
                 published = sync(inputs, steam_controllers(), published)
             except OSError:
                 published = {}
