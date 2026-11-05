@@ -11,8 +11,8 @@ output_height="${WAYDROID_MANAGER_HEIGHT:-}"
 log_dir="${XDG_STATE_HOME:-$HOME/.local/state}/waydroid-manager"
 launcher_dir="$(cd "$(dirname "$0")" && pwd)"
 session_runner="$launcher_dir/waydroid-session"
-steam_owner_pid=""
-if [[ -n "${SteamAppId:-}${SteamGameId:-}" ]]; then
+steam_owner_pid="${WAYDROID_MANAGER_STEAM_OWNER_PID:-}"
+if [[ -z "$steam_owner_pid" && -n "${SteamAppId:-}${SteamGameId:-}" ]]; then
   steam_owner_pid="$PPID"
 fi
 mkdir -p "$log_dir"
@@ -67,7 +67,7 @@ dimensions=()
 if [[ "$output_width" =~ ^[1-9][0-9]*$ && "$output_height" =~ ^[1-9][0-9]*$ ]]; then
   dimensions=(-W "$output_width" -H "$output_height" -w "$output_width" -h "$output_height")
 fi
-exec gamescope --backend wayland --expose-wayland --fullscreen --force-windows-fullscreen "${dimensions[@]}" -- bash -c '
+gamescope --backend wayland --expose-wayland --fullscreen --force-windows-fullscreen "${dimensions[@]}" -- bash -c '
   set -euo pipefail
   export WAYLAND_DISPLAY="${GAMESCOPE_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:-}}"
   if [ -z "$WAYLAND_DISPLAY" ]; then
@@ -169,4 +169,22 @@ exec gamescope --backend wayland --expose-wayland --fullscreen --force-windows-f
       wait "$!"
     fi
   done
-'
+' &
+gamescope_pid=$!
+
+stop_gamescope() {
+  trap - EXIT HUP INT TERM
+  if kill -0 "$gamescope_pid" 2>/dev/null; then
+    kill -TERM "$gamescope_pid" 2>/dev/null || true
+    wait "$gamescope_pid" 2>/dev/null || true
+  fi
+}
+
+trap stop_gamescope EXIT HUP INT TERM
+while kill -0 "$gamescope_pid" 2>/dev/null; do
+  if [ -n "$steam_owner_pid" ] && { [ ! -r "/proc/$steam_owner_pid/stat" ] || [ "$(awk '{print $3}' "/proc/$steam_owner_pid/stat" 2>/dev/null)" = Z ]; }; then
+    exit 0
+  fi
+  sleep 1
+done
+wait "$gamescope_pid" || true
