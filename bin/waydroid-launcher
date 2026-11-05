@@ -52,7 +52,7 @@ if [[ -z "$parent_wayland" ]]; then
 fi
 
 if ! systemctl is-active --quiet waydroid-container.service; then
-  echo "Waydroid is stopped. Enable Keep service warm in Waydroid Manager before launching from Steam." >&2
+  echo "Waydroid is stopped. Start the service in Waydroid Manager before launching from Steam." >&2
   exit 1
 fi
 
@@ -75,7 +75,7 @@ fi
 if [[ "$output_width" =~ ^[1-9][0-9]*$ && "$output_height" =~ ^[1-9][0-9]*$ ]]; then
   dimensions+=(-W "$output_width" -H "$output_height" -w "$output_width" -h "$output_height")
 fi
-gamescope --backend wayland --expose-wayland --fullscreen --force-windows-fullscreen "${dimensions[@]}" -- bash -c '
+SDL_VIDEODRIVER=x11 gamescope --backend sdl --expose-wayland --fullscreen --force-windows-fullscreen "${dimensions[@]}" -- bash -c '
   set -euo pipefail
   export WAYLAND_DISPLAY="${GAMESCOPE_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:-}}"
   if [ -z "$WAYLAND_DISPLAY" ]; then
