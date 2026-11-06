@@ -22,7 +22,7 @@ class PackageSessionTests(unittest.TestCase):
                 commands.append(command[4:])
                 return "Success: created install session [42]" if command[4] == "install-create" else "Success"
             install_apks(run, root, "/data/local/tmp/test", names)
-            self.assertEqual(commands[0], ["install-create", "-r", "--skip-verification", "-S", "6"])
+            self.assertEqual(commands[0], ["install-create", "-r", "-t", "--skip-verification", "-S", "6"])
             self.assertEqual([command[-1] for command in commands[1:-1]], [f"/data/local/tmp/test/{name}" for name in names])
             self.assertEqual(commands[-1], ["install-commit", "42"])
             self.assertFalse(any(command[0] in {"settings", "install-abandon", "install-multiple"} for command in commands))

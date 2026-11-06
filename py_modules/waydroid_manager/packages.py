@@ -17,8 +17,8 @@ def check_result(output: str) -> None:
 def install_apks(run, directory: Path, guest: str, names: list[str]) -> None:
     command = ["waydroid", "shell", "--", "pm"]
     size = sum((directory / name).stat().st_size for name in names)
-    # Skip this install's scan without changing Android's verifier settings.
-    output = run([*command, "install-create", "-r", "--skip-verification", "-S", str(size)])
+    # Android keeps the skip flag only when shell installs also allow test packages.
+    output = run([*command, "install-create", "-r", "-t", "--skip-verification", "-S", str(size)])
     match = re.search(r"^Success: created install session \[(\d+)\]$", output, re.MULTILINE)
     if not match:
         raise RuntimeError(output or "PACKAGE_OPERATION_FAILED")
