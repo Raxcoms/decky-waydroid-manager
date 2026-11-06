@@ -17,6 +17,7 @@ from typing import Any
 import decky
 from waydroid_manager.frame_limit import FrameLimiter, active_launch
 from waydroid_manager.proc import clean_env
+from waydroid_manager.artwork import apk_images, missing_artwork
 
 
 PACKAGE_RE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -532,6 +533,45 @@ class Plugin:
         if not app:
             raise RuntimeError("Android app is no longer installed")
         return self._shortcut_details(app["name"], package, app["iconPath"])
+
+    async def pending_shortcut_artwork(self) -> list[dict[str, Any]]:
+        _, _, home = self._user()
+        try:
+            grid = self._shortcuts_path(home).parent / "grid"
+        except RuntimeError:
+            return []
+        return [{"key": key, "appId": app_id} for key, app_id in self._shortcut_ids(home).items()
+                if missing_artwork(grid, app_id)]
+
+    async def get_shortcut_artwork(self, key: str, app_id: int) -> dict[str, Any]:
+        self._validate_shortcut_key(key)
+        _, _, home = self._user()
+        if self._shortcut_ids(home).get(key) != app_id:
+            raise RuntimeError("The Steam shortcut no longer exists")
+        roles = missing_artwork(self._shortcuts_path(home).parent / "grid", app_id)
+        app = next((item for item in self._desktop_entries() if item["package"] == key), None)
+        result = {"roles": roles, "ready": not app, "name": app["name"] if app else "Waydroid", "icon": app["icon"] if app else "", "images": []}
+        if not roles or not app or not self._service_state("active"):
+            return result
+        try:
+            pid = self._run(["lxc-info", "-P", "/var/lib/waydroid/lxc", "-n", "waydroid", "-pH"])
+            if not pid.isdecimal():
+                return result
+            root = (Path("/proc") / pid / "root").resolve(strict=True)
+            paths = self._run(["waydroid", "shell", "--", "pm", "path", key]).splitlines()
+            apks = []
+            for path in paths:
+                if not path.startswith("package:/"):
+                    continue
+                apk = (root / path.removeprefix("package:/")).resolve(strict=True)
+                apk.relative_to(root)
+                if apk.suffix == ".apk":
+                    apks.append(apk)
+            result["ready"] = bool(apks)
+            result["images"] = await asyncio.to_thread(apk_images, apks)
+        except (OSError, ValueError, RuntimeError, zipfile.BadZipFile, subprocess.SubprocessError):
+            pass
+        return result
 
     async def install_gapps(self) -> None:
         if self._initialized():

@@ -17,6 +17,7 @@ import {
 import { useCallback, useEffect, useState } from "react";
 import { t } from "./i18n";
 import { watchFrameLimit } from "./frameLimit";
+import { watchShortcutArtwork } from "./artwork";
 
 type Resolution = { width: number; height: number } | null;
 type Status = {
@@ -436,6 +437,7 @@ function Content() {
 export default definePlugin(() => {
   const stopFrameLimit = watchFrameLimit();
   const stopAutoShortcuts = watchAutoShortcuts();
+  const stopArtwork = watchShortcutArtwork();
   return {
     name: t("pluginName"),
     titleView: <div className={staticClasses.Title}>{t("pluginName")}</div>,
@@ -444,6 +446,7 @@ export default definePlugin(() => {
     onDismount: () => {
       stopFrameLimit();
       stopAutoShortcuts();
+      stopArtwork();
     },
   };
 });

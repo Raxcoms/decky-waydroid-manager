@@ -23,7 +23,7 @@ The optional **Add new apps to Steam** control appears before the app list. It r
 
 Third-party Android packages can be removed directly from the app action menu through `waydroid app remove`. System packages are never offered this action.
 
-Waydroid exports launcher icons but does not export Steam grid, hero, logo, or portrait artwork. The plugin assigns the exported Android icon through Steam's shortcut API; Steam's other artwork remains user-configurable in the library.
+The plugin assigns Waydroid's exported app icon to the shortcut. It also searches installed APKs for bundled logos, banners, splash screens, and covers, excluding common advertising SDK resources. Missing Steam portrait, landscape, hero, and logo slots are populated through Steam's artwork API. When an APK has no suitable image for a slot, the plugin creates a card from the app's icon and name. Existing custom artwork is preserved. APK assets are read while Android is running; pending artwork is retried in the background.
 
 ## Game Mode rendering
 
