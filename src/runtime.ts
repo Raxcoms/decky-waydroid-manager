@@ -1,9 +1,9 @@
 import { callable } from "@decky/api";
 import { currentFrameLimit } from "./steamSettings";
 
-const syncFrameLimit = callable<[number], void>("sync_frame_limit");
+const syncRuntime = callable<[number | null], void>("sync_runtime");
 
-export function watchFrameLimit() {
+export function watchRuntime() {
   let busy = false;
   let reported = false;
   const sync = async () => {
@@ -11,12 +11,12 @@ export function watchFrameLimit() {
     busy = true;
     try {
       const fps = currentFrameLimit();
-      if (fps !== null && Number.isInteger(fps) && fps >= 0 && fps <= 1000) {
-        await syncFrameLimit(fps);
+      if (fps === null || (Number.isInteger(fps) && fps >= 0 && fps <= 1000)) {
+        await syncRuntime(fps);
       }
       reported = false;
     } catch (error) {
-      if (!reported) console.warn("Waydroid frame-limit synchronization failed", error);
+      if (!reported) console.warn("Waydroid runtime synchronization failed", error);
       reported = true;
     } finally {
       busy = false;

@@ -15,6 +15,7 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
 from waydroid_manager.wayland import SurfaceCommits
+from waydroid_manager.metrics import MetricsSocket
 
 
 MAX_PENDING = 1024 * 1024
@@ -188,7 +189,7 @@ def main() -> int:
     signal.signal(signal.SIGHUP, stop)
     with tempfile.TemporaryDirectory(prefix="waydroid-manager-", dir=runtime) as directory:
         path = str(Path(directory) / "wayland")
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener, MetricsSocket(Path(directory) / "metrics") as metrics:
             listener.bind(path)
             os.chmod(path, 0o600)
             listener.listen(16)
@@ -197,6 +198,7 @@ def main() -> int:
             def report(*_):
                 protocols = [endpoint.protocol for endpoint in relay.endpoints if endpoint.protocol and not endpoint.upstream]
                 print(f"Wayland commits: {sum(p.commits for p in protocols)}, empty commits suppressed: {sum(p.dropped for p in protocols)}", file=sys.stderr, flush=True)
+                print(f"GPU metrics: {len(metrics.handles)} DRM clients", file=sys.stderr, flush=True)
             signal.signal(signal.SIGUSR1, report)
             print(f"Wayland relay started: {os.getpid()}", file=sys.stderr, flush=True)
             environment = os.environ.copy()
@@ -205,6 +207,7 @@ def main() -> int:
             try:
                 while not stopping and child.poll() is None:
                     relay.step()
+                    metrics.poll()
                 return child.returncode if child.returncode is not None else 0
             finally:
                 try:

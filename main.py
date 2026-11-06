@@ -18,6 +18,7 @@ import decky
 from waydroid_manager.frame_limit import FrameLimiter, active_launch
 from waydroid_manager.proc import clean_env
 from waydroid_manager.artwork import apk_images, missing_artwork, package_apks
+from waydroid_manager.metrics import GpuMetrics
 
 
 PACKAGE_RE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -704,22 +705,36 @@ class Plugin:
 
     async def _main(self):
         self._frame_limiter = FrameLimiter(self._run)
-        self._frame_limit_lock = asyncio.Lock()
+        self._gpu_metrics = GpuMetrics()
+        self._metrics_error = None
+        self._runtime_lock = asyncio.Lock()
         await asyncio.to_thread(self._start_input_sync)
         decky.logger.info("Waydroid Manager loaded")
 
     async def _unload(self):
         try:
-            async with self._frame_limit_lock:
+            async with self._runtime_lock:
+                _, uid, _ = self._user()
+                await asyncio.to_thread(self._gpu_metrics.close, uid)
                 await asyncio.to_thread(self._frame_limiter.restore)
         finally:
             await asyncio.to_thread(self._stop_input_sync)
 
     async def sync_frame_limit(self, fps: int) -> None:
-        if type(fps) is not int or not 0 <= fps <= 1000:
+        await self.sync_runtime(fps)
+
+    async def sync_runtime(self, fps: int | None) -> None:
+        if fps is not None and (type(fps) is not int or not 0 <= fps <= 1000):
             raise RuntimeError("Invalid frame limit")
-        async with self._frame_limit_lock:
+        async with self._runtime_lock:
             _, uid, _ = self._user()
             relay = Path(decky.DECKY_PLUGIN_DIR).resolve() / "bin/waydroid-wayland-relay"
             launch = await asyncio.to_thread(active_launch, uid, relay)
-            await asyncio.to_thread(self._frame_limiter.sync, fps, launch)
+            try:
+                await asyncio.to_thread(self._gpu_metrics.sync, launch, uid)
+                self._metrics_error = None
+            except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                if str(error) != self._metrics_error:
+                    decky.logger.warning("GPU metrics unavailable: %s", error)
+                self._metrics_error = str(error)
+            await asyncio.to_thread(self._frame_limiter.sync, fps or 0, launch)

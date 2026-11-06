@@ -14,6 +14,7 @@ Waydroid Manager is a Decky Loader plugin for ArmadaOS handhelds. It initializes
 - Local APK and split-package XAPK installation through Decky's file picker.
 - Third-party app uninstall and completion or failure notifications.
 - Android 13 QAM frame-limit synchronization and redundant frame-commit filtering.
+- Android DRM client telemetry for MangoHud GPU usage, without a second rendering pass.
 - Container start, stop, and restart controls.
 - A confirmed, full image and Android-data removal action.
 

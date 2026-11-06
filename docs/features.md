@@ -34,3 +34,9 @@ The bundled launcher creates a private Wayland socket that relays Android direct
 The transient user service waits until Android reports itself ready before opening the full UI or requested application. Each launch gets a new private socket, and shutdown removes that socket and stops only the owned session and relay. On Android 13, QAM's current cap is applied to the foreground Android app without restarting it, and previous Android overrides are restored afterward. Redundant Waydroid commits are filtered to avoid doubled FPS reporting. QAM rate changes and corrected reporting were verified live in Warframe. Repeated launches, final display pacing, and per-game resolution overrides still require broader validation.
 
 The tested Gamescope build does not render a cursor for native XDG windows, so Steam mouse mode can deliver pointer input without a visible cursor. This remains a compositor limitation; direct touch and controller routing remain enabled.
+
+## Performance overlay
+
+Gamescope associates the Android window with the plugin's Steam-owned relay. MangoHud therefore samples that process, which normally has no GPU clients. The backend duplicates the active container's DRM client handles into the relay so MangoHud can read the real Android GPU counters there. It discovers clients across Android's PID namespace, including app renderers and SurfaceFlinger, and deduplicates shared clients. This works for the full environment and individual apps without package-name rules.
+
+GPU usage requires Linux `pidfd_getfd`, permission to duplicate Android's handles, and a MangoHud-supported DRM driver. Newly opened clients can take up to MangoHud's own fdinfo rescan interval to appear. Global CPU and RAM readings remain system-wide. Optional process-specific CPU/RAM readings still describe the relay, and fields unsupported by the installed MangoHud driver remain unavailable. No percentages, memory values, API names, or frame timings are fabricated.

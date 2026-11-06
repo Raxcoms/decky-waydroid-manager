@@ -17,7 +17,7 @@ import {
 } from "@decky/ui";
 import { useCallback, useEffect, useState } from "react";
 import { t } from "./i18n";
-import { watchFrameLimit } from "./frameLimit";
+import { watchRuntime } from "./runtime";
 import { watchShortcutArtwork } from "./artwork";
 import { operationError } from "./errors";
 
@@ -495,7 +495,7 @@ function Content() {
 }
 
 export default definePlugin(() => {
-  const stopFrameLimit = watchFrameLimit();
+  const stopRuntime = watchRuntime();
   const stopAutoShortcuts = watchAutoShortcuts();
   const stopArtwork = watchShortcutArtwork();
   return {
@@ -504,7 +504,7 @@ export default definePlugin(() => {
     content: <Content />,
     icon: <AndroidRobotIcon />,
     onDismount: () => {
-      stopFrameLimit();
+      stopRuntime();
       stopAutoShortcuts();
       stopArtwork();
     },
