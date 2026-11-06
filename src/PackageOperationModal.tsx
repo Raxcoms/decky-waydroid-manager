@@ -3,26 +3,29 @@ import { ConfirmModal, ProgressBar } from "@decky/ui";
 import { useEffect, useRef, useState } from "react";
 import { t } from "./i18n";
 
-const getProgress = callable<[string], string>("get_uninstall_progress");
+const getProgress = callable<[string, string], string>("get_package_progress");
 const phases = {
-  preparing: [5, "uninstallPreparing"],
-  starting: [10, "uninstallStarting"],
-  booting: [25, "uninstallBooting"],
-  checking: [40, "uninstallChecking"],
-  removing: [55, "uninstallRemoving"],
-  cleaning: [80, "uninstallCleaning"],
-  library: [95, "uninstallLibrary"],
+  preparing: [5, "packagePreparing"],
+  starting: [10, "packageStarting"],
+  booting: [25, "packageBooting"],
+  checking: [40, "packageChecking"],
+  removing: [55, "packageRemoving"],
+  installing: [55, "packageInstalling"],
+  cleaning: [80, "packageCleaning"],
+  library: [95, "packageLibrary"],
 } as const;
 
 type Props = {
   name: string;
-  packageName: string;
-  uninstall: () => Promise<void>;
+  operation: "install" | "uninstall";
+  target: string;
+  perform: () => Promise<void>;
+  autoStart?: boolean;
   onError: (error: unknown) => void;
   closeModal?: () => void;
 };
 
-export function UninstallModal({ name, packageName, uninstall, onError, closeModal }: Props) {
+export function PackageOperationModal({ name, operation, target, perform, autoStart = false, onError, closeModal }: Props) {
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState<keyof typeof phases>("preparing");
   const running = useRef(false);
@@ -35,26 +38,26 @@ export function UninstallModal({ name, packageName, uninstall, onError, closeMod
       if (polling) return;
       polling = true;
       try {
-        const next = await getProgress(packageName);
+        const next = await getProgress(operation, target);
         if (!disposed && next in phases) setStage(next as keyof typeof phases);
       } catch (error) {
-        console.warn("Waydroid uninstall progress unavailable", error);
+        console.warn("Waydroid package progress unavailable", error);
       } finally {
         polling = false;
       }
     };
     const timer = window.setInterval(() => void poll(), 500);
     return () => { disposed = true; window.clearInterval(timer); };
-  }, [busy, packageName]);
+  }, [busy, operation, target]);
 
   const closeIfIdle = () => { if (!running.current) closeModal?.(); };
-  const remove = async () => {
+  const start = async () => {
     if (running.current) return;
     running.current = true;
     setStage("preparing");
     setBusy(true);
     try {
-      await uninstall();
+      await perform();
       closeModal?.();
     } catch (error) {
       onError(error);
@@ -64,19 +67,21 @@ export function UninstallModal({ name, packageName, uninstall, onError, closeMod
     }
   };
 
+  useEffect(() => { if (autoStart) void start(); }, [autoStart]);
+
   return (
     <ConfirmModal
       // Steam exposes this option, but Decky's types do not include it yet.
       {...{ bCloseAfterOK: false }}
-      strTitle={t("uninstallApp", { name })}
-      strDescription={t("uninstallAppDescription")}
-      strOKButtonText={busy ? t("uninstalling") : t("uninstall")}
+      strTitle={operation === "install" ? t("installPackageTitle", { name }) : t("uninstallApp", { name })}
+      strDescription={operation === "install" ? t("installPackageProgress") : t("uninstallAppDescription")}
+      strOKButtonText={busy ? t(operation === "install" ? "installing" : "uninstalling") : t(operation === "install" ? "install" : "uninstall")}
       bOKDisabled={busy}
       bCancelDisabled={busy}
       bDisableBackgroundDismiss={busy}
       bHideCloseIcon={busy}
       closeModal={closeIfIdle}
-      onOK={remove}
+      onOK={start}
     >
       {busy && (
         <div style={{ marginTop: "16px" }} aria-live="polite">

@@ -22,7 +22,7 @@ import { watchRuntime } from "./runtime";
 import { requestArtworkUpdate, watchShortcutArtwork } from "./artwork";
 import { operationError } from "./errors";
 import { liveShortcutIds, waitForShortcut } from "./library";
-import { UninstallModal } from "./UninstallModal";
+import { PackageOperationModal } from "./PackageOperationModal";
 import { AppListState } from "./panelState";
 
 type Status = {
@@ -88,6 +88,7 @@ function reportError(error: unknown, setMessage?: (message: string | null) => vo
     WAYDROID_NOT_INSTALLED: "installWaydroidFirst", PACKAGE_OPERATION_FAILED: "packageOperationFailed",
     APP_NOT_REMOVABLE: "appNotRemovable",
     WAYDROID_START_FAILED: "androidStartFailed",
+    XAPK_TOO_MANY_APKS: "xapkTooManyApks", PACKAGE_NO_SPACE: "packageNoSpace",
   };
   if (messages[message]) message = t(messages[message]);
   setMessage?.(message);
@@ -285,7 +286,7 @@ function AppRow({ app, isLast, setShortcutId, onUninstalled, setMessage }: AppRo
           )}
           {app.removable && (
             <MenuItem onSelected={() => openModal(
-              <UninstallModal name={app.name} packageName={app.package} onError={(error) => reportError(error, setMessage)} uninstall={async () => {
+              <PackageOperationModal name={app.name} operation="uninstall" target={app.package} onError={(error) => reportError(error, setMessage)} perform={async () => {
                 const shortcutId = (await uninstallApp(app.package)) ?? app.shortcutId;
                 if (shortcutId) await removeFromSteam(shortcutId);
                 onUninstalled();
@@ -466,9 +467,17 @@ function Content() {
                     release();
                     const path = result.realpath || result.path;
                     if (!path) return;
-                    await installPackage(path);
-                    setApps(await listApps());
-                    toast(t("waydroid"), t("packageInstalled"));
+                    openModal(<PackageOperationModal
+                      name={path.split("/").pop() || path}
+                      operation="install" target={path} autoStart
+                      onError={(error) => reportError(error, setMessage)}
+                      perform={async () => {
+                        await installPackage(path);
+                        setApps(await listApps());
+                        setMessage(null);
+                        toast(t("waydroid"), t("packageInstalled"));
+                      }}
+                    />);
                   })
                   .catch((error) => { release(); if (error !== "User canceled") reportError(error, setMessage); });
               }}

@@ -1,5 +1,6 @@
 import importlib.util
 import copy
+from contextlib import nullcontext
 import os
 from pathlib import Path
 import sys
@@ -126,16 +127,18 @@ class LibraryTests(unittest.TestCase):
         with zipfile.ZipFile(apk, "w") as archive:
             archive.writestr("AndroidManifest.xml", b"manifest")
         self.plugin._initialized = lambda: True
+        self.plugin._package_session = lambda progress: nullcontext()
+        (self.home / ".local/share/waydroid/data/local/tmp").mkdir(parents=True)
         def run(args, **kwargs):
             if args == ["waydroid", "status"]:
                 return "Session:\tRUNNING"
             self.assertEqual(args[:6], ["waydroid", "shell", "--", "pm", "install", "-r"])
-            self.assertTrue(args[-1].startswith("/data/waydroid_tmp/"))
+            self.assertTrue(args[-1].startswith("/data/local/tmp/waydroid-manager-"))
             return "Failure [INSTALL_FAILED_INVALID_APK]"
         self.plugin._run = run
         with self.assertRaisesRegex(RuntimeError, "INSTALL_FAILED_INVALID_APK"):
             self.plugin._install_package(str(apk))
-        self.assertEqual(list((self.home / ".local/share/waydroid/data/waydroid_tmp").glob("decky-*")), [])
+        self.assertEqual(list((self.home / ".local/share/waydroid/data/local/tmp").glob("waydroid-manager-*")), [])
 
     def test_invalid_apk_archive_is_rejected_before_android_install(self):
         apk = self.home / "bad.apk"
@@ -145,12 +148,12 @@ class LibraryTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "INVALID_PACKAGE_ARCHIVE"):
             self.plugin._install_package(str(apk))
 
-    def test_stopped_session_is_reported_before_package_install(self):
+    def test_invalid_archive_is_rejected_without_starting_android(self):
         apk = self.home / "app.apk"
-        apk.write_text("unused")
+        apk.write_text("invalid")
         self.plugin._initialized = lambda: True
-        self.plugin._run = lambda *args, **kwargs: "Session:\tSTOPPED"
-        with self.assertRaisesRegex(RuntimeError, "WAYDROID_NOT_RUNNING"):
+        self.plugin._package_session = lambda progress: self.fail("Invalid file started Android")
+        with self.assertRaisesRegex(RuntimeError, "INVALID_PACKAGE_ARCHIVE"):
             self.plugin._install_package(str(apk))
 
     def test_successful_uninstall_forgets_manual_removal_and_reinstall_can_auto_add(self):
@@ -250,15 +253,15 @@ class PackageSessionTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "WAYDROID_START_FAILED"):
             self.plugin._uninstall_package("example.app")
         self.assertEqual(self.removed, [])
-        self.assertEqual(self.plugin._uninstall_progress, {"package": "example.app", "stage": "failed"})
+        self.assertEqual(self.plugin._package_progress, {"operation": "uninstall", "target": "example.app", "stage": "failed"})
 
     def test_progress_tracks_boot_cleanup_and_library_handoff(self):
         stages = []
-        original = self.plugin._set_uninstall_progress
-        def progress(package, stage):
+        original = self.plugin._set_package_progress
+        def progress(operation, package, stage):
             stages.append(stage)
-            original(package, stage)
-        self.plugin._set_uninstall_progress = progress
+            original(operation, package, stage)
+        self.plugin._set_package_progress = progress
         self.plugin._uninstall_package("example.app")
         self.assertEqual(stages, ["preparing", "starting", "booting", "cleaning", "library"])
 
@@ -279,3 +282,33 @@ class PackageSessionTests(unittest.TestCase):
         self.plugin._remove_installed_package = remove
         self.plugin._uninstall_package("example.app")
         self.assertFalse(any("stop" in command for command in self.commands))
+
+    def test_install_boots_android_and_restores_owned_resources_on_success_and_failure(self):
+        for result in ("Success", "Failure [INSTALL_FAILED_INVALID_APK]"):
+            with self.subTest(result=result), tempfile.TemporaryDirectory() as directory:
+                home = Path(directory)
+                apk = home / "app.apk"
+                with zipfile.ZipFile(apk, "w") as archive:
+                    archive.writestr("AndroidManifest.xml", b"manifest")
+                temp = home / ".local/share/waydroid/data/local/tmp"
+                self.plugin._user = lambda: ("user", 1000, home)
+                self.service_active = False
+                self.commands.clear()
+                def run(command, **kwargs):
+                    if "getprop" in command:
+                        temp.mkdir(parents=True, exist_ok=True)
+                    if command[:5] == ["waydroid", "shell", "--", "pm", "install"]:
+                        self.commands.append(command)
+                        self.assertEqual(len(list(temp.glob("waydroid-manager-*"))), 1)
+                        return result
+                    return self.run_command(command, **kwargs)
+                self.plugin._run = run
+                if result == "Success":
+                    self.plugin._install_package(str(apk))
+                    self.assertEqual(self.plugin._package_progress["stage"], "complete")
+                else:
+                    with self.assertRaisesRegex(RuntimeError, "INSTALL_FAILED_INVALID_APK"):
+                        self.plugin._install_package(str(apk))
+                    self.assertEqual(self.plugin._package_progress["stage"], "failed")
+                self.assertEqual(list(temp.glob("waydroid-manager-*")), [])
+                self.assertIn(["systemctl", "stop", backend.SERVICE], self.commands)

@@ -22,6 +22,7 @@ from waydroid_manager.frame_limit import FrameLimiter, active_launch
 from waydroid_manager.proc import clean_env
 from waydroid_manager.artwork import apk_images, missing_artwork, package_apks, persistent_apks
 from waydroid_manager.metrics import GpuMetrics
+from waydroid_manager.packages import apk_members, stage_apks
 
 
 PACKAGE_RE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -37,7 +38,7 @@ class Plugin:
 
     def __init__(self):
         self._state_lock = threading.RLock()
-        self._uninstall_progress: dict[str, str] = {}
+        self._package_progress: dict[str, str] = {}
 
     @contextmanager
     def _edit_state(self, home: Path):
@@ -697,43 +698,40 @@ class Plugin:
             raise RuntimeError(output or "PACKAGE_OPERATION_FAILED")
 
     def _install_package(self, value: str) -> None:
+        self._set_package_progress("install", value, "preparing")
+        try:
+            self._install_archive(value)
+            self._set_package_progress("install", value, "complete")
+        except Exception:
+            self._set_package_progress("install", value, "failed")
+            raise
+
+    def _install_archive(self, value: str) -> None:
         if not self._initialized():
             raise RuntimeError("WAYDROID_NOT_INSTALLED")
         path = self._install_file(value)
-        self._require_session()
         _, _, home = self._user()
-        host_dir = home / ".local/share/waydroid/data/waydroid_tmp" / f"decky-{uuid.uuid4().hex}"
+        host_dir = home / ".local/share/waydroid/data/local/tmp" / f"waydroid-manager-{uuid.uuid4().hex}"
+        report = lambda stage: self._set_package_progress("install", value, stage)
         try:
             with zipfile.ZipFile(path) as archive:
-                host_dir.mkdir(parents=True)
-                installed: list[str] = []
-                if path.suffix.lower() == ".apk":
-                    if "AndroidManifest.xml" not in archive.namelist():
-                        raise RuntimeError("INVALID_APK_MANIFEST")
-                    shutil.copyfile(path, host_dir / "base.apk")
-                    installed.append("base.apk")
-                else:
-                    packages = [item for item in archive.infolist() if not item.is_dir() and item.filename.lower().endswith(".apk")]
-                    if not packages:
-                        raise RuntimeError("XAPK_NO_APKS")
-                    for item in packages:
-                        name = Path(item.filename).name
-                        if not name or name in installed:
-                            raise RuntimeError("XAPK_INVALID_NAMES")
-                        with archive.open(item) as source, (host_dir / name).open("wb") as destination:
-                            shutil.copyfileobj(source, destination)
-                        installed.append(name)
-            guest_dir = f"/data/waydroid_tmp/{host_dir.name}"
-            action = "install" if path.suffix.lower() == ".apk" else "install-multiple"
-            output = self._run(["waydroid", "shell", "--", "pm", action, "-r", *[f"{guest_dir}/{name}" for name in installed]], timeout=300)
-            self._check_package_result(output)
+                members = apk_members(archive, path.suffix.lower())
+                with self._package_session(report):
+                    report("checking")
+                    installed = stage_apks(archive, members, host_dir)
+                    guest_dir = f"/data/local/tmp/{host_dir.name}"
+                    action = "install" if path.suffix.lower() == ".apk" else "install-multiple"
+                    report("installing")
+                    output = self._run(["waydroid", "shell", "--", "pm", action, "-r", *[f"{guest_dir}/{name}" for name in installed]], timeout=300)
+                    self._check_package_result(output)
         except zipfile.BadZipFile as error:
             raise RuntimeError("INVALID_PACKAGE_ARCHIVE") from error
         finally:
             shutil.rmtree(host_dir, ignore_errors=True)
 
     async def install_package(self, value: str) -> None:
-        self._install_package(value)
+        async with self._package_lock:
+            await asyncio.to_thread(self._install_package, value)
 
     async def start_service(self) -> None:
         self._run(["systemctl", "start", SERVICE])
@@ -755,30 +753,30 @@ class Plugin:
     def _uninstall_package(self, package: str) -> int | None:
         if not PACKAGE_RE.fullmatch(package):
             raise RuntimeError("Invalid Android package name")
-        self._set_uninstall_progress(package, "preparing")
+        self._set_package_progress("uninstall", package, "preparing")
         try:
-            with self._package_session(lambda stage: self._set_uninstall_progress(package, stage)):
+            with self._package_session(lambda stage: self._set_package_progress("uninstall", package, stage)):
                 shortcut_id = self._remove_installed_package(package)
-            self._set_uninstall_progress(package, "library")
+            self._set_package_progress("uninstall", package, "library")
             return shortcut_id
         except Exception:
-            self._set_uninstall_progress(package, "failed")
+            self._set_package_progress("uninstall", package, "failed")
             raise
 
-    def _set_uninstall_progress(self, package: str, stage: str) -> None:
-        self._uninstall_progress = {"package": package, "stage": stage}
+    def _set_package_progress(self, operation: str, target: str, stage: str) -> None:
+        self._package_progress = {"operation": operation, "target": target, "stage": stage}
 
-    async def get_uninstall_progress(self, package: str) -> str:
-        progress = self._uninstall_progress
-        return progress.get("stage", "preparing") if progress.get("package") == package else "preparing"
+    async def get_package_progress(self, operation: str, target: str) -> str:
+        progress = self._package_progress
+        return progress.get("stage", "preparing") if (progress.get("operation"), progress.get("target")) == (operation, target) else "preparing"
 
     def _remove_installed_package(self, package: str) -> int | None:
-        self._set_uninstall_progress(package, "checking")
+        self._set_package_progress("uninstall", package, "checking")
         if package not in self._removable_packages(allow_cached=False):
             raise RuntimeError("APP_NOT_REMOVABLE")
         _, _, home = self._user()
         shortcut_id = self._shortcut_ids(home).get(package)
-        self._set_uninstall_progress(package, "removing")
+        self._set_package_progress("uninstall", package, "removing")
         output = self._run(["waydroid", "shell", "--", "pm", "uninstall", package], timeout=60)
         self._check_package_result(output)
         (home / ".local/share/applications" / f"waydroid.{package}.desktop").unlink(missing_ok=True)
