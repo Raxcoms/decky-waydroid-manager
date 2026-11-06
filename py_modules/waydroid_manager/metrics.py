@@ -6,10 +6,9 @@ from pathlib import Path
 import socket
 import stat
 import struct
-import subprocess
 import time
 
-from .proc import clean_env
+from .container import container_pid
 
 
 MAX_CLIENTS = 64
@@ -169,10 +168,8 @@ class GpuMetrics:
         if launch is None or time.monotonic() < self.next_scan:
             return
         self.next_scan = time.monotonic() + 2
-        result = subprocess.run(["lxc-info", "-P", "/var/lib/waydroid/lxc", "-n", "waydroid", "-pH"],
-                                env=clean_env(), capture_output=True, text=True, timeout=3, check=False)
-        init_pid = result.stdout.strip()
-        clients = android_clients(int(init_pid)) if result.returncode == 0 and init_pid.isdecimal() else {}
+        init_pid = container_pid()
+        clients = android_clients(init_pid) if init_pid else {}
         if self.clients == set(clients):
             return
         handles = []

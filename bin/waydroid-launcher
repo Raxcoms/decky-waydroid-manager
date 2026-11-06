@@ -33,11 +33,6 @@ if [[ "${WAYDROID_MANAGER_CLEAN_ENV:-}" != 1 ]]; then
     "$0" "$@"
 fi
 
-if ! command -v gamescope >/dev/null; then
-  echo "Gamescope is required by Waydroid Manager." >&2
-  exit 1
-fi
-
 if [[ -z "$parent_display" ]]; then
   echo "Waydroid Manager needs Steam's active Game Mode display." >&2
   exit 1
@@ -49,8 +44,7 @@ if [[ -z "$parent_wayland" ]]; then
 fi
 
 if ! systemctl is-active --quiet waydroid-container.service; then
-  echo "Waydroid is stopped. Start the service in Waydroid Manager before launching from Steam." >&2
-  exit 1
+  "$launcher_dir/waydroid-service"
 fi
 
 export XDG_RUNTIME_DIR="$runtime_dir"

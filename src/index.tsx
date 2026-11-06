@@ -1,8 +1,9 @@
-import { callable, definePlugin, FileSelectionType, openFilePicker, toaster, useQuickAccessVisible } from "@decky/api";
+import { getStatus, listApps, installGapps, startService, stopService, restartService, uninstallApp, getWaydroidShortcut, getAppShortcut, saveShortcutRecord, removeShortcutRecord, setAutoAddApps, pendingAutoShortcuts, removeWaydroidImage, installPackage, type Status, type AndroidApp } from "./backend";
+import { addToSteam, configureSteamShortcut, removeFromSteam, launchSteamShortcut } from "./steam";
+import { definePlugin, FileSelectionType, openFilePicker, toaster, useQuickAccessVisible } from "@decky/api";
 import {
   ButtonItem,
   ConfirmModal,
-  DialogButton,
   Field,
   Focusable,
   Menu,
@@ -10,7 +11,6 @@ import {
   PanelSection,
   PanelSectionRow,
   ToggleField,
-  gamepadDialogClasses,
   showContextMenu,
   showModal,
   staticClasses,
@@ -21,20 +21,9 @@ import { t } from "./i18n";
 import { watchRuntime } from "./runtime";
 import { requestArtworkUpdate, watchShortcutArtwork } from "./artwork";
 import { operationError } from "./errors";
-import { liveShortcutIds, waitForShortcut } from "./library";
+import { liveShortcutIds } from "./library";
 import { PackageOperationModal } from "./PackageOperationModal";
 import { AppListState } from "./panelState";
-
-type Status = {
-  initialized: boolean;
-  serviceRunning: boolean;
-  gamescopeInstalled: boolean;
-  autoAddApps: boolean;
-  waydroidShortcutId?: number;
-};
-
-type AndroidApp = { name: string; package: string; icon: string; iconPath: string; shortcutId?: number; removable: boolean };
-type Shortcut = { name: string; exe: string; startDir: string; launchOptions: string; icon: string; key: string };
 
 function AndroidRobotIcon() {
   return (
@@ -46,22 +35,6 @@ function AndroidRobotIcon() {
     </svg>
   );
 }
-
-const getStatus = callable<[], Status>("get_status");
-const listApps = callable<[], AndroidApp[]>("list_apps");
-const installGapps = callable<[], void>("install_gapps");
-const startService = callable<[], void>("start_service");
-const stopService = callable<[], void>("stop_service");
-const restartService = callable<[], void>("restart_service");
-const uninstallApp = callable<[string], number | null>("uninstall_app");
-const getWaydroidShortcut = callable<[], Shortcut>("get_waydroid_shortcut");
-const getAppShortcut = callable<[string], Shortcut>("get_app_shortcut");
-const saveShortcutRecord = callable<[string, number], void>("record_shortcut");
-const removeShortcutRecord = callable<[string], void>("remove_shortcut_record");
-const setAutoAddApps = callable<[boolean], void>("set_auto_add_apps");
-const pendingAutoShortcuts = callable<[number[] | null], Shortcut[]>("pending_auto_shortcuts");
-const removeWaydroidImage = callable<[], number[]>("remove_waydroid");
-const installPackage = callable<[string], void>("install_package");
 
 const autoAddAttempted = new Set<string>();
 const autoAddFailures = new Set<string>();
@@ -142,67 +115,6 @@ function watchAutoShortcuts() {
     disposed = true;
     window.clearInterval(timer);
   };
-}
-
-async function addToSteam(shortcut: Shortcut) {
-  const apps = window.SteamClient?.Apps;
-  if (!apps?.AddShortcut) {
-    throw new Error(t("shortcutApiUnavailable"));
-  }
-
-  const appId = Number(await apps.AddShortcut(shortcut.name, shortcut.exe, shortcut.startDir, shortcut.launchOptions));
-  if (!appId) {
-    throw new Error(t("shortcutNotCreated"));
-  }
-  try {
-    await configureSteamShortcut(appId, shortcut);
-    if (!await waitForShortcut(appId)) throw new Error(t("shortcutNotCreated"));
-  } catch (error) {
-    await apps.RemoveShortcut?.(appId);
-    throw error;
-  }
-  return appId;
-}
-
-async function configureSteamShortcut(appId: number, shortcut: Shortcut) {
-  const apps = window.SteamClient?.Apps;
-  if (!apps?.SetShortcutLaunchOptions) {
-    throw new Error(t("shortcutApiUnavailable"));
-  }
-  try {
-    await apps.SetShortcutName?.(appId, shortcut.name);
-  } catch {
-  }
-  await apps.SetShortcutLaunchOptions(appId, shortcut.launchOptions);
-  if (shortcut.icon) {
-    try {
-      await apps.SetShortcutIcon?.(appId, shortcut.icon);
-    } catch {
-    }
-  }
-}
-
-async function removeFromSteam(appId: number) {
-  const apps = window.SteamClient?.Apps;
-  if (!apps?.RemoveShortcut) {
-    throw new Error(t("shortcutApiUnavailable"));
-  }
-  await apps.RemoveShortcut(appId);
-}
-
-function launchSteamShortcut(appId: number) {
-  const gameId = ((BigInt(appId >>> 0) << 32n) | 0x02000000n).toString();
-  const apps = window.SteamClient?.Apps;
-  if (apps?.RunGame) {
-    apps.RunGame(gameId, "", -1, 100);
-    return;
-  }
-  const url = (window.SteamClient as unknown as { URL?: { ExecuteSteamURL?: (url: string) => void } } | undefined)?.URL;
-  if (url?.ExecuteSteamURL) {
-    url.ExecuteSteamURL(`steam://rungameid/${gameId}`);
-    return;
-  }
-  throw new Error(t("shortcutApiUnavailable"));
 }
 
 function run(action: () => Promise<unknown>, refresh: () => Promise<void>, setMessage: (message: string | null) => void, success?: [string, string]) {
@@ -303,22 +215,14 @@ function AppRow({ app, isLast, setShortcutId, onUninstalled, setMessage }: AppRo
     }
   };
 
+  const icon = app.icon
+    ? <img src={app.icon} alt="" width={24} height={24} />
+    : <AndroidRobotIcon />;
   return (
     <PanelSectionRow>
-      <ButtonItem layout="below" bottomSeparator={isLast ? "none" : "standard"} onClick={openMenu}>
-        <div style={{ display: "flex", alignItems: "center", gap: "14px", width: "100%", minWidth: 0, minHeight: "32px", padding: 0, transform: "translateX(-10px)" }}>
-          {app.icon ? (
-            <img src={app.icon} alt="" style={{ width: "28px", height: "28px", borderRadius: "6px", objectFit: "cover", flex: "0 0 auto" }} />
-          ) : (
-            <div style={{ width: "28px", height: "28px", borderRadius: "6px", display: "grid", placeItems: "center", background: "rgba(255, 255, 255, 0.1)", flex: "0 0 auto" }}>
-              {app.name.slice(0, 1).toUpperCase()}
-            </div>
-          )}
-          <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
-            <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", lineHeight: "20px" }}>{app.name}</div>
-            <div style={{ opacity: 0.65, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", lineHeight: "16px" }}>{app.package}</div>
-          </div>
-        </div>
+      <ButtonItem label={app.name} description={app.package} icon={icon}
+        layout="inline" bottomSeparator={isLast ? "none" : "standard"} onClick={openMenu}>
+        {t("appActions")}
       </ButtonItem>
     </PanelSectionRow>
   );
@@ -420,7 +324,7 @@ function Content() {
         <PanelSectionRow>
           <Field label={status?.initialized ? t("installed") : t("notInstalled")} />
         </PanelSectionRow>
-        {status && !status.gamescopeInstalled && (
+        {status && !status.sessionAvailable && (
           <PanelSectionRow>
             <Field label={t("gamescopeUnavailable")} description={t("gamescopeUnavailableDescription")} />
           </PanelSectionRow>
@@ -465,7 +369,7 @@ function Content() {
               bottomSeparator="none"
               onClick={() => {
                 const release = appListState.retainForOverlay();
-                openFilePicker(FileSelectionType.FILE, "/var/home", true, true)
+                openFilePicker(FileSelectionType.FILE, status.userHome, true, true)
                   .then(async (result) => {
                     release();
                     const path = result.realpath || result.path;
@@ -526,14 +430,13 @@ function Content() {
             <Field label={t("service", { state: status.serviceRunning ? t("running") : t("stopped") })} />
           </PanelSectionRow>
           <PanelSectionRow>
-            <Focusable style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
-              <DialogButton style={{ flex: "1 1 max-content", maxWidth: "100%" }} onClick={run(startService, refresh, setMessage)}>{t("start")}</DialogButton>
-              <DialogButton style={{ flex: "1 1 max-content", maxWidth: "100%" }} onClick={run(restartService, refresh, setMessage)}>{t("restart")}</DialogButton>
-              <DialogButton style={{ flex: "1 1 max-content", maxWidth: "100%" }} onClick={run(stopService, refresh, setMessage)}>{t("stop")}</DialogButton>
-            </Focusable>
+            <ButtonItem layout="below" onClick={run(startService, refresh, setMessage)}>{t("start")}</ButtonItem>
           </PanelSectionRow>
           <PanelSectionRow>
-            <div role="separator" className={gamepadDialogClasses.StandaloneFieldSeparator} style={{ marginTop: "12px", marginBottom: "12px" }} />
+            <ButtonItem layout="below" onClick={run(restartService, refresh, setMessage)}>{t("restart")}</ButtonItem>
+          </PanelSectionRow>
+          <PanelSectionRow>
+            <ButtonItem layout="below" bottomSeparator="thick" onClick={run(stopService, refresh, setMessage)}>{t("stop")}</ButtonItem>
           </PanelSectionRow>
           <PanelSectionRow>
             <ButtonItem
@@ -547,7 +450,7 @@ function Content() {
         </PanelSection>
       )}
 
-      {message && <div className={staticClasses.PanelSectionRow} style={{ padding: "8px 16px", opacity: 0.8 }}>{message}</div>}
+      {message && <PanelSection><PanelSectionRow><Field description={message} bottomSeparator="none" /></PanelSectionRow></PanelSection>}
     </div>
   );
 }

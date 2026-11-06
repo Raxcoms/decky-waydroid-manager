@@ -1,13 +1,11 @@
 import base64
 import asyncio
 import configparser
-import json
 import os
 import pwd
 import re
 import shutil
 import subprocess
-import tempfile
 import threading
 import time
 import uuid
@@ -23,11 +21,13 @@ from waydroid_manager.artwork import apk_images, missing_artwork, package_apks, 
 from waydroid_manager.metrics import GpuMetrics
 from waydroid_manager.packages import apk_members, stage_apks
 from waydroid_manager.steam import read_shortcuts, shortcuts_path, shortcut_key
+from waydroid_manager.container import CONFIG_DIR, SERVICE, container_pid
+from waydroid_manager.control import ServiceControl, control_path
+from waydroid_manager.state import StateStore
 
 
 PACKAGE_RE = re.compile(r"^[A-Za-z0-9._-]+$")
-WAYDROID_DIR = Path("/var/lib/waydroid")
-SERVICE = "waydroid-container.service"
+WAYDROID_DIR = CONFIG_DIR
 MAX_ICON_BYTES = 2 * 1024 * 1024
 WAYDROID_SHORTCUT_KEY = "waydroid"
 
@@ -104,10 +104,11 @@ class Plugin:
             stderr=subprocess.DEVNULL,
             check=False,
         )
+        _, uid, _ = self._user()
         self._run([
             "systemd-run", "--quiet", "--no-block", "--collect",
             "--unit=waydroid-manager-input-sync",
-            str(self._input_sync()),
+            str(self._input_sync()), str(uid),
         ])
 
     def _stop_input_sync(self) -> None:
@@ -156,38 +157,13 @@ class Plugin:
         return "data:image/png;base64," + base64.b64encode(icon.read_bytes()).decode("ascii")
 
     def _state_path(self, home: Path) -> Path:
-        return home / ".config/waydroid-manager/state.json"
+        return StateStore(home).path
 
     def _load_state(self, home: Path) -> dict[str, Any]:
-        state: dict[str, Any] = {
-            "autoAddApps": False,
-            "observedApps": [],
-            "pendingApps": [],
-            "shortcuts": {},
-            "removedShortcuts": [],
-            "removableApps": [],
-        }
-        try:
-            saved = json.loads(self._state_path(home).read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return state
-        if not isinstance(saved, dict):
-            return state
-        for key in state:
-            if isinstance(saved.get(key), type(state[key])):
-                state[key] = saved[key]
-        return state
+        return StateStore(home).load()
 
     def _save_state(self, home: Path, state: dict[str, Any]) -> None:
-        path = self._state_path(home)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        owner = home.stat()
-        os.chown(path.parent, owner.st_uid, owner.st_gid)
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as temporary:
-            json.dump(state, temporary, sort_keys=True)
-            temporary_path = Path(temporary.name)
-        os.chown(temporary_path, owner.st_uid, owner.st_gid)
-        temporary_path.replace(path)
+        StateStore(home).save(state)
 
     def _shortcut_ids(self, home: Path) -> dict[str, int]:
         state = self._load_state(home)
@@ -268,20 +244,33 @@ class Plugin:
     def _shortcuts_path(self, home: Path) -> Path:
         return shortcuts_path(home)
 
-    async def get_status(self) -> dict[str, Any]:
-        _, _, home = self._user()
+    def _status(self) -> dict[str, Any]:
+        _, uid, home = self._user()
         state = self._load_state(home)
         shortcut_ids = self._shortcut_ids(home)
+        try:
+            graphics = self._steam_graphics_environment(uid)
+            display = graphics.get("GAMESCOPE_WAYLAND_DISPLAY", "")
+            session_available = bool(display and (Path(f"/run/user/{uid}") / display).is_socket())
+        except RuntimeError:
+            session_available = False
         return {
             "initialized": self._initialized(),
             "serviceRunning": self._service_state("active"),
-            "gamescopeInstalled": shutil.which("gamescope") is not None,
+            "sessionAvailable": session_available,
             "autoAddApps": state["autoAddApps"],
+            "userHome": str(home),
             "waydroidShortcutId": shortcut_ids.get(WAYDROID_SHORTCUT_KEY),
         }
 
-    async def list_apps(self) -> list[dict[str, Any]]:
+    async def get_status(self) -> dict[str, Any]:
+        return await asyncio.to_thread(self._status)
+
+    def _list_apps(self) -> list[dict[str, Any]]:
         return self._desktop_entries(self._removable_packages()) if self._initialized() else []
+
+    async def list_apps(self) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(self._list_apps)
 
     def _shortcut_details(self, name: str, package: str | None = None, icon: str = "") -> dict[str, str]:
         _, _, home = self._user()
@@ -371,7 +360,7 @@ class Plugin:
         ]
 
     async def pending_auto_shortcuts(self, live_ids: list[int] | None = None) -> list[dict[str, str]]:
-        return self._pending_auto_shortcuts(live_ids)
+        return await asyncio.to_thread(self._pending_auto_shortcuts, live_ids)
 
     async def get_waydroid_shortcut(self) -> dict[str, str]:
         return self._shortcut_details("Waydroid")
@@ -406,22 +395,26 @@ class Plugin:
         try:
             apks = persistent_apks(home / ".local/share/waydroid/data", key)
             if not apks and self._service_state("active"):
-                pid = self._run(["lxc-info", "-P", "/var/lib/waydroid/lxc", "-n", "waydroid", "-pH"])
-                if pid.isdecimal():
+                pid = container_pid()
+                if pid:
                     # Keep proc's root link intact for the container mount tree.
-                    root = Path("/proc") / pid / "root"
+                    root = Path("/proc") / str(pid) / "root"
                     apks = package_apks(root, self._run(["waydroid", "shell", "--", "pm", "path", key]))
             result["images"] = await asyncio.to_thread(apk_images, apks)
         except (OSError, ValueError, RuntimeError, zipfile.BadZipFile, subprocess.SubprocessError):
             pass
         return result
 
-    async def install_gapps(self) -> None:
+    def _install_gapps(self) -> None:
         if self._initialized():
             raise RuntimeError("Waydroid is already initialized. Remove it before installing a new image.")
         self._run(["waydroid", "init", "--system_type", "GAPPS"], timeout=1800)
         if not self._initialized():
             raise RuntimeError("Waydroid did not finish initializing its image")
+
+    async def install_gapps(self) -> None:
+        async with self._package_lock:
+            await asyncio.to_thread(self._install_gapps)
 
     def _install_file(self, value: str) -> Path:
         _, _, home = self._user()
@@ -527,6 +520,8 @@ class Plugin:
                 members = apk_members(archive, path.suffix.lower())
                 with self._package_session(report):
                     report("checking")
+                    if not host_dir.parent.resolve().is_relative_to(home.resolve()):
+                        raise RuntimeError("INVALID_PACKAGE_FILE")
                     installed = stage_apks(archive, members, host_dir)
                     guest_dir = f"/data/local/tmp/{host_dir.name}"
                     action = "install" if path.suffix.lower() == ".apk" else "install-multiple"
@@ -542,14 +537,23 @@ class Plugin:
         async with self._package_lock:
             await asyncio.to_thread(self._install_package, value)
 
+    async def _change_service(self, action: str) -> None:
+        async with self._package_lock:
+            await asyncio.to_thread(self._run, ["systemctl", action, SERVICE])
+
     async def start_service(self) -> None:
-        self._run(["systemctl", "start", SERVICE])
+        await self._change_service("start")
 
     async def stop_service(self) -> None:
-        self._run(["systemctl", "stop", SERVICE])
+        await self._change_service("stop")
 
     async def restart_service(self) -> None:
-        self._run(["systemctl", "restart", SERVICE])
+        await self._change_service("restart")
+
+    async def _ensure_service(self) -> None:
+        if not self._initialized():
+            raise RuntimeError("WAYDROID_NOT_INSTALLED")
+        await self.start_service()
 
     def _uninstall_package(self, package: str) -> int | None:
         if not PACKAGE_RE.fullmatch(package):
@@ -616,10 +620,18 @@ class Plugin:
         self._metrics_error = None
         self._runtime_lock = asyncio.Lock()
         self._package_lock = asyncio.Lock()
-        await asyncio.to_thread(self._start_input_sync)
+        _, uid, _ = self._user()
+        self._control = ServiceControl(control_path(uid), uid, self._ensure_service)
+        await self._control.open()
+        try:
+            await asyncio.to_thread(self._start_input_sync)
+        except Exception:
+            await self._control.close()
+            raise
         decky.logger.info("Waydroid Manager loaded")
 
     async def _unload(self):
+        await self._control.close()
         try:
             async with self._runtime_lock:
                 _, uid, _ = self._user()

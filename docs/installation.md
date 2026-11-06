@@ -19,6 +19,6 @@ The first initialization downloads Android images and can take several minutes. 
 
 ## Steam shortcuts
 
-Use **Add Waydroid to Steam** for the Android launcher, or **Add to Steam** beside an Android app. New shortcuts appear immediately through Steam's live shortcut API. Start the service from the plugin before using a shortcut.
+Use **Add Waydroid to Steam** for the Android launcher, or **Add to Steam** beside an Android app. New shortcuts appear immediately through Steam's live shortcut API. The launcher requests service startup from the running Decky backend when needed.
 
 Android receives the shortcut's selected resolution and the primary compositor's refresh rate. The QAM frame limiter is synchronized to the foreground app on Android 13. Shortcuts run the bundled launcher directly under Steam's launch reaper. The plugin does not require Armada's game-launch wrapper.

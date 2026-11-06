@@ -1,9 +1,8 @@
-import { callable } from "@decky/api";
-import { ConfirmModal, ProgressBar } from "@decky/ui";
+import { getPackageProgress } from "./backend";
+import { DialogBody, DialogBodyText, DialogButtonPrimary, DialogButtonSecondary, DialogFooter, DialogHeader, ModalRoot, ProgressBar } from "@decky/ui";
 import { useEffect, useRef, useState } from "react";
 import { t } from "./i18n";
 
-const getProgress = callable<[string, string], string>("get_package_progress");
 const phases = {
   preparing: [5, "packagePreparing"],
   starting: [10, "packageStarting"],
@@ -38,7 +37,7 @@ export function PackageOperationModal({ name, operation, target, perform, autoSt
       if (polling) return;
       polling = true;
       try {
-        const next = await getProgress(operation, target);
+        const next = await getPackageProgress(operation, target);
         if (!disposed && next in phases) setStage(next as keyof typeof phases);
       } catch (error) {
         console.warn("Waydroid package progress unavailable", error);
@@ -70,25 +69,23 @@ export function PackageOperationModal({ name, operation, target, perform, autoSt
   useEffect(() => { if (autoStart) void start(); }, [autoStart]);
 
   return (
-    <ConfirmModal
-      // Steam exposes this option, but Decky's types do not include it yet.
-      {...{ bCloseAfterOK: false }}
-      strTitle={operation === "install" ? t("installPackageTitle", { name }) : t("uninstallApp", { name })}
-      strDescription={operation === "install" ? t("installPackageProgress") : t("uninstallAppDescription")}
-      strOKButtonText={busy ? t(operation === "install" ? "installing" : "uninstalling") : t(operation === "install" ? "install" : "uninstall")}
-      bOKDisabled={busy}
-      bCancelDisabled={busy}
+    <ModalRoot
       bDisableBackgroundDismiss={busy}
       bHideCloseIcon={busy}
       closeModal={closeIfIdle}
-      onOK={start}
+      onCancel={closeIfIdle}
     >
-      {busy && (
-        <div style={{ marginTop: "16px" }} aria-live="polite">
-          <div style={{ marginBottom: "8px" }}>{t(phases[stage][1])}</div>
-          <ProgressBar nProgress={phases[stage][0]} />
-        </div>
-      )}
-    </ConfirmModal>
+      <DialogHeader>{operation === "install" ? t("installPackageTitle", { name }) : t("uninstallApp", { name })}</DialogHeader>
+      <DialogBody>
+        <DialogBodyText>{operation === "install" ? t("installPackageProgress") : t("uninstallAppDescription")}</DialogBodyText>
+        {busy && <div aria-live="polite"><DialogBodyText>{t(phases[stage][1])}</DialogBodyText><ProgressBar nProgress={phases[stage][0]} /></div>}
+      </DialogBody>
+      <DialogFooter>
+        <DialogButtonPrimary disabled={busy} onClick={(event) => { event.preventDefault(); void start(); }}>
+          {busy ? t(operation === "install" ? "installing" : "uninstalling") : t(operation === "install" ? "install" : "uninstall")}
+        </DialogButtonPrimary>
+        <DialogButtonSecondary disabled={busy} onClick={(event) => { event.preventDefault(); closeIfIdle(); }}>{t("cancel")}</DialogButtonSecondary>
+      </DialogFooter>
+    </ModalRoot>
   );
 }
