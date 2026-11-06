@@ -1,9 +1,42 @@
 from pathlib import Path
+import logging
+import re
 import shutil
+import subprocess
 import zipfile
 
 
 MAX_SPLITS = 128
+
+
+def check_result(output: str) -> None:
+    if "Success" not in output.splitlines():
+        raise RuntimeError(output or "PACKAGE_OPERATION_FAILED")
+
+
+def install_apks(run, directory: Path, guest: str, names: list[str]) -> None:
+    command = ["waydroid", "shell", "--", "pm"]
+    size = sum((directory / name).stat().st_size for name in names)
+    # Skip this install's scan without changing Android's verifier settings.
+    output = run([*command, "install-create", "-r", "--skip-verification", "-S", str(size)])
+    match = re.search(r"^Success: created install session \[(\d+)\]$", output, re.MULTILINE)
+    if not match:
+        raise RuntimeError(output or "PACKAGE_OPERATION_FAILED")
+    session = match[1]
+    committed = False
+    try:
+        for name in names:
+            output = run([*command, "install-write", "-S", str((directory / name).stat().st_size), session, name, f"{guest}/{name}"], timeout=300)
+            if not any(line == "Success" or line.startswith("Success:") for line in output.splitlines()):
+                raise RuntimeError(output or "PACKAGE_OPERATION_FAILED")
+        check_result(run([*command, "install-commit", session], timeout=300))
+        committed = True
+    finally:
+        if not committed:
+            try:
+                run([*command, "install-abandon", session])
+            except (RuntimeError, OSError, subprocess.SubprocessError) as error:
+                logging.getLogger(__name__).warning("Could not abandon Android install session %s: %s", session, error)
 
 
 def apk_members(archive: zipfile.ZipFile, suffix: str) -> list[tuple[zipfile.ZipInfo, str]]:

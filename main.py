@@ -19,7 +19,7 @@ from waydroid_manager.frame_limit import FrameLimiter
 from waydroid_manager.proc import active_launch, clean_env
 from waydroid_manager.artwork import apk_images, missing_artwork, package_apks, persistent_apks
 from waydroid_manager.metrics import GpuMetrics
-from waydroid_manager.packages import apk_members, stage_apks
+from waydroid_manager.packages import apk_members, stage_apks, install_apks, check_result
 from waydroid_manager.steam import read_shortcuts, shortcuts_path, shortcut_key, migrated_launch_options
 from waydroid_manager.container import CONFIG_DIR, SERVICE, container_pid
 from waydroid_manager.control import ServiceControl, control_path
@@ -530,8 +530,7 @@ class Plugin:
         raise RuntimeError("WAYDROID_START_FAILED")
 
     def _check_package_result(self, output: str) -> None:
-        if "Success" not in output.splitlines():
-            raise RuntimeError(output or "PACKAGE_OPERATION_FAILED")
+        check_result(output)
 
     def _install_package(self, value: str) -> None:
         self._set_package_progress("install", value, "preparing")
@@ -558,10 +557,8 @@ class Plugin:
                         raise RuntimeError("INVALID_PACKAGE_FILE")
                     installed = stage_apks(archive, members, host_dir)
                     guest_dir = f"/data/local/tmp/{host_dir.name}"
-                    action = "install" if path.suffix.lower() == ".apk" else "install-multiple"
                     report("installing")
-                    output = self._run(["waydroid", "shell", "--", "pm", action, "-r", *[f"{guest_dir}/{name}" for name in installed]], timeout=300)
-                    self._check_package_result(output)
+                    install_apks(self._run, host_dir, guest_dir, installed)
         except zipfile.BadZipFile as error:
             raise RuntimeError("INVALID_PACKAGE_ARCHIVE") from error
         finally:

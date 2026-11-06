@@ -30,7 +30,7 @@ The `cleanup-review` build was deployed on the Thor with per-file backups. The c
 
 | Check | Result |
 | --- | --- |
-| Automated checks | 84 Python regression tests pass, including Linux descriptor/socket tests in CI; ten frontend tests, TypeScript and Rollup pass. CI also imports the staged backend and verifies its runtime files and clean package contents. |
+| Automated checks | 86 Python regression tests cover the cleanup, native install sessions and scan opt-out; ten frontend tests, TypeScript and Rollup pass. CI also imports the staged backend and verifies its runtime files and clean package contents. |
 | Native app fields | Standard Decky Field padding is visually verified on the actual QAM. Icons, names and packages are visible. The scroll container has equal client/scroll widths of 300 CSS pixels, with no horizontal overflow. The inline button experiment that exceeded the row width was removed. |
 | Action menu | Selecting the native Calculator field opens its real Steam/Decky menu. Its manually removed shortcut remains removed. |
 | Focus and scrolling | Native paced Up navigation from the destructive final control reaches scroll position zero while focus is still on the Waydroid launch button. Only the following Up reaches Decky's back button. |

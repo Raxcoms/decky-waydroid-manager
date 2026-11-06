@@ -158,9 +158,11 @@ class LibraryTests(unittest.TestCase):
         self.plugin._package_session = lambda progress: nullcontext()
         (self.home / ".local/share/waydroid/data/local/tmp").mkdir(parents=True)
         def run(args, **kwargs):
-            if args == ["waydroid", "status"]:
-                return "Session:\tRUNNING"
-            self.assertEqual(args[:6], ["waydroid", "shell", "--", "pm", "install", "-r"])
+            if args[4] == "install-create":
+                return "Success: created install session [42]"
+            if args[4] == "install-abandon":
+                return "Success"
+            self.assertEqual(args[4], "install-write")
             self.assertTrue(args[-1].startswith("/data/local/tmp/waydroid-manager-"))
             return "Failure [INSTALL_FAILED_INVALID_APK]"
         self.plugin._run = run
@@ -339,10 +341,10 @@ class PackageSessionTests(unittest.TestCase):
                 def run(command, **kwargs):
                     if "getprop" in command:
                         temp.mkdir(parents=True, exist_ok=True)
-                    if command[:5] == ["waydroid", "shell", "--", "pm", "install"]:
+                    if command[:4] == ["waydroid", "shell", "--", "pm"]:
                         self.commands.append(command)
                         self.assertEqual(len(list(temp.glob("waydroid-manager-*"))), 1)
-                        return result
+                        return {"install-create": "Success: created install session [42]", "install-write": "Success: streamed 100 bytes", "install-commit": result, "install-abandon": "Success"}[command[4]]
                     return self.run_command(command, **kwargs)
                 self.plugin._run = run
                 if result == "Success":
