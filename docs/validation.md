@@ -30,7 +30,7 @@ The `cleanup-review` build was deployed on the Thor with per-file backups. The c
 
 | Check | Result |
 | --- | --- |
-| Automated checks | 86 Python regression tests cover the cleanup, native install sessions and scan opt-out; ten frontend tests, TypeScript and Rollup pass. CI also imports the staged backend and verifies its runtime files and clean package contents. |
+| Automated checks | 97 Python regression tests pass on the Thor's Linux/ARM64 runtime, including verification-request ownership and commit cleanup. Ten frontend tests, TypeScript and Rollup pass. Windows runs the same Python suite with 18 Linux-only skips. CI also imports the staged backend and verifies its runtime files and clean package contents. |
 | Native app fields | Standard Decky Field padding is visually verified on the actual QAM. Icons, names and packages are visible. The scroll container has equal client/scroll widths of 300 CSS pixels, with no horizontal overflow. The inline button experiment that exceeded the row width was removed. |
 | Action menu | Selecting the native Calculator field opens its real Steam/Decky menu. Its manually removed shortcut remains removed. |
 | Focus and scrolling | Native paced Up navigation from the destructive final control reaches scroll position zero while focus is still on the Waydroid launch button. Only the following Up reaches Decky's back button. |
@@ -40,11 +40,13 @@ The `cleanup-review` build was deployed on the Thor with per-file backups. The c
 | Install from stopped Android | The real file picker selected a deliberately invalid APK containing a manifest entry. The native modal showed background startup and phase progress with disabled buttons. Android rejected its corrupt XML, no app was installed, and temporary staging/session resources were removed. |
 | Cold-service cleanup | An initial check exposed Waydroid status's D-Bus activation. After adding passive systemd guards, service state stayed inactive through normal panel polling, started for installation, and returned to inactive after failure. Verification used systemd rather than the activating Waydroid status command. |
 | Error feedback | The dialog initially displayed a Java traceback tail. Cause extraction now shows `Corrupt XML binary file` and restores retry/cancel controls. The error remains readable after the notification disappears. Multiline Android errors have a frontend regression test. |
+| Supplied Fortnite XAPK | The user's four-split Fortnite XAPK installed through a native Android install session. Android exported its desktop entry and the automatic watcher recorded a Steam shortcut. |
+| Supplied Zenonia APK | A live native-session test installed the user's Zenonia 3 APK after matching its exact verification request and sending approval through Android's framework API. Commit returned `Success`; `pm path com.gamevil.zenonia3.global.skt` returned its installed base APK. The verification setting was `null` before and after. No screen monitoring or settings change was used. Integration testing of the new plugin confirmation follows this API-level test. |
 
-The invalid APK and test sessions are removed after validation. Backend import/package checks are performed on Linux; no unrelated application is installed or uninstalled for review. These checks do not substitute for physical-controller gameplay testing after the temporary input implementation, nor for fresh rotation and multi-device validation.
+Owned invalid fixtures, staging directories and test sessions are cleaned after validation. The real APK/XAPK tests use files explicitly supplied by the user. These checks do not substitute for physical-controller gameplay testing after the temporary input implementation, nor for fresh rotation and multi-device validation.
 
 ## Remaining limits
 
 The installed Gamescope logs `NO CURSOR IMPL XDG` for native window focus. Steam mouse-mode cursor visibility remains unresolved in this compositor path. Direct touch is not disabled to work around it.
 
-These checks cover launcher screens and the interactions above. They do not establish the absence of graphical artifacts, input latency, or frame-pacing problems during extended gameplay. Other resolutions, portrait rotation, and other devices still need broader live validation. Package installation success was covered with package-manager fixtures rather than installing an unrelated app on the user's device.
+These checks cover launcher screens and the interactions above. They do not establish the absence of graphical artifacts, input latency, or frame-pacing problems during extended gameplay. Other resolutions, portrait rotation, and other devices still need broader live validation.

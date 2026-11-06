@@ -18,6 +18,9 @@ def check(root: Path) -> None:
             raise RuntimeError(f"Packaged helper is not executable: {name}")
     if any(root.rglob("*.pyc")) or any(root.rglob("__pycache__")):
         raise RuntimeError("Python caches must not be shipped")
+    helper = root / "bin/waydroid-verifier.dex"
+    if not helper.is_file() or not helper.read_bytes().startswith(b"dex\n"):
+        raise RuntimeError("Build the Android verification helper before packaging")
     if (root / "node_modules").exists() or (root / "tests").exists():
         raise RuntimeError("Development files must not be shipped")
     if "root" not in json.loads((root / "plugin.json").read_text())["flags"]:

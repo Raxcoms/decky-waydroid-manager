@@ -14,11 +14,10 @@ def check_result(output: str) -> None:
         raise RuntimeError(output or "PACKAGE_OPERATION_FAILED")
 
 
-def install_apks(run, directory: Path, guest: str, names: list[str]) -> None:
+def install_apks(run, directory: Path, guest: str, names: list[str], commit=None) -> None:
     command = ["waydroid", "shell", "--", "pm"]
     size = sum((directory / name).stat().st_size for name in names)
-    # Android keeps the skip flag only when shell installs also allow test packages.
-    output = run([*command, "install-create", "-r", "-t", "--skip-verification", "-S", str(size)])
+    output = run([*command, "install-create", "-r", "-S", str(size)])
     match = re.search(r"^Success: created install session \[(\d+)\]$", output, re.MULTILINE)
     if not match:
         raise RuntimeError(output or "PACKAGE_OPERATION_FAILED")
@@ -29,7 +28,7 @@ def install_apks(run, directory: Path, guest: str, names: list[str]) -> None:
             output = run([*command, "install-write", "-S", str((directory / name).stat().st_size), session, name, f"{guest}/{name}"], timeout=300)
             if not any(line == "Success" or line.startswith("Success:") for line in output.splitlines()):
                 raise RuntimeError(output or "PACKAGE_OPERATION_FAILED")
-        check_result(run([*command, "install-commit", session], timeout=300))
+        check_result(commit(session) if commit else run([*command, "install-commit", session], timeout=300))
         committed = True
     finally:
         if not committed:

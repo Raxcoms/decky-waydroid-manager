@@ -20,6 +20,7 @@ from waydroid_manager.proc import active_launch, clean_env
 from waydroid_manager.artwork import apk_images, missing_artwork, package_apks, persistent_apks
 from waydroid_manager.metrics import GpuMetrics
 from waydroid_manager.packages import apk_members, stage_apks, install_apks, check_result
+from waydroid_manager.verification import InstallVerification, commit_install
 from waydroid_manager.steam import read_shortcuts, shortcuts_path, shortcut_key, migrated_launch_options
 from waydroid_manager.container import CONFIG_DIR, SERVICE, container_pid
 from waydroid_manager.control import ServiceControl, control_path
@@ -532,16 +533,16 @@ class Plugin:
     def _check_package_result(self, output: str) -> None:
         check_result(output)
 
-    def _install_package(self, value: str) -> None:
+    def _install_package(self, value: str, approve_verification: bool = False) -> None:
         self._set_package_progress("install", value, "preparing")
         try:
-            self._install_archive(value)
+            self._install_archive(value, approve_verification)
             self._set_package_progress("install", value, "complete")
         except Exception:
             self._set_package_progress("install", value, "failed")
             raise
 
-    def _install_archive(self, value: str) -> None:
+    def _install_archive(self, value: str, approve_verification: bool = False) -> None:
         if not self._initialized():
             raise RuntimeError("WAYDROID_NOT_INSTALLED")
         path = self._install_file(value)
@@ -558,15 +559,24 @@ class Plugin:
                     installed = stage_apks(archive, members, host_dir)
                     guest_dir = f"/data/local/tmp/{host_dir.name}"
                     report("installing")
-                    install_apks(self._run, host_dir, guest_dir, installed)
+                    commit = None
+                    if approve_verification:
+                        helper = Path(decky.DECKY_PLUGIN_DIR) / "bin/waydroid-verifier.dex"
+                        commit = lambda session: commit_install(
+                            ["waydroid", "shell", "--", "pm", "install-commit", session],
+                            InstallVerification(self._run, session, host_dir, guest_dir, helper),
+                        )
+                    install_apks(self._run, host_dir, guest_dir, installed, commit=commit)
         except zipfile.BadZipFile as error:
             raise RuntimeError("INVALID_PACKAGE_ARCHIVE") from error
         finally:
             shutil.rmtree(host_dir, ignore_errors=True)
 
-    async def install_package(self, value: str) -> None:
+    async def install_package(self, value: str, approve_verification: bool = False) -> None:
+        if type(approve_verification) is not bool:
+            raise RuntimeError("INVALID_PACKAGE_FILE")
         async with self._package_lock:
-            await asyncio.to_thread(self._install_package, value)
+            await asyncio.to_thread(self._install_package, value, approve_verification)
 
     async def _change_service(self, action: str) -> None:
         async with self._package_lock:
@@ -604,7 +614,9 @@ class Plugin:
 
     async def get_package_progress(self, operation: str, target: str) -> str:
         progress = self._package_progress
-        return progress.get("stage", "preparing") if (progress.get("operation"), progress.get("target")) == (operation, target) else "preparing"
+        if (progress.get("operation"), progress.get("target")) == (operation, target):
+            return progress["stage"]
+        return "preparing"
 
     def _remove_installed_package(self, package: str) -> int | None:
         self._set_package_progress("uninstall", package, "checking")

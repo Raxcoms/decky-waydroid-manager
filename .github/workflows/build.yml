@@ -21,6 +21,15 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run check
       - run: pnpm run build
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: 'build-tools;35.0.0 platforms;android-35'
+      - name: Build Android verification helper
+        run: python3 scripts/build_android.py
       - name: Check Wayland relay
         run: |
           python3 -m unittest discover -s tests -v

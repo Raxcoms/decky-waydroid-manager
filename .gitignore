@@ -4,3 +4,4 @@ out/
 *.zip
 __pycache__/
 *.pyc
+bin/*.dex

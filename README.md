@@ -14,6 +14,7 @@ Waydroid Manager is a Decky Loader plugin for ArmadaOS handhelds. It initializes
 - Library artwork from installed APK images even while Android is stopped, with app-icon cards for missing artwork and preservation of custom images.
 - Local APK and split-package XAPK installation through Decky's file picker.
 - APK/XAPK installation and third-party app uninstall with background startup, phase progress, cleanup, and completion or failure notifications.
+- Explicit per-install verification approval without screen monitoring or Android policy changes.
 - Android 13 QAM frame-limit synchronization and redundant frame-commit filtering.
 - Android DRM client telemetry for MangoHud GPU usage, without a second rendering pass.
 - Container start, stop, and restart controls.
@@ -33,6 +34,7 @@ Waydroid Manager is a Decky Loader plugin for ArmadaOS handhelds. It initializes
 pnpm install
 pnpm run check
 pnpm run build
+python3 scripts/build_android.py
 python3 -m unittest discover -s tests -v
 node --experimental-strip-types --test tests/*.test.mts
 bash -n bin/waydroid-launcher bin/waydroid-session
@@ -40,6 +42,6 @@ python3 scripts/package.py out
 python3 scripts/check_package.py out/waydroid-manager
 ```
 
-Use Node 22 or newer and the pnpm version declared in `package.json`. Python runtime helpers require Linux and Python 3.10 or newer. Linux-only socket/device tests are skipped on Windows; run the packaged-backend import check on Linux. The build produces `dist/index.js`; the package command stages `out/waydroid-manager` into an empty output directory without Python caches. GitHub Actions runs the checks and uploads the installable plugin directory directly, including for cleanup branches.
+Use Node 22 or newer and the pnpm version declared in `package.json`. Building the bundled verification Dex also requires JDK 17 or newer, Android SDK build-tools 35.0.0 and platform android-35; set `JAVA_HOME` and `ANDROID_HOME` to those installations. These are build dependencies only. Python runtime helpers require Linux and Python 3.10 or newer. Linux-only socket/device tests are skipped on Windows; run the packaged-backend import check on Linux. The build produces `dist/index.js` and `bin/waydroid-verifier.dex`; the package command stages `out/waydroid-manager` into an empty output directory without Python caches. GitHub Actions builds both helpers, runs the checks and uploads the installable plugin directory directly, including for cleanup branches.
 
 The direct Wayland path has been tested on Thor with app presentation, direct touch, controller input, repeat launches, Android 13 QAM cap changes, and per-game resolution overrides. Extended gameplay, other devices and rotation need broader validation. Native Gamescope mouse-cursor support remains a platform limitation; see the validation and review notes.

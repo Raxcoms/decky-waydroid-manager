@@ -29,7 +29,7 @@ export const setAutoAddApps = callable<[boolean], void>("set_auto_add_apps");
 export const pendingAutoShortcuts = callable<[number[] | null], Shortcut[]>("pending_auto_shortcuts");
 export const legacyShortcuts = callable<[], { appId: number; launchOptions: string }[]>("legacy_shortcuts");
 export const removeWaydroidImage = callable<[], number[]>("remove_waydroid");
-export const installPackage = callable<[string], void>("install_package");
+export const installPackage = callable<[string, boolean], void>("install_package");
 
 export const getPackageProgress = callable<[string, string], string>("get_package_progress");
 export const syncRuntime = callable<[number | null], void>("sync_runtime");

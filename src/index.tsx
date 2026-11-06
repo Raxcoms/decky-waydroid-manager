@@ -56,6 +56,8 @@ function reportError(error: unknown, setMessage?: (message: string | null) => vo
   let message = operationError(error) || t("operationFailed");
   const messages: Record<string, Parameters<typeof t>[0]> = {
     WAYDROID_NOT_RUNNING: "androidMustBeRunning", INVALID_PACKAGE_FILE: "invalidPackageFile",
+    ANDROID_VERIFICATION_UNAVAILABLE: "androidVerificationUnavailable", ANDROID_VERIFICATION_AMBIGUOUS: "androidVerificationUnavailable",
+    PACKAGE_INSTALL_TIMEOUT: "packageInstallTimeout",
     INVALID_PACKAGE_ARCHIVE: "invalidPackageArchive", INVALID_APK_MANIFEST: "invalidApkManifest",
     XAPK_NO_APKS: "xapkNoApks", XAPK_INVALID_NAMES: "xapkInvalidNames",
     WAYDROID_NOT_INSTALLED: "installWaydroidFirst", PACKAGE_OPERATION_FAILED: "packageOperationFailed",
@@ -380,10 +382,10 @@ function Content() {
                     if (!path) return;
                     openModal(<PackageOperationModal
                       name={path.split("/").pop() || path}
-                      operation="install" target={path} autoStart
+                      operation="install" target={path}
                       onError={(error) => reportError(error, setMessage)}
                       perform={async () => {
-                        await installPackage(path);
+                        await installPackage(path, true);
                         setApps(await listApps());
                         setMessage(null);
                         toast(t("waydroid"), t("packageInstalled"));

@@ -19,12 +19,11 @@ type Props = {
   operation: "install" | "uninstall";
   target: string;
   perform: () => Promise<void>;
-  autoStart?: boolean;
   onError: (error: unknown) => string;
   closeModal?: () => void;
 };
 
-export function PackageOperationModal({ name, operation, target, perform, autoStart = false, onError, closeModal }: Props) {
+export function PackageOperationModal({ name, operation, target, perform, onError, closeModal }: Props) {
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState<keyof typeof phases>("preparing");
   const [error, setError] = useState<string | null>(null);
@@ -68,8 +67,6 @@ export function PackageOperationModal({ name, operation, target, perform, autoSt
     }
   };
 
-  useEffect(() => { if (autoStart) void start(); }, [autoStart]);
-
   return (
     <ModalRoot
       bDisableBackgroundDismiss={busy}
@@ -81,7 +78,7 @@ export function PackageOperationModal({ name, operation, target, perform, autoSt
     >
       <DialogHeader>{operation === "install" ? t("installPackageTitle", { name }) : t("uninstallApp", { name })}</DialogHeader>
       <DialogBody>
-        <DialogBodyText>{operation === "install" ? t("packageBackgroundStartup") : t("uninstallAppDescription")}</DialogBodyText>
+        <DialogBodyText>{operation === "install" ? t("installPackageConfirmation") : t("uninstallAppDescription")}</DialogBodyText>
         {error && <div role="alert"><DialogBodyText>{error}</DialogBodyText></div>}
         {busy && <div aria-live="polite"><DialogBodyText>{t(phases[stage][1])}</DialogBodyText><ProgressBar nProgress={phases[stage][0]} /></div>}
       </DialogBody>
