@@ -81,7 +81,7 @@ export function PackageOperationModal({ name, operation, target, perform, autoSt
     >
       <DialogHeader>{operation === "install" ? t("installPackageTitle", { name }) : t("uninstallApp", { name })}</DialogHeader>
       <DialogBody>
-        <DialogBodyText>{operation === "install" ? t("installPackageProgress") : t("uninstallAppDescription")}</DialogBodyText>
+        <DialogBodyText>{operation === "install" ? t("packageBackgroundStartup") : t("uninstallAppDescription")}</DialogBodyText>
         {error && <div role="alert"><DialogBodyText>{error}</DialogBodyText></div>}
         {busy && <div aria-live="polite"><DialogBodyText>{t(phases[stage][1])}</DialogBodyText><ProgressBar nProgress={phases[stage][0]} /></div>}
       </DialogBody>
