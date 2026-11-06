@@ -5,6 +5,7 @@ import sys
 import tempfile
 import types
 import unittest
+from unittest.mock import patch
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,7 +57,7 @@ class LibraryTests(unittest.TestCase):
         self.plugin._run = lambda *args, **kwargs: "WayDroid container is STOPPED"
         self.assertEqual(self.plugin._removable_packages(), {"example.app"})
         with self.assertRaisesRegex(RuntimeError, "WAYDROID_NOT_RUNNING"):
-            self.plugin._uninstall_package("example.app")
+            self.plugin._remove_installed_package("example.app")
 
     def test_uninstall_checks_package_manager_success_before_removing_the_entry(self):
         self.plugin._save_shortcuts(self.path, {"0": (0, {
@@ -74,10 +75,10 @@ class LibraryTests(unittest.TestCase):
             return result
         self.plugin._run = run
         with self.assertRaises(RuntimeError):
-            self.plugin._uninstall_package("example.app")
+            self.plugin._remove_installed_package("example.app")
         self.assertTrue(entry.exists())
         result = "Success"
-        self.assertEqual(self.plugin._uninstall_package("example.app"), 123)
+        self.assertEqual(self.plugin._remove_installed_package("example.app"), 123)
         self.assertFalse(entry.exists())
 
     def test_apk_install_rejects_android_failure_and_cleans_staging(self):
@@ -123,13 +124,13 @@ class LibraryTests(unittest.TestCase):
         result = "Failure [DELETE_FAILED_INTERNAL_ERROR]"
         self.plugin._run = lambda args, **kwargs: "package:example.app" if "list" in args else result
         with self.assertRaises(RuntimeError):
-            self.plugin._uninstall_package("example.app")
+            self.plugin._remove_installed_package("example.app")
         self.assertIn("example.app", self.state["removedShortcuts"])
         self.assertIn("example.app", self.state["observedApps"])
         self.assertEqual(self.state["shortcuts"]["example.app"], 123)
 
         result = "Success"
-        self.assertIsNone(self.plugin._uninstall_package("example.app"))
+        self.assertIsNone(self.plugin._remove_installed_package("example.app"))
         self.assertEqual(self.state["shortcuts"], {"another.app": 456})
         for key in ("observedApps", "pendingApps", "removedShortcuts", "removableApps"):
             self.assertNotIn("example.app", self.state[key])
@@ -142,3 +143,88 @@ class LibraryTests(unittest.TestCase):
         ]
         pending = self.plugin._pending_auto_shortcuts()
         self.assertEqual([shortcut["key"] for shortcut in pending], ["example.app"])
+
+
+class PackageSessionTests(unittest.TestCase):
+    def setUp(self):
+        self.plugin = backend.Plugin()
+        self.plugin._initialized = lambda: True
+        self.plugin._user = lambda: ("user", 1000, Path("/home/user"))
+        self.plugin._steam_graphics_environment = lambda uid: {
+            "GAMESCOPE_WAYLAND_DISPLAY": "gamescope-primary", "WAYLAND_DISPLAY": "other-display",
+        }
+        self.plugin._service_state = lambda state: self.service_active
+        self.service_active = True
+        self.session_running = False
+        self.unit_state = "active"
+        self.booted = "1"
+        self.commands = []
+        self.removed = []
+        self.plugin._run = self.run_command
+        self.plugin._remove_installed_package = self.remove
+
+    def run_command(self, command, **kwargs):
+        self.commands.append(command)
+        if command == ["waydroid", "status"]:
+            return "Session: RUNNING" if self.session_running else "Session: STOPPED"
+        if "getprop" in command:
+            return self.booted
+        if "show" in command:
+            return self.unit_state
+        return ""
+
+    def remove(self, package):
+        self.removed.append(package)
+        return 123
+
+    def test_running_session_is_reused_and_left_running(self):
+        self.session_running = True
+        self.assertEqual(self.plugin._uninstall_package("example.app"), 123)
+        self.assertEqual(self.commands, [["waydroid", "status"]])
+        self.assertEqual(self.removed, ["example.app"])
+
+    def test_stopped_session_boots_hidden_on_steam_socket_and_stops_only_owned_unit(self):
+        self.assertEqual(self.plugin._uninstall_package("example.app"), 123)
+        start = next(command for command in self.commands if "systemd-run" in command)
+        stop = next(command for command in self.commands if "--user" in command and "stop" in command)
+        unit = next(value.removeprefix("--unit=") for value in start if value.startswith("--unit="))
+        self.assertIn("WAYLAND_DISPLAY=gamescope-primary", start)
+        self.assertEqual(start[-3:], ["waydroid", "session", "start"])
+        self.assertEqual(stop[-2:], ["stop", unit])
+        self.assertNotIn(["systemctl", "stop", backend.SERVICE], self.commands)
+        self.assertFalse(any("show-full-ui" in command or "launch" in command for command in self.commands))
+
+    def test_service_started_for_removal_is_restored_after_failure(self):
+        self.service_active = False
+        def fail(package):
+            raise RuntimeError("DELETE_FAILED")
+        self.plugin._remove_installed_package = fail
+        with self.assertRaisesRegex(RuntimeError, "DELETE_FAILED"):
+            self.plugin._uninstall_package("example.app")
+        self.assertIn(["systemctl", "stop", backend.SERVICE], self.commands)
+        self.assertTrue(any("stop" in command and "--user" in command for command in self.commands))
+
+    def test_failed_boot_does_not_attempt_removal(self):
+        self.booted = "0"
+        self.unit_state = "failed"
+        with self.assertRaisesRegex(RuntimeError, "WAYDROID_START_FAILED"):
+            self.plugin._uninstall_package("example.app")
+        self.assertEqual(self.removed, [])
+
+    def test_timed_out_boot_cleans_up_without_removal(self):
+        self.service_active = False
+        with patch.object(backend.time, "monotonic", side_effect=[0, 181]):
+            with self.assertRaisesRegex(RuntimeError, "WAYDROID_START_FAILED"):
+                self.plugin._uninstall_package("example.app")
+        self.assertEqual(self.removed, [])
+        self.assertIn(["systemctl", "stop", backend.SERVICE], self.commands)
+
+    def test_replacement_session_keeps_service_running(self):
+        self.service_active = False
+        def remove(package):
+            self.unit_state = "inactive"
+            self.session_running = True
+            return 123
+        self.plugin._remove_installed_package = remove
+        self.plugin._uninstall_package("example.app")
+        self.assertFalse(any("stop" in command for command in self.commands))

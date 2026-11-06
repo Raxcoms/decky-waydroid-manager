@@ -9,8 +9,10 @@ import shutil
 import struct
 import subprocess
 import tempfile
+import time
 import uuid
 import zipfile
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -609,6 +611,63 @@ class Plugin:
         if not re.search(r"^Session:\s*RUNNING$", status, re.MULTILINE):
             raise RuntimeError("WAYDROID_NOT_RUNNING")
 
+    @contextmanager
+    def _package_session(self):
+        if not self._initialized():
+            raise RuntimeError("WAYDROID_NOT_INSTALLED")
+        try:
+            self._require_session()
+        except RuntimeError:
+            pass
+        else:
+            yield
+            return
+
+        user, uid, home = self._user()
+        graphics = self._steam_graphics_environment(uid)
+        wayland = graphics.get("GAMESCOPE_WAYLAND_DISPLAY") or graphics.get("WAYLAND_DISPLAY")
+        if not wayland:
+            raise RuntimeError("WAYDROID_START_FAILED")
+        user_command = [
+            "runuser", "-u", user, "--", "env",
+            f"HOME={home}", f"XDG_RUNTIME_DIR=/run/user/{uid}",
+            f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus",
+        ]
+        unit = f"waydroid-manager-package-{uuid.uuid4().hex}"
+        service_was_active = self._service_state("active")
+        try:
+            self._run(["systemctl", "start", SERVICE])
+            # Session start keeps Android hidden until an app or the full UI is requested.
+            self._run([
+                *user_command, "systemd-run", "--user", "--collect", "--quiet",
+                f"--unit={unit}", "--property=KillMode=control-group",
+                "env", f"WAYLAND_DISPLAY={wayland}", "waydroid", "session", "start",
+            ])
+            deadline = time.monotonic() + 180
+            while time.monotonic() < deadline:
+                try:
+                    ready = self._run(["waydroid", "shell", "--", "getprop", "sys.boot_completed"], timeout=10)
+                    if ready == "1":
+                        break
+                except (RuntimeError, subprocess.TimeoutExpired):
+                    pass
+                if self._run([*user_command, "systemctl", "--user", "show", unit, "--property=ActiveState", "--value"]) not in {"active", "activating"}:
+                    raise RuntimeError("WAYDROID_START_FAILED")
+                time.sleep(1)
+            else:
+                raise RuntimeError("WAYDROID_START_FAILED")
+            yield
+        finally:
+            # Stop only our temporary unit, never a replacement session started by Steam.
+            state = self._run([*user_command, "systemctl", "--user", "show", unit, "--property=ActiveState", "--value"])
+            if state in {"active", "activating"}:
+                self._run([*user_command, "systemctl", "--user", "stop", unit])
+            if not service_was_active:
+                try:
+                    self._require_session()
+                except RuntimeError:
+                    self._run(["systemctl", "stop", SERVICE])
+
     def _check_package_result(self, output: str) -> None:
         if "Success" not in output.splitlines():
             raise RuntimeError(output or "PACKAGE_OPERATION_FAILED")
@@ -672,6 +731,10 @@ class Plugin:
     def _uninstall_package(self, package: str) -> int | None:
         if not PACKAGE_RE.fullmatch(package):
             raise RuntimeError("Invalid Android package name")
+        with self._package_session():
+            return self._remove_installed_package(package)
+
+    def _remove_installed_package(self, package: str) -> int | None:
         if package not in self._removable_packages(allow_cached=False):
             raise RuntimeError("APP_NOT_REMOVABLE")
         _, _, home = self._user()
@@ -687,7 +750,8 @@ class Plugin:
         return shortcut_id
 
     async def uninstall_app(self, package: str) -> int | None:
-        return self._uninstall_package(package)
+        async with self._package_lock:
+            return await asyncio.to_thread(self._uninstall_package, package)
 
     async def remove_waydroid(self) -> None:
         user, _, home = self._user()
@@ -708,6 +772,7 @@ class Plugin:
         self._gpu_metrics = GpuMetrics()
         self._metrics_error = None
         self._runtime_lock = asyncio.Lock()
+        self._package_lock = asyncio.Lock()
         await asyncio.to_thread(self._start_input_sync)
         decky.logger.info("Waydroid Manager loaded")
 

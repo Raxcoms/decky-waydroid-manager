@@ -78,6 +78,7 @@ function reportError(error: unknown, setMessage?: (message: string | null) => vo
     XAPK_NO_APKS: "xapkNoApks", XAPK_INVALID_NAMES: "xapkInvalidNames",
     WAYDROID_NOT_INSTALLED: "installWaydroidFirst", PACKAGE_OPERATION_FAILED: "packageOperationFailed",
     APP_NOT_REMOVABLE: "appNotRemovable",
+    WAYDROID_START_FAILED: "androidStartFailed",
   };
   if (messages[message]) message = t(messages[message]);
   setMessage?.(message);
