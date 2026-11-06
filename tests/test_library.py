@@ -33,6 +33,7 @@ class LibraryTests(unittest.TestCase):
         self.state = {"shortcuts": {"example.app": 123}, "removedShortcuts": []}
         self.plugin._load_state = lambda home: self.state
         self.plugin._save_state = lambda home, state: setattr(self, "state", state)
+        self.plugin._service_state = lambda state: True
 
     def tearDown(self):
         self.directory.cleanup()
@@ -69,6 +70,16 @@ class LibraryTests(unittest.TestCase):
             return "package:example.app\npackage:another.app\n"
         self.plugin._run = run
         self.assertEqual(self.plugin._removable_packages(), {"example.app", "another.app"})
+
+    def test_offline_polling_never_activates_waydroid_dbus_service(self):
+        self.plugin._service_state = lambda state: False
+        self.plugin._run = lambda *args, **kwargs: self.fail("Offline check contacted Waydroid")
+        self.state["removableApps"] = ["example.app"]
+        self.assertEqual(self.plugin._removable_packages(), {"example.app"})
+        with self.assertRaisesRegex(RuntimeError, "WAYDROID_NOT_RUNNING"):
+            self.plugin._removable_packages(allow_cached=False)
+        with self.assertRaisesRegex(RuntimeError, "WAYDROID_NOT_RUNNING"):
+            self.plugin._require_session()
 
     def test_native_shortcut_field_casing_and_changed_ids_are_resolved(self):
         write_shortcuts(self.path, {"0": (0, {
@@ -225,6 +236,10 @@ class PackageSessionTests(unittest.TestCase):
 
     def run_command(self, command, **kwargs):
         self.commands.append(command)
+        if command == ["systemctl", "start", backend.SERVICE]:
+            self.service_active = True
+        if command == ["systemctl", "stop", backend.SERVICE]:
+            self.service_active = False
         if command == ["waydroid", "status"]:
             return "Session: RUNNING" if self.session_running else "Session: STOPPED"
         if "getprop" in command:

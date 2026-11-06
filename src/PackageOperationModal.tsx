@@ -74,6 +74,8 @@ export function PackageOperationModal({ name, operation, target, perform, autoSt
     <ModalRoot
       bDisableBackgroundDismiss={busy}
       bHideCloseIcon={busy}
+      bOKDisabled={busy}
+      bCancelDisabled={busy}
       closeModal={closeIfIdle}
       onCancel={closeIfIdle}
     >

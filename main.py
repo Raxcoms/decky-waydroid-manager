@@ -200,6 +200,10 @@ class Plugin:
 
     def _removable_packages(self, allow_cached: bool = True) -> set[str]:
         _, _, home = self._user()
+        if not self._service_state("active"):
+            if not allow_cached:
+                raise RuntimeError("WAYDROID_NOT_RUNNING")
+            return set(self._load_state(home).get("removableApps", []))
         try:
             output = self._run(["waydroid", "shell", "--", "pm", "list", "packages", "-3"], timeout=10)
         except (RuntimeError, subprocess.TimeoutExpired):
@@ -450,6 +454,9 @@ class Plugin:
         return path
 
     def _require_session(self) -> None:
+        # Waydroid status contacts D-Bus and can activate a stopped service.
+        if not self._service_state("active"):
+            raise RuntimeError("WAYDROID_NOT_RUNNING")
         try:
             status = self._run(["waydroid", "status"])
         except RuntimeError as error:
