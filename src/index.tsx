@@ -10,6 +10,7 @@ import {
   PanelSection,
   PanelSectionRow,
   ToggleField,
+  gamepadDialogClasses,
   showContextMenu,
   showModal,
   staticClasses,
@@ -60,6 +61,7 @@ const removeWaydroid = callable<[], void>("remove_waydroid");
 const installPackage = callable<[string], void>("install_package");
 
 const autoAddAttempted = new Set<string>();
+const autoAddFailures = new Set<string>();
 const libraryListeners = new Set<() => void>();
 let cachedStatus: Status | null = null;
 let cachedApps: AndroidApp[] = [];
@@ -67,6 +69,26 @@ let rememberedVisibleApps = 10;
 
 function toast(title: string, body: string) {
   toaster.toast({ title, body });
+}
+
+function reportError(error: unknown, setMessage?: (message: string | null) => void) {
+  let message = error instanceof Error ? error.message : String(error);
+  if (message.includes("WAYDROID_NOT_RUNNING")) message = t("androidMustBeRunning");
+  setMessage?.(message);
+  toast(t("operationFailed"), message);
+}
+
+function revealPanelTop(event: Event) {
+  let parent = (event.target as HTMLElement | null)?.parentElement;
+  while (parent) {
+    if (parent.scrollHeight > parent.clientHeight && /auto|scroll/.test(getComputedStyle(parent).overflowY)) {
+      const panel = parent;
+      // Steam reveals the button alone, leaving the status fields above it clipped.
+      requestAnimationFrame(() => panel.scrollTo({ top: 0, behavior: "instant" }));
+      break;
+    }
+    parent = parent.parentElement;
+  }
 }
 
 function watchAutoShortcuts() {
@@ -82,7 +104,11 @@ function watchAutoShortcuts() {
         try {
           await recordShortcut(shortcut.key, await addToSteam(shortcut));
           toast(shortcut.name, t("addedToSteam"));
+          autoAddFailures.delete(shortcut.key);
           libraryListeners.forEach((listener) => listener());
+        } catch (error) {
+          if (!autoAddFailures.has(shortcut.key)) reportError(error);
+          autoAddFailures.add(shortcut.key);
         } finally {
           autoAddAttempted.delete(shortcut.key);
         }
@@ -111,7 +137,12 @@ async function addToSteam(shortcut: Shortcut) {
   if (!appId) {
     throw new Error(t("shortcutNotCreated"));
   }
-  await configureSteamShortcut(appId, shortcut);
+  try {
+    await configureSteamShortcut(appId, shortcut);
+  } catch (error) {
+    await apps.RemoveShortcut?.(appId);
+    throw error;
+  }
   return appId;
 }
 
@@ -124,10 +155,7 @@ async function configureSteamShortcut(appId: number, shortcut: Shortcut) {
     await apps.SetShortcutName?.(appId, shortcut.name);
   } catch {
   }
-  try {
-    await apps.SetShortcutLaunchOptions(appId, shortcut.launchOptions);
-  } catch {
-  }
+  await apps.SetShortcutLaunchOptions(appId, shortcut.launchOptions);
   if (shortcut.icon) {
     try {
       await apps.SetShortcutIcon?.(appId, shortcut.icon);
@@ -169,7 +197,7 @@ function run(action: () => Promise<unknown>, refresh: () => Promise<void>, setMe
         toast(...success);
       }
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      reportError(error, setMessage);
     }
   };
 }
@@ -325,6 +353,7 @@ function Content() {
 
   return (
     <div>
+      <Focusable flow-children="column" onGamepadFocus={revealPanelTop}>
       <PanelSection title={t("waydroid")}>
         <PanelSectionRow>
           <Field label={status?.initialized ? t("installed") : t("notInstalled")} description={t("detectedDisplay", { resolution })} />
@@ -362,6 +391,7 @@ function Content() {
           </>
         )}
       </PanelSection>
+      </Focusable>
 
       {status?.initialized && (
         <PanelSection title={t("androidApps", { count: apps.length })}>
@@ -377,7 +407,7 @@ function Content() {
                     setApps(await listApps());
                     toast(t("waydroid"), t("packageInstalled"));
                   })
-                  .catch((error) => setMessage(error instanceof Error ? error.message : String(error)));
+                  .catch((error) => reportError(error, setMessage));
               }}
             >
               {t("installPackage")}
@@ -417,6 +447,9 @@ function Content() {
               <DialogButton style={{ flex: "1 1 max-content", maxWidth: "100%" }} onClick={run(restartService, refresh, setMessage)}>{t("restart")}</DialogButton>
               <DialogButton style={{ flex: "1 1 max-content", maxWidth: "100%" }} onClick={run(stopService, refresh, setMessage)}>{t("stop")}</DialogButton>
             </Focusable>
+          </PanelSectionRow>
+          <PanelSectionRow>
+            <div role="separator" className={gamepadDialogClasses.StandaloneFieldSeparator} style={{ marginTop: "12px", marginBottom: "12px" }} />
           </PanelSectionRow>
           <PanelSectionRow>
             <ButtonItem
