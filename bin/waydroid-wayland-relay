@@ -13,6 +13,9 @@ import subprocess
 import sys
 import tempfile
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
+from waydroid_manager.wayland import SurfaceCommits
+
 
 MAX_PENDING = 1024 * 1024
 
@@ -23,6 +26,8 @@ class Endpoint:
     peer: Endpoint | None = None
     pending: deque = field(default_factory=deque)
     pending_bytes: int = 0
+    protocol: SurfaceCommits | None = None
+    upstream: bool = False
 
 
 def close_fds(fds: list[int]) -> None:
@@ -31,12 +36,13 @@ def close_fds(fds: list[int]) -> None:
 
 
 class Relay:
-    def __init__(self, listener: socket.socket, parent: str):
+    def __init__(self, listener: socket.socket, parent: str, coalesce: bool = False):
         self.listener = listener
         self.parent = parent
         self.selector = selectors.DefaultSelector()
         self.selector.register(listener, selectors.EVENT_READ, None)
         self.endpoints: set[Endpoint] = set()
+        self.coalesce = coalesce
 
     def update(self, endpoint: Endpoint) -> None:
         events = 0
@@ -67,6 +73,8 @@ class Relay:
             except KeyError:
                 pass
             current.connection.close()
+            if current.protocol:
+                current.protocol.close()
             while current.pending:
                 _, fds = current.pending.popleft()
                 close_fds(fds)
@@ -85,6 +93,10 @@ class Relay:
         client.setblocking(False)
         host.setblocking(False)
         downstream, upstream = Endpoint(client), Endpoint(host)
+        if self.coalesce:
+            downstream.protocol = SurfaceCommits()
+            upstream.protocol = downstream.protocol
+            upstream.upstream = True
         downstream.peer, upstream.peer = upstream, downstream
         self.endpoints.update((downstream, upstream))
         self.update(downstream)
@@ -107,6 +119,13 @@ class Relay:
             close_fds(fds)
             self.disconnect(endpoint)
             return
+        if endpoint.protocol:
+            if endpoint.upstream:
+                endpoint.protocol.observe_server(data)
+            else:
+                data, fds = endpoint.protocol.feed(data, fds)
+                if not data:
+                    return
         endpoint.peer.pending.append((memoryview(data), fds))
         endpoint.peer.pending_bytes += len(data)
         self.update(endpoint)
@@ -174,7 +193,12 @@ def main() -> int:
             os.chmod(path, 0o600)
             listener.listen(16)
             listener.setblocking(False)
-            relay = Relay(listener, parent)
+            relay = Relay(listener, parent, coalesce=True)
+            def report(*_):
+                protocols = [endpoint.protocol for endpoint in relay.endpoints if endpoint.protocol and not endpoint.upstream]
+                print(f"Wayland commits: {sum(p.commits for p in protocols)}, empty commits suppressed: {sum(p.dropped for p in protocols)}", file=sys.stderr, flush=True)
+            signal.signal(signal.SIGUSR1, report)
+            print(f"Wayland relay started: {os.getpid()}", file=sys.stderr, flush=True)
             environment = os.environ.copy()
             environment.update(WAYLAND_DISPLAY=path, GAMESCOPE_WAYLAND_DISPLAY=path)
             child = subprocess.Popen(sys.argv[3:], env=environment, start_new_session=True)
