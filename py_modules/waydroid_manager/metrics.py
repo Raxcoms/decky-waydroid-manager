@@ -14,6 +14,10 @@ from .container import container_pid
 MAX_CLIENTS = 64
 
 
+def is_render_node(info) -> bool:
+    return stat.S_ISCHR(info.st_mode) and os.major(info.st_rdev) == 226 and 128 <= os.minor(info.st_rdev) < 192
+
+
 def close_handles(handles: list[int]) -> None:
     for handle in handles:
         os.close(handle)
@@ -21,7 +25,7 @@ def close_handles(handles: list[int]) -> None:
 
 def drm_identity(handle: int) -> tuple[int, str, str] | None:
     info = os.fstat(handle)
-    if not stat.S_ISCHR(info.st_mode) or os.major(info.st_rdev) != 226:
+    if not is_render_node(info):
         return None
     fields = dict(line.split(":", 1) for line in Path(f"/proc/self/fdinfo/{handle}").read_text().splitlines() if ":" in line)
     driver = fields.get("drm-driver", "").strip()
@@ -39,7 +43,7 @@ def android_clients(init_pid: int, proc: Path = Path("/proc")) -> dict[tuple[int
             for entry in (process / "fd").iterdir():
                 try:
                     info = entry.stat()
-                    if not stat.S_ISCHR(info.st_mode) or os.major(info.st_rdev) != 226:
+                    if not is_render_node(info):
                         continue
                     fields = dict(line.split(":", 1) for line in (process / "fdinfo" / entry.name).read_text().splitlines() if ":" in line)
                     driver, client = fields.get("drm-driver", "").strip(), fields.get("drm-client-id", "").strip()

@@ -25,6 +25,7 @@ export const saveShortcutRecord = callable<[string, number], void>("record_short
 export const removeShortcutRecord = callable<[string], void>("remove_shortcut_record");
 export const setAutoAddApps = callable<[boolean], void>("set_auto_add_apps");
 export const pendingAutoShortcuts = callable<[number[] | null], Shortcut[]>("pending_auto_shortcuts");
+export const legacyShortcuts = callable<[], { appId: number; launchOptions: string }[]>("legacy_shortcuts");
 export const removeWaydroidImage = callable<[], number[]>("remove_waydroid");
 export const installPackage = callable<[string], void>("install_package");
 

@@ -4,11 +4,25 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
-from waydroid_manager.steam import read_shortcuts, shortcuts_path
+from waydroid_manager.steam import read_shortcuts, shortcuts_path, migrated_launch_options
 from steam_fixtures import write_shortcuts
 
 
 class SteamFilesTests(unittest.TestCase):
+    def test_migration_replaces_only_the_exact_old_wrapper(self):
+        self.assertEqual(migrated_launch_options("/usr/libexec/armada/armada-game-launch %command% app example.app"), "app example.app")
+        self.assertEqual(migrated_launch_options("/usr/libexec/armada/armada-game-launch %command% full"), "full")
+        for value in ("app example.app", "custom full", "/usr/libexec/armada/armada-game-launch %command% custom full"):
+            self.assertIsNone(migrated_launch_options(value))
+
+    def test_multiple_installations_are_not_selected_by_directory_order(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            for root in (".local/share/Steam", ".var/app/com.valvesoftware.Steam/data/Steam"):
+                (home / root / "userdata/1").mkdir(parents=True)
+            with self.assertRaisesRegex(RuntimeError, "active Steam installation"):
+                shortcuts_path(home)
+
     def test_active_account_wins_over_the_first_userdata_directory(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)

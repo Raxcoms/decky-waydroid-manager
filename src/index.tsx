@@ -1,4 +1,4 @@
-import { getStatus, listApps, installGapps, startService, stopService, restartService, uninstallApp, getWaydroidShortcut, getAppShortcut, saveShortcutRecord, removeShortcutRecord, setAutoAddApps, pendingAutoShortcuts, removeWaydroidImage, installPackage, type Status, type AndroidApp } from "./backend";
+import { getStatus, listApps, installGapps, startService, stopService, restartService, uninstallApp, getWaydroidShortcut, getAppShortcut, saveShortcutRecord, removeShortcutRecord, setAutoAddApps, pendingAutoShortcuts, legacyShortcuts, removeWaydroidImage, installPackage, type Status, type AndroidApp } from "./backend";
 import { addToSteam, configureSteamShortcut, removeFromSteam, launchSteamShortcut } from "./steam";
 import { definePlugin, FileSelectionType, openFilePicker, toaster, useQuickAccessVisible } from "@decky/api";
 import {
@@ -84,11 +84,20 @@ function revealPanelTop(event: Event) {
 function watchAutoShortcuts() {
   let busy = false;
   let disposed = false;
+  const migrated = new Set<number>();
   const sync = async () => {
     if (busy || disposed) return;
     busy = true;
     try {
-      for (const shortcut of await pendingAutoShortcuts(liveShortcutIds())) {
+      const live = liveShortcutIds();
+      for (const shortcut of await legacyShortcuts()) {
+        if (disposed || !live?.includes(shortcut.appId) || migrated.has(shortcut.appId)) continue;
+        const apps = window.SteamClient?.Apps;
+        if (!apps?.SetShortcutLaunchOptions) continue;
+        await apps.SetShortcutLaunchOptions(shortcut.appId, shortcut.launchOptions);
+        migrated.add(shortcut.appId);
+      }
+      for (const shortcut of await pendingAutoShortcuts(live)) {
         if (disposed || autoAddAttempted.has(shortcut.key)) continue;
         autoAddAttempted.add(shortcut.key);
         try {

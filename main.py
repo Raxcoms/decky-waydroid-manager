@@ -15,12 +15,13 @@ from pathlib import Path
 from typing import Any, Callable
 
 import decky
-from waydroid_manager.frame_limit import FrameLimiter, active_launch
+from waydroid_manager.frame_limit import FrameLimiter
+from waydroid_manager.proc import active_launch
 from waydroid_manager.proc import clean_env
 from waydroid_manager.artwork import apk_images, missing_artwork, package_apks, persistent_apks
 from waydroid_manager.metrics import GpuMetrics
 from waydroid_manager.packages import apk_members, stage_apks
-from waydroid_manager.steam import read_shortcuts, shortcuts_path, shortcut_key
+from waydroid_manager.steam import read_shortcuts, shortcuts_path, shortcut_key, migrated_launch_options
 from waydroid_manager.container import CONFIG_DIR, SERVICE, container_pid
 from waydroid_manager.control import ServiceControl, control_path
 from waydroid_manager.state import StateStore
@@ -68,9 +69,10 @@ class Plugin:
                 account = pwd.getpwuid(home.stat().st_uid)
                 return account.pw_name, account.pw_uid, home
 
-        for account in pwd.getpwall():
-            if account.pw_uid >= 1000 and Path(account.pw_dir).is_dir():
-                return account.pw_name, account.pw_uid, Path(account.pw_dir)
+        accounts = [account for account in pwd.getpwall() if account.pw_uid >= 1000 and Path(account.pw_dir).is_dir()]
+        if len(accounts) == 1:
+            account = accounts[0]
+            return account.pw_name, account.pw_uid, Path(account.pw_dir)
         raise RuntimeError("Could not find the Decky user")
 
     def _initialized(self) -> bool:
@@ -361,6 +363,21 @@ class Plugin:
 
     async def pending_auto_shortcuts(self, live_ids: list[int] | None = None) -> list[dict[str, str]]:
         return await asyncio.to_thread(self._pending_auto_shortcuts, live_ids)
+
+    def _legacy_shortcuts(self) -> list[dict[str, Any]]:
+        _, _, home = self._user()
+        result = []
+        for _, (_, entry) in read_shortcuts(self._shortcuts_path(home)).items():
+            entry = {key.casefold(): value for key, value in entry.items()}
+            exe = str(entry.get("exe", (1, ""))[1]).strip('"')
+            options = migrated_launch_options(str(entry.get("launchoptions", (1, ""))[1]))
+            app_id = entry.get("appid", (2, 0))[1]
+            if Path(exe).resolve() == self._launcher().resolve() and options and isinstance(app_id, int) and app_id:
+                result.append({"appId": app_id & 0xFFFFFFFF, "launchOptions": options})
+        return result
+
+    async def legacy_shortcuts(self) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(self._legacy_shortcuts)
 
     async def get_waydroid_shortcut(self) -> dict[str, str]:
         return self._shortcut_details("Waydroid")

@@ -63,9 +63,37 @@ def shortcut_key(options: str) -> str | None:
     return None
 
 
+def migrated_launch_options(options: str) -> str | None:
+    # Older shortcuts used Armada's wrapper before running our launcher.
+    try:
+        args = shlex.split(options)
+    except ValueError:
+        return None
+    if args[:2] != ["/usr/libexec/armada/armada-game-launch", "%command%"]:
+        return None
+    action = args[2:]
+    if action == ["full"] or len(action) == 2 and action[0] == "app" and shortcut_key(" ".join(action)):
+        return " ".join(action)
+    return None
+
+
 def shortcuts_path(home: Path) -> Path:
     roots = (home / ".local/share/Steam", home / ".steam/steam", home / ".var/app/com.valvesoftware.Steam/data/Steam")
-    for root in roots:
+    installed = {root.resolve(): root for root in roots if (root / "userdata").is_dir()}
+    if len(installed) > 1:
+        active = set()
+        for process in Path("/proc").glob("[0-9]*"):
+            try:
+                executable = (process / "exe").resolve(strict=True)
+                if executable.name != "steam":
+                    continue
+                active.update(root for root in installed if executable.is_relative_to(root))
+            except OSError:
+                continue
+        if len(active) != 1:
+            raise RuntimeError("Could not identify the active Steam installation")
+        installed = {root: installed[root] for root in active}
+    for root in installed.values():
         accounts = {path.name: path / "config/shortcuts.vdf" for path in (root / "userdata").glob("*") if path.name.isdecimal() and path.is_dir()}
         if not accounts:
             continue
