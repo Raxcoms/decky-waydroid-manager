@@ -15,7 +15,7 @@ import uuid
 import zipfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import decky
 from waydroid_manager.frame_limit import FrameLimiter, active_launch
@@ -639,7 +639,7 @@ class Plugin:
             raise RuntimeError("WAYDROID_NOT_RUNNING")
 
     @contextmanager
-    def _package_session(self):
+    def _package_session(self, progress: Callable[[str], None] = lambda stage: None):
         if not self._initialized():
             raise RuntimeError("WAYDROID_NOT_INSTALLED")
         try:
@@ -663,6 +663,7 @@ class Plugin:
         unit = f"waydroid-manager-package-{uuid.uuid4().hex}"
         service_was_active = self._service_state("active")
         try:
+            progress("starting")
             self._run(["systemctl", "start", SERVICE])
             # Session start keeps Android hidden until an app or the full UI is requested.
             self._run([
@@ -670,6 +671,7 @@ class Plugin:
                 f"--unit={unit}", "--property=KillMode=control-group",
                 "env", f"WAYLAND_DISPLAY={wayland}", "waydroid", "session", "start",
             ])
+            progress("booting")
             deadline = time.monotonic() + 180
             while time.monotonic() < deadline:
                 try:
@@ -685,6 +687,7 @@ class Plugin:
                 raise RuntimeError("WAYDROID_START_FAILED")
             yield
         finally:
+            progress("cleaning")
             # Stop only our temporary unit, never a replacement session started by Steam.
             state = self._run([*user_command, "systemctl", "--user", "show", unit, "--property=ActiveState", "--value"])
             if state in {"active", "activating"}:
@@ -758,14 +761,30 @@ class Plugin:
     def _uninstall_package(self, package: str) -> int | None:
         if not PACKAGE_RE.fullmatch(package):
             raise RuntimeError("Invalid Android package name")
-        with self._package_session():
-            return self._remove_installed_package(package)
+        self._set_uninstall_progress(package, "preparing")
+        try:
+            with self._package_session(lambda stage: self._set_uninstall_progress(package, stage)):
+                shortcut_id = self._remove_installed_package(package)
+            self._set_uninstall_progress(package, "library")
+            return shortcut_id
+        except Exception:
+            self._set_uninstall_progress(package, "failed")
+            raise
+
+    def _set_uninstall_progress(self, package: str, stage: str) -> None:
+        self._uninstall_progress = {"package": package, "stage": stage}
+
+    async def get_uninstall_progress(self, package: str) -> str:
+        progress = self._uninstall_progress
+        return progress.get("stage", "preparing") if progress.get("package") == package else "preparing"
 
     def _remove_installed_package(self, package: str) -> int | None:
+        self._set_uninstall_progress(package, "checking")
         if package not in self._removable_packages(allow_cached=False):
             raise RuntimeError("APP_NOT_REMOVABLE")
         _, _, home = self._user()
         shortcut_id = self._shortcut_ids(home).get(package)
+        self._set_uninstall_progress(package, "removing")
         output = self._run(["waydroid", "shell", "--", "pm", "uninstall", package], timeout=60)
         self._check_package_result(output)
         (home / ".local/share/applications" / f"waydroid.{package}.desktop").unlink(missing_ok=True)

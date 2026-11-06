@@ -1,4 +1,4 @@
-import { callable, definePlugin, FileSelectionType, openFilePicker, toaster } from "@decky/api";
+import { callable, definePlugin, FileSelectionType, openFilePicker, toaster, useQuickAccessVisible } from "@decky/api";
 import {
   ButtonItem,
   ConfirmModal,
@@ -14,13 +14,16 @@ import {
   showContextMenu,
   showModal,
   staticClasses,
+  type MenuProps,
 } from "@decky/ui";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactElement } from "react";
 import { t } from "./i18n";
 import { watchRuntime } from "./runtime";
 import { watchShortcutArtwork } from "./artwork";
 import { operationError } from "./errors";
 import { liveShortcutIds, waitForShortcut } from "./library";
+import { UninstallModal } from "./UninstallModal";
+import { AppListState } from "./panelState";
 
 type Status = {
   initialized: boolean;
@@ -65,7 +68,7 @@ const autoAddFailures = new Set<string>();
 const libraryListeners = new Set<() => void>();
 let cachedStatus: Status | null = null;
 let cachedApps: AndroidApp[] = [];
-let rememberedVisibleApps = 10;
+const appListState = new AppListState();
 
 function toast(title: string, body: string) {
   toaster.toast({ title, body });
@@ -211,10 +214,26 @@ function run(action: () => Promise<unknown>, refresh: () => Promise<void>, setMe
   };
 }
 
+function openModal(modal: ReactElement) {
+  const release = appListState.retainForOverlay();
+  try {
+    const result = showModal(modal);
+    void result.ClosedPromise.then(release, release);
+  } catch (error) {
+    release();
+    throw error;
+  }
+}
+
 function confirm(title: string, description: string, onConfirm: () => Promise<void>) {
-  showModal(
+  openModal(
     <ConfirmModal strTitle={title} strDescription={description} onOK={onConfirm} />,
   );
+}
+
+function AppMenu({ release, ...props }: MenuProps & { release: () => void }) {
+  useEffect(() => release, [release]);
+  return <Menu {...props} />;
 }
 
 type AppRowProps = {
@@ -249,25 +268,33 @@ function AppRow({ app, isLast, setShortcutId, onUninstalled, setMessage }: AppRo
     launchSteamShortcut(app.shortcutId);
   };
   const openMenu = () => {
-    showContextMenu(
-      <Menu label={app.name}>
-        {app.shortcutId && <MenuItem onSelected={run(launch, async () => {}, setMessage, [app.name, t("launching")])}>{t("launch")}</MenuItem>}
-        {app.shortcutId ? (
-          <MenuItem onSelected={run(remove, async () => {}, setMessage, [app.name, t("removedFromSteam")])}>{t("removeFromSteam")}</MenuItem>
-        ) : (
-          <MenuItem onSelected={run(add, async () => {}, setMessage, [app.name, t("addedToSteam")])}>{t("addToSteam")}</MenuItem>
-        )}
-        {app.removable && (
-          <MenuItem onSelected={() => confirm(t("uninstallApp", { name: app.name }), t("uninstallAppDescription"), run(async () => {
-            const shortcutId = (await uninstallApp(app.package)) ?? app.shortcutId;
-            if (shortcutId) {
-              await removeFromSteam(shortcutId);
-            }
-            onUninstalled();
-          }, async () => {}, setMessage, [app.name, t("appUninstalled")]))}>{t("uninstall")}</MenuItem>
-        )}
-      </Menu>,
-    );
+    const release = appListState.retainForOverlay();
+    try {
+      showContextMenu(
+        <AppMenu label={app.name} release={release}>
+          {app.shortcutId && <MenuItem onSelected={run(launch, async () => {}, setMessage, [app.name, t("launching")])}>{t("launch")}</MenuItem>}
+          {app.shortcutId ? (
+            <MenuItem onSelected={run(remove, async () => {}, setMessage, [app.name, t("removedFromSteam")])}>{t("removeFromSteam")}</MenuItem>
+          ) : (
+            <MenuItem onSelected={run(add, async () => {}, setMessage, [app.name, t("addedToSteam")])}>{t("addToSteam")}</MenuItem>
+          )}
+          {app.removable && (
+            <MenuItem onSelected={() => openModal(
+              <UninstallModal name={app.name} packageName={app.package} onError={(error) => reportError(error, setMessage)} uninstall={async () => {
+                const shortcutId = (await uninstallApp(app.package)) ?? app.shortcutId;
+                if (shortcutId) await removeFromSteam(shortcutId);
+                onUninstalled();
+                setMessage(null);
+                toast(app.name, t("appUninstalled"));
+              }} />,
+            )}>{t("uninstall")}</MenuItem>
+          )}
+        </AppMenu>,
+      );
+    } catch (error) {
+      release();
+      reportError(error, setMessage);
+    }
   };
 
   return (
@@ -292,17 +319,26 @@ function AppRow({ app, isLast, setShortcutId, onUninstalled, setMessage }: AppRo
 }
 
 function Content() {
+  const quickAccessVisible = useQuickAccessVisible();
   const [status, setStatusState] = useState<Status | null>(cachedStatus);
   const [apps, setAppsState] = useState<AndroidApp[]>(cachedApps);
   const [message, setMessage] = useState<string | null>(null);
-  const [visibleApps, setVisibleAppsState] = useState(rememberedVisibleApps);
+  const [visibleApps, setVisibleAppsState] = useState(appListState.visible);
   const setVisibleApps = (next: number | ((current: number) => number)) => {
     setVisibleAppsState((current) => {
       const value = typeof next === "function" ? next(current) : next;
-      rememberedVisibleApps = value;
+      appListState.visible = value;
       return value;
     });
   };
+
+  useEffect(() => () => appListState.leave(), []);
+  useEffect(() => {
+    if (!quickAccessVisible) {
+      appListState.leave();
+      setVisibleAppsState(appListState.visible);
+    }
+  }, [quickAccessVisible]);
   const setStatus = (next: Status | null | ((current: Status | null) => Status | null)) => {
     setStatusState((current) => {
       const value = typeof next === "function" ? next(current) : next;
@@ -419,15 +455,17 @@ function Content() {
               layout="below"
               bottomSeparator="none"
               onClick={() => {
+                const release = appListState.retainForOverlay();
                 openFilePicker(FileSelectionType.FILE, "/var/home", true, true)
                   .then(async (result) => {
+                    release();
                     const path = result.realpath || result.path;
                     if (!path) return;
                     await installPackage(path);
                     setApps(await listApps());
                     toast(t("waydroid"), t("packageInstalled"));
                   })
-                  .catch((error) => { if (error !== "User canceled") reportError(error, setMessage); });
+                  .catch((error) => { release(); if (error !== "User canceled") reportError(error, setMessage); });
               }}
             >
               {t("installPackage")}

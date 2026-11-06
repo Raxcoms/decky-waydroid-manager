@@ -250,6 +250,17 @@ class PackageSessionTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "WAYDROID_START_FAILED"):
             self.plugin._uninstall_package("example.app")
         self.assertEqual(self.removed, [])
+        self.assertEqual(self.plugin._uninstall_progress, {"package": "example.app", "stage": "failed"})
+
+    def test_progress_tracks_boot_cleanup_and_library_handoff(self):
+        stages = []
+        original = self.plugin._set_uninstall_progress
+        def progress(package, stage):
+            stages.append(stage)
+            original(package, stage)
+        self.plugin._set_uninstall_progress = progress
+        self.plugin._uninstall_package("example.app")
+        self.assertEqual(stages, ["preparing", "starting", "booting", "cleaning", "library"])
 
     def test_timed_out_boot_cleans_up_without_removal(self):
         self.service_active = False
