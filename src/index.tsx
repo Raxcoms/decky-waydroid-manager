@@ -74,7 +74,14 @@ function toast(title: string, body: string) {
 
 function reportError(error: unknown, setMessage?: (message: string | null) => void) {
   let message = operationError(error) || t("operationFailed");
-  if (message.includes("WAYDROID_NOT_RUNNING")) message = t("androidMustBeRunning");
+  const messages: Record<string, Parameters<typeof t>[0]> = {
+    WAYDROID_NOT_RUNNING: "androidMustBeRunning", INVALID_PACKAGE_FILE: "invalidPackageFile",
+    INVALID_PACKAGE_ARCHIVE: "invalidPackageArchive", INVALID_APK_MANIFEST: "invalidApkManifest",
+    XAPK_NO_APKS: "xapkNoApks", XAPK_INVALID_NAMES: "xapkInvalidNames",
+    WAYDROID_NOT_INSTALLED: "installWaydroidFirst", PACKAGE_OPERATION_FAILED: "packageOperationFailed",
+    APP_NOT_REMOVABLE: "appNotRemovable",
+  };
+  if (messages[message]) message = t(messages[message]);
   setMessage?.(message);
   toast(t("operationFailed"), message);
 }

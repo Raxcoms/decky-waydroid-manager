@@ -592,9 +592,9 @@ class Plugin:
             path = Path(value).resolve(strict=True)
             path.relative_to(home)
         except (OSError, ValueError):
-            raise RuntimeError("Select an APK or XAPK from your home folder")
+            raise RuntimeError("INVALID_PACKAGE_FILE")
         if not path.is_file() or path.suffix.lower() not in {".apk", ".xapk"}:
-            raise RuntimeError("Select a valid APK or XAPK file")
+            raise RuntimeError("INVALID_PACKAGE_FILE")
         return path
 
     def _require_session(self) -> None:
@@ -607,11 +607,11 @@ class Plugin:
 
     def _check_package_result(self, output: str) -> None:
         if "Success" not in output.splitlines():
-            raise RuntimeError(output or "Android did not complete the package operation")
+            raise RuntimeError(output or "PACKAGE_OPERATION_FAILED")
 
     def _install_package(self, value: str) -> None:
         if not self._initialized():
-            raise RuntimeError("Install the GAPPS image before installing apps")
+            raise RuntimeError("WAYDROID_NOT_INSTALLED")
         path = self._install_file(value)
         self._require_session()
         _, _, home = self._user()
@@ -622,17 +622,17 @@ class Plugin:
                 installed: list[str] = []
                 if path.suffix.lower() == ".apk":
                     if "AndroidManifest.xml" not in archive.namelist():
-                        raise RuntimeError("This APK does not contain an Android manifest")
+                        raise RuntimeError("INVALID_APK_MANIFEST")
                     shutil.copyfile(path, host_dir / "base.apk")
                     installed.append("base.apk")
                 else:
                     packages = [item for item in archive.infolist() if not item.is_dir() and item.filename.lower().endswith(".apk")]
                     if not packages:
-                        raise RuntimeError("This XAPK does not contain any APK files")
+                        raise RuntimeError("XAPK_NO_APKS")
                     for item in packages:
                         name = Path(item.filename).name
                         if not name or name in installed:
-                            raise RuntimeError("This XAPK contains invalid APK names")
+                            raise RuntimeError("XAPK_INVALID_NAMES")
                         with archive.open(item) as source, (host_dir / name).open("wb") as destination:
                             shutil.copyfileobj(source, destination)
                         installed.append(name)
@@ -641,7 +641,7 @@ class Plugin:
             output = self._run(["waydroid", "shell", "--", "pm", action, "-r", *[f"{guest_dir}/{name}" for name in installed]], timeout=300)
             self._check_package_result(output)
         except zipfile.BadZipFile as error:
-            raise RuntimeError("This APK or XAPK is not a valid archive") from error
+            raise RuntimeError("INVALID_PACKAGE_ARCHIVE") from error
         finally:
             shutil.rmtree(host_dir, ignore_errors=True)
 
@@ -669,7 +669,7 @@ class Plugin:
         if not PACKAGE_RE.fullmatch(package):
             raise RuntimeError("Invalid Android package name")
         if package not in self._removable_packages(allow_cached=False):
-            raise RuntimeError("This Android app is not removable")
+            raise RuntimeError("APP_NOT_REMOVABLE")
         output = self._run(["waydroid", "shell", "--", "pm", "uninstall", package], timeout=60)
         self._check_package_result(output)
         _, _, home = self._user()

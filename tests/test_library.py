@@ -97,7 +97,7 @@ class LibraryTests(unittest.TestCase):
         apk.write_text("not an APK")
         self.plugin._initialized = lambda: True
         self.plugin._run = lambda *args, **kwargs: "Session:\tRUNNING"
-        with self.assertRaisesRegex(RuntimeError, "not a valid archive"):
+        with self.assertRaisesRegex(RuntimeError, "INVALID_PACKAGE_ARCHIVE"):
             self.plugin._install_package(str(apk))
 
     def test_stopped_session_is_reported_before_package_install(self):
