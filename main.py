@@ -281,7 +281,7 @@ class Plugin:
         def shortcut_key(options: str) -> str | None:
             if options == "full" or options.endswith(" full"):
                 return WAYDROID_SHORTCUT_KEY
-            match = re.search(r"(?:^|\\s)app\\s+([A-Za-z0-9._-]+)$", options)
+            match = re.search(r"(?:^|\s)app\s+([A-Za-z0-9._-]+)$", options)
             return match.group(1) if match and PACKAGE_RE.fullmatch(match.group(1)) else None
 
         ids: dict[str, int] = {}
@@ -311,7 +311,7 @@ class Plugin:
 
     def _removable_packages(self) -> set[str]:
         try:
-            output = self._run(["waydroid", "shell", "pm", "list", "packages", "-3"], timeout=10)
+            output = self._run(["waydroid", "shell", "--", "pm", "list", "packages", "-3"], timeout=10)
         except (RuntimeError, subprocess.TimeoutExpired):
             return set()
         return {
@@ -511,7 +511,8 @@ class Plugin:
         removed = set(state["removedShortcuts"])
         recorded = set(state["shortcuts"])
         pending = set(state["pendingApps"])
-        pending.update(package for package in installed if package not in observed and package not in removed and package not in recorded)
+        pending.update(package for package, app in installed.items() if package not in observed and package not in removed and package not in recorded and not app["shortcutId"])
+        pending = {package for package in pending if package in installed and not installed[package]["shortcutId"]}
         state["observedApps"] = sorted(observed | set(installed))
         state["pendingApps"] = sorted(pending & set(installed))
         self._save_state(home, state)
@@ -583,7 +584,7 @@ class Plugin:
                         shutil.copyfileobj(source, destination)
                     installed.append(name)
             guest_dir = f"/data/waydroid_tmp/{host_dir.name}"
-            self._run(["waydroid", "shell", "pm", "install-multiple", "-r", *[f"{guest_dir}/{name}" for name in installed]], timeout=300)
+            self._run(["waydroid", "shell", "--", "pm", "install-multiple", "-r", *[f"{guest_dir}/{name}" for name in installed]], timeout=300)
         except zipfile.BadZipFile as error:
             raise RuntimeError("This XAPK is not a valid archive") from error
         finally:

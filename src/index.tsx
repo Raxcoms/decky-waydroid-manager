@@ -59,12 +59,45 @@ const removeWaydroid = callable<[], void>("remove_waydroid");
 const installPackage = callable<[string], void>("install_package");
 
 const autoAddAttempted = new Set<string>();
+const libraryListeners = new Set<() => void>();
 let cachedStatus: Status | null = null;
 let cachedApps: AndroidApp[] = [];
 let rememberedVisibleApps = 10;
 
 function toast(title: string, body: string) {
   toaster.toast({ title, body });
+}
+
+function watchAutoShortcuts() {
+  let busy = false;
+  let disposed = false;
+  const sync = async () => {
+    if (busy || disposed) return;
+    busy = true;
+    try {
+      for (const shortcut of await pendingAutoShortcuts()) {
+        if (disposed || autoAddAttempted.has(shortcut.key)) continue;
+        autoAddAttempted.add(shortcut.key);
+        try {
+          await recordShortcut(shortcut.key, await addToSteam(shortcut));
+          toast(shortcut.name, t("addedToSteam"));
+          libraryListeners.forEach((listener) => listener());
+        } finally {
+          autoAddAttempted.delete(shortcut.key);
+        }
+      }
+    } catch (error) {
+      console.warn("Waydroid automatic shortcuts failed", error);
+    } finally {
+      busy = false;
+    }
+  };
+  void sync();
+  const timer = window.setInterval(() => void sync(), 5000);
+  return () => {
+    disposed = true;
+    window.clearInterval(timer);
+  };
 }
 
 async function addToSteam(shortcut: Shortcut) {
@@ -254,38 +287,14 @@ function Content() {
   }, [apps.length]);
 
   useEffect(() => {
-    if (!status?.autoAddApps) {
-      return;
-    }
-    let disposed = false;
-    const sync = async () => {
-      try {
-        for (const shortcut of await pendingAutoShortcuts()) {
-          if (autoAddAttempted.has(shortcut.key)) {
-            continue;
-          }
-          autoAddAttempted.add(shortcut.key);
-          await recordShortcut(shortcut.key, await addToSteam(shortcut));
-          if (!disposed) {
-            toast(shortcut.name, t("addedToSteam"));
-          }
-        }
-        if (!disposed) {
-          await refresh();
-        }
-      } catch (error) {
-        if (!disposed) {
-          setMessage(error instanceof Error ? error.message : String(error));
-        }
-      }
-    };
-    void sync();
-    const timer = window.setInterval(() => void sync(), 30000);
+    const sync = () => void refresh().catch((error) => setMessage(String(error)));
+    libraryListeners.add(sync);
+    const timer = window.setInterval(sync, 15000);
     return () => {
-      disposed = true;
+      libraryListeners.delete(sync);
       window.clearInterval(timer);
     };
-  }, [refresh, status?.autoAddApps]);
+  }, [refresh]);
 
   const resolution = status?.resolution ? `${status.resolution.width} × ${status.resolution.height}` : t("unavailable");
   const sortedApps = [...apps].sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" }));
@@ -426,11 +435,15 @@ function Content() {
 
 export default definePlugin(() => {
   const stopFrameLimit = watchFrameLimit();
+  const stopAutoShortcuts = watchAutoShortcuts();
   return {
     name: t("pluginName"),
     titleView: <div className={staticClasses.Title}>{t("pluginName")}</div>,
     content: <Content />,
     icon: <AndroidRobotIcon />,
-    onDismount: stopFrameLimit,
+    onDismount: () => {
+      stopFrameLimit();
+      stopAutoShortcuts();
+    },
   };
 });
