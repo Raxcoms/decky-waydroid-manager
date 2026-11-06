@@ -24,6 +24,25 @@ The plugin was deployed with backups and tested in the existing primary Gamescop
 | Artwork after shortcut recreation | Soul Knight's recreated shortcut had no files for its new app ID while Android was stopped. Offline discovery found its five installed APKs and bundled icon resources. The watcher populated all four artwork slots without starting Android; its pending queue became empty. Downloaded portrait, hero, and logo images were inspected, and Steam's actual Soul Knight details page displayed the generated hero and logo. This APK's selected image candidates were icons, so the covers use app-icon cards rather than publisher cover art. |
 | GPU usage | Android renderer and SurfaceFlinger DRM counters were present while the relay initially had none. After enabling the handle bridge, MangoApp opened the relay's real Android fdinfo records. The user confirmed that GPU usage changed above zero in Warframe. |
 
+## Cleanup branch review, 6 November 2026
+
+The `cleanup-review` build was deployed on the Thor with per-file backups. The code review and all requested topic boundaries are recorded in [review.md](review.md).
+
+| Check | Result |
+| --- | --- |
+| Automated checks | 84 Python regression tests pass, including Linux descriptor/socket tests in CI; ten frontend tests, TypeScript and Rollup pass. CI also imports the staged backend and verifies its runtime files and clean package contents. |
+| Native app fields | Standard Decky Field padding is visually verified on the actual QAM. Icons, names and packages are visible. The scroll container has equal client/scroll widths of 300 CSS pixels, with no horizontal overflow. The inline button experiment that exceeded the row width was removed. |
+| Action menu | Selecting the native Calculator field opens its real Steam/Decky menu. Its manually removed shortcut remains removed. |
+| Focus and scrolling | Native paced Up navigation from the destructive final control reaches scroll position zero while focus is still on the Waydroid launch button. Only the following Up reaches Decky's back button. |
+| Independent service start | With the system container service stopped, the existing full-container Steam shortcut starts it through the root-backend socket and displays Android. A primary Gamescope output capture was downloaded and inspected. |
+| Temporary input setup | Live Android enumeration selects `/system/usr/keylayout/Vendor_28de_Product_11ff.kl` from the owned temporary mount. The directory is on Android `/dev`, and the mirror is in Android's private input directory. The tested stock Xbox mapping is retained without an image-file edit. |
+| Input/GPU ownership | Closing the controlled launch leaves no running plugin session. A following package-only boot does not recreate launch-specific input mounts. Every discovered Android GPU client uses renderD128, not a primary display node. |
+| Install from stopped Android | The real file picker selected a deliberately invalid APK containing a manifest entry. The native modal showed background startup and phase progress with disabled buttons. Android rejected its corrupt XML, no app was installed, and temporary staging/session resources were removed. |
+| Cold-service cleanup | An initial check exposed Waydroid status's D-Bus activation. After adding passive systemd guards, service state stayed inactive through normal panel polling, started for installation, and returned to inactive after failure. Verification used systemd rather than the activating Waydroid status command. |
+| Error feedback | The dialog initially displayed a Java traceback tail. Cause extraction now shows `Corrupt XML binary file` and restores retry/cancel controls. The error remains readable after the notification disappears. Multiline Android errors have a frontend regression test. |
+
+The invalid APK and test sessions are removed after validation. Backend import/package checks are performed on Linux; no unrelated application is installed or uninstalled for review. These checks do not substitute for physical-controller gameplay testing after the temporary input implementation, nor for fresh rotation and multi-device validation.
+
 ## Remaining limits
 
 The installed Gamescope logs `NO CURSOR IMPL XDG` for native window focus. Steam mouse-mode cursor visibility remains unresolved in this compositor path. Direct touch is not disabled to work around it.

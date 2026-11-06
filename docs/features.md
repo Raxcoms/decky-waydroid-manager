@@ -4,14 +4,14 @@
 
 - Initializes the official GAPPS Waydroid image with `waydroid init --system_type GAPPS`.
 - Shows whether Waydroid is installed in the Waydroid status section, with container service state in the danger zone.
-- Removes `/var/lib/waydroid`, user Waydroid data, generated Waydroid desktop entries and Steam shortcuts, and disables the container service only after confirmation.
+- Removes `/var/lib/waydroid`, user Waydroid data, generated Waydroid desktop entries and Steam shortcuts, and stops the container service only after confirmation. Its boot enablement is preserved.
 
 ## Lifecycle controls
 
 - Start, stop, and restart `waydroid-container.service`.
-- Verifies that ArmadaOS's bundled Gamescope runtime is available before launching Android.
+- Detects Steam's active Game Mode Wayland socket before launching Android.
 - Starts with a minimal environment and disables Gamescope WSI so Android games do not inherit the host Vulkan swapchain layer.
-- Mirrors Steam Input's virtual controller into Android while leaving Armada's physical-controller bridge in control of physical devices.
+- Mirrors Steam Input's virtual controller into Android during plugin launches using a temporary stock keylayout view and restored input nodes. Physical-controller sharing remains the platform's responsibility.
 
 ## Android application library
 
