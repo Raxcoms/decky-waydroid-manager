@@ -19,6 +19,7 @@ import { useCallback, useEffect, useState } from "react";
 import { t } from "./i18n";
 import { watchFrameLimit } from "./frameLimit";
 import { watchShortcutArtwork } from "./artwork";
+import { operationError } from "./errors";
 
 type Resolution = { width: number; height: number } | null;
 type Status = {
@@ -72,7 +73,7 @@ function toast(title: string, body: string) {
 }
 
 function reportError(error: unknown, setMessage?: (message: string | null) => void) {
-  let message = error instanceof Error ? error.message : String(error);
+  let message = operationError(error) || t("operationFailed");
   if (message.includes("WAYDROID_NOT_RUNNING")) message = t("androidMustBeRunning");
   setMessage?.(message);
   toast(t("operationFailed"), message);
@@ -407,7 +408,7 @@ function Content() {
                     setApps(await listApps());
                     toast(t("waydroid"), t("packageInstalled"));
                   })
-                  .catch((error) => reportError(error, setMessage));
+                  .catch((error) => { if (error !== "User canceled") reportError(error, setMessage); });
               }}
             >
               {t("installPackage")}

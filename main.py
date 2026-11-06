@@ -228,6 +228,7 @@ class Plugin:
             "pendingApps": [],
             "shortcuts": {},
             "removedShortcuts": [],
+            "removableApps": [],
         }
         try:
             saved = json.loads(self._state_path(home).read_text(encoding="utf-8"))
@@ -310,16 +311,26 @@ class Plugin:
                 ids[key] = app_id & 0xFFFFFFFF
         return ids
 
-    def _removable_packages(self) -> set[str]:
+    def _removable_packages(self, allow_cached: bool = True) -> set[str]:
+        _, _, home = self._user()
+        state = self._load_state(home)
         try:
             output = self._run(["waydroid", "shell", "--", "pm", "list", "packages", "-3"], timeout=10)
         except (RuntimeError, subprocess.TimeoutExpired):
-            return set()
-        return {
+            output = "unavailable"
+        packages = {
             line.removeprefix("package:")
             for line in output.splitlines()
             if line.startswith("package:") and PACKAGE_RE.fullmatch(line.removeprefix("package:"))
         }
+        if packages or not output:
+            if sorted(packages) != state.get("removableApps", []):
+                state["removableApps"] = sorted(packages)
+                self._save_state(home, state)
+            return packages
+        if not allow_cached:
+            raise RuntimeError("WAYDROID_NOT_RUNNING")
+        return set(state.get("removableApps", []))
 
     def _desktop_entries(self, removable_packages: set[str] | None = None) -> list[dict[str, Any]]:
         _, _, home = self._user()
@@ -501,6 +512,8 @@ class Plugin:
         self._save_state(home, state)
 
     async def pending_auto_shortcuts(self) -> list[dict[str, str]]:
+        if self._initialized():
+            self._removable_packages()
         _, _, home = self._user()
         state = self._load_state(home)
         if not state["autoAddApps"]:
@@ -570,6 +583,8 @@ class Plugin:
         if self._initialized():
             raise RuntimeError("Waydroid is already initialized. Remove it before installing a new image.")
         self._run(["waydroid", "init", "--system_type", "GAPPS"], timeout=1800)
+        if not self._initialized():
+            raise RuntimeError("Waydroid did not finish initializing its image")
 
     def _install_file(self, value: str) -> Path:
         _, _, home = self._user()
@@ -586,42 +601,52 @@ class Plugin:
         try:
             status = self._run(["waydroid", "status"])
         except RuntimeError as error:
-            raise RuntimeError("Start Waydroid before installing an app") from error
+            raise RuntimeError("WAYDROID_NOT_RUNNING") from error
         if not re.search(r"^Session:\s*RUNNING$", status, re.MULTILINE):
-            raise RuntimeError("Start Waydroid before installing an app")
+            raise RuntimeError("WAYDROID_NOT_RUNNING")
 
-    async def install_package(self, value: str) -> None:
+    def _check_package_result(self, output: str) -> None:
+        if "Success" not in output.splitlines():
+            raise RuntimeError(output or "Android did not complete the package operation")
+
+    def _install_package(self, value: str) -> None:
         if not self._initialized():
             raise RuntimeError("Install the GAPPS image before installing apps")
         path = self._install_file(value)
         self._require_session()
-        if path.suffix.lower() == ".apk":
-            self._run(["waydroid", "app", "install", str(path)], timeout=300)
-            return
-
         _, _, home = self._user()
         host_dir = home / ".local/share/waydroid/data/waydroid_tmp" / f"decky-{uuid.uuid4().hex}"
         try:
             with zipfile.ZipFile(path) as archive:
-                packages = [item for item in archive.infolist() if not item.is_dir() and item.filename.lower().endswith(".apk")]
-                if not packages:
-                    raise RuntimeError("This XAPK does not contain any APK files")
                 host_dir.mkdir(parents=True)
                 installed: list[str] = []
-                for index, item in enumerate(packages):
-                    name = Path(item.filename).name
-                    if not name or name in installed:
-                        raise RuntimeError("This XAPK contains invalid APK names")
-                    target = host_dir / name
-                    with archive.open(item) as source, target.open("wb") as destination:
-                        shutil.copyfileobj(source, destination)
-                    installed.append(name)
+                if path.suffix.lower() == ".apk":
+                    if "AndroidManifest.xml" not in archive.namelist():
+                        raise RuntimeError("This APK does not contain an Android manifest")
+                    shutil.copyfile(path, host_dir / "base.apk")
+                    installed.append("base.apk")
+                else:
+                    packages = [item for item in archive.infolist() if not item.is_dir() and item.filename.lower().endswith(".apk")]
+                    if not packages:
+                        raise RuntimeError("This XAPK does not contain any APK files")
+                    for item in packages:
+                        name = Path(item.filename).name
+                        if not name or name in installed:
+                            raise RuntimeError("This XAPK contains invalid APK names")
+                        with archive.open(item) as source, (host_dir / name).open("wb") as destination:
+                            shutil.copyfileobj(source, destination)
+                        installed.append(name)
             guest_dir = f"/data/waydroid_tmp/{host_dir.name}"
-            self._run(["waydroid", "shell", "--", "pm", "install-multiple", "-r", *[f"{guest_dir}/{name}" for name in installed]], timeout=300)
+            action = "install" if path.suffix.lower() == ".apk" else "install-multiple"
+            output = self._run(["waydroid", "shell", "--", "pm", action, "-r", *[f"{guest_dir}/{name}" for name in installed]], timeout=300)
+            self._check_package_result(output)
         except zipfile.BadZipFile as error:
-            raise RuntimeError("This XAPK is not a valid archive") from error
+            raise RuntimeError("This APK or XAPK is not a valid archive") from error
         finally:
             shutil.rmtree(host_dir, ignore_errors=True)
+
+    async def install_package(self, value: str) -> None:
+        self._install_package(value)
 
     async def start_service(self) -> None:
         self._run(["systemctl", "start", SERVICE])
@@ -640,19 +665,27 @@ class Plugin:
             raise RuntimeError("Invalid Android package name")
         self._start_launcher("app", package)
 
-    async def uninstall_app(self, package: str) -> None:
+    def _uninstall_package(self, package: str) -> None:
         if not PACKAGE_RE.fullmatch(package):
             raise RuntimeError("Invalid Android package name")
-        if package not in self._removable_packages():
+        if package not in self._removable_packages(allow_cached=False):
             raise RuntimeError("This Android app is not removable")
-        self._run(["waydroid", "app", "remove", package], timeout=60)
+        output = self._run(["waydroid", "shell", "--", "pm", "uninstall", package], timeout=60)
+        self._check_package_result(output)
+        _, _, home = self._user()
+        (home / ".local/share/applications" / f"waydroid.{package}.desktop").unlink(missing_ok=True)
+
+    async def uninstall_app(self, package: str) -> None:
+        self._uninstall_package(package)
 
     async def remove_waydroid(self) -> None:
         user, _, home = self._user()
-        subprocess.run(["systemctl", "disable", "--now", SERVICE], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-        subprocess.run(["waydroid", "session", "stop"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-        shutil.rmtree(WAYDROID_DIR, ignore_errors=True)
-        shutil.rmtree(home / ".local/share/waydroid", ignore_errors=True)
+        self._run(["systemctl", "disable", "--now", SERVICE])
+        if WAYDROID_DIR.exists():
+            shutil.rmtree(WAYDROID_DIR)
+        user_data = home / ".local/share/waydroid"
+        if user_data.exists():
+            shutil.rmtree(user_data)
         for entry in (home / ".local/share/applications").glob("waydroid.*.desktop"):
             entry.unlink(missing_ok=True)
         self._remove_shortcuts(home)

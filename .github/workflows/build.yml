@@ -25,7 +25,7 @@ jobs:
       - name: Check Wayland relay
         run: |
           python3 -m unittest discover -s tests -v
-          node --experimental-strip-types --test tests/steamSettings.test.mts
+          node --experimental-strip-types --test tests/*.test.mts
           bash -n bin/waydroid-launcher bin/waydroid-session
       - name: Package plugin
         run: |
