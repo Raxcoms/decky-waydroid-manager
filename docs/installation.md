@@ -13,7 +13,7 @@
 3. Open **Waydroid Manager** from the Decky quick-access menu.
 4. Select **Install Waydroid with GAPPS**. The plugin runs `waydroid init --system_type GAPPS`, so Waydroid selects the official image for the running architecture rather than a device-name mapping.
 5. After the download completes, select **Add Waydroid to Steam**. The launch option appears once the shortcut exists; Android connects to Steam's Gamescope through a private Wayland socket.
-6. Use **Install APK or XAPK** in the Android apps section and choose a package from the user home folder. Review the per-install approval message and select **Install** or **Cancel**. Android starts in the background when needed, with progress shown during installation and cleanup. Approval applies only to this package operation; Android's saved verification settings stay unchanged.
+6. Use **Install APK or XAPK** in the Android apps section and choose a package from the user home folder. Installation starts with background Android startup when needed and phase progress. If Android blocks this install for a Play Protect decision, a second prompt offers **Install anyway** or **Cancel**. That choice applies only to this package operation; Android's saved verification settings stay unchanged.
 
 The first initialization downloads Android images and can take several minutes. Installing again is intentionally blocked while an image exists, so installed Android data is not replaced accidentally.
 

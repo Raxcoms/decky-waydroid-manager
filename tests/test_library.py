@@ -1,10 +1,12 @@
 import importlib.util
+import asyncio
 import copy
 from contextlib import nullcontext
 import os
 from pathlib import Path
 import sys
 import tempfile
+import threading
 import types
 import unittest
 from unittest.mock import patch
@@ -37,6 +39,19 @@ class LibraryTests(unittest.TestCase):
 
     def tearDown(self):
         self.directory.cleanup()
+
+    def test_install_confirmation_replies_require_current_target_token_and_one_boolean_decision(self):
+        event, decision = threading.Event(), []
+        self.plugin._install_confirmation = ("app.apk", "current", event, decision)
+        for target, token, answer in (("other.apk", "current", True), ("app.apk", "stale", True), ("app.apk", "current", "true")):
+            with self.assertRaisesRegex(RuntimeError, "VERIFICATION_UNAVAILABLE"):
+                asyncio.run(self.plugin.confirm_package_install(target, token, answer))
+        self.assertFalse(event.is_set())
+        asyncio.run(self.plugin.confirm_package_install("app.apk", "current", False))
+        self.assertEqual(decision, [False])
+        self.assertTrue(event.is_set())
+        with self.assertRaisesRegex(RuntimeError, "VERIFICATION_UNAVAILABLE"):
+            asyncio.run(self.plugin.confirm_package_install("app.apk", "current", True))
 
     def test_app_shortcut_matches_wrapper_and_package(self):
         write_shortcuts(self.path, {"0": (0, {
@@ -347,6 +362,7 @@ class PackageSessionTests(unittest.TestCase):
                         return {"install-create": "Success: created install session [42]", "install-write": "Success: streamed 100 bytes", "install-commit": result, "install-abandon": "Success"}[command[4]]
                     return self.run_command(command, **kwargs)
                 self.plugin._run = run
+                self.plugin._commit_package_install = lambda session, *args: run(["waydroid", "shell", "--", "pm", "install-commit", session])
                 if result == "Success":
                     self.plugin._install_package(str(apk))
                     self.assertEqual(self.plugin._package_progress["stage"], "complete")

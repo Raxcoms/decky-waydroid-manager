@@ -1,5 +1,5 @@
-import { getPackageProgress } from "./backend";
-import { DialogBody, DialogBodyText, DialogButtonPrimary, DialogButtonSecondary, DialogFooter, DialogHeader, ModalRoot, ProgressBar } from "@decky/ui";
+import { confirmPackageInstall, getPackageProgress } from "./backend";
+import { ConfirmModal, DialogBody, DialogBodyText, DialogButtonPrimary, DialogButtonSecondary, DialogFooter, DialogHeader, ModalRoot, ProgressBar, showModal } from "@decky/ui";
 import { useEffect, useRef, useState } from "react";
 import { t } from "./i18n";
 
@@ -10,6 +10,7 @@ const phases = {
   checking: [40, "packageChecking"],
   removing: [55, "packageRemoving"],
   installing: [55, "packageInstalling"],
+  confirmation: [55, "packageAwaitingApproval"],
   cleaning: [80, "packageCleaning"],
   library: [95, "packageLibrary"],
 } as const;
@@ -19,15 +20,17 @@ type Props = {
   operation: "install" | "uninstall";
   target: string;
   perform: () => Promise<void>;
+  autoStart?: boolean;
   onError: (error: unknown) => string;
   closeModal?: () => void;
 };
 
-export function PackageOperationModal({ name, operation, target, perform, onError, closeModal }: Props) {
+export function PackageOperationModal({ name, operation, target, perform, autoStart = false, onError, closeModal }: Props) {
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState<keyof typeof phases>("preparing");
   const [error, setError] = useState<string | null>(null);
   const running = useRef(false);
+  const approval = useRef<{ token: string; close: () => void } | null>(null);
 
   useEffect(() => {
     if (!busy) return;
@@ -38,7 +41,32 @@ export function PackageOperationModal({ name, operation, target, perform, onErro
       polling = true;
       try {
         const next = await getPackageProgress(operation, target);
-        if (!disposed && next in phases) setStage(next as keyof typeof phases);
+        if (disposed) return;
+        if (next.stage in phases) setStage(next.stage as keyof typeof phases);
+        if (!next.confirmation) {
+          approval.current?.close();
+          approval.current = null;
+        } else if (approval.current?.token !== next.confirmation) {
+          const token = next.confirmation;
+          let answered = false;
+          const decide = (approved: boolean) => {
+            if (answered) return;
+            answered = true;
+            void confirmPackageInstall(target, token, approved).catch((error) => {
+              onError(error);
+              approval.current = null;
+            });
+          };
+          const modal = showModal(<ConfirmModal
+            strTitle={t("androidVerification")}
+            strDescription={t("installPackageConfirmation")}
+            strOKButtonText={t("installAnyway")}
+            strCancelButtonText={t("cancel")}
+            onOK={() => decide(true)}
+            onCancel={() => decide(false)}
+          />, undefined, { fnOnClose: () => decide(false) });
+          approval.current = { token, close: () => { answered = true; modal.Close(); } };
+        }
       } catch (error) {
         console.warn("Waydroid package progress unavailable", error);
       } finally {
@@ -46,7 +74,12 @@ export function PackageOperationModal({ name, operation, target, perform, onErro
       }
     };
     const timer = window.setInterval(() => void poll(), 500);
-    return () => { disposed = true; window.clearInterval(timer); };
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+      approval.current?.close();
+      approval.current = null;
+    };
   }, [busy, operation, target]);
 
   const closeIfIdle = () => { if (!running.current) closeModal?.(); };
@@ -67,6 +100,8 @@ export function PackageOperationModal({ name, operation, target, perform, onErro
     }
   };
 
+  useEffect(() => { if (autoStart) void start(); }, [autoStart]);
+
   return (
     <ModalRoot
       bDisableBackgroundDismiss={busy}
@@ -78,7 +113,7 @@ export function PackageOperationModal({ name, operation, target, perform, onErro
     >
       <DialogHeader>{operation === "install" ? t("installPackageTitle", { name }) : t("uninstallApp", { name })}</DialogHeader>
       <DialogBody>
-        <DialogBodyText>{operation === "install" ? t("installPackageConfirmation") : t("uninstallAppDescription")}</DialogBodyText>
+        {operation === "uninstall" && <DialogBodyText>{t("uninstallAppDescription")}</DialogBodyText>}
         {error && <div role="alert"><DialogBodyText>{error}</DialogBodyText></div>}
         {busy && <div aria-live="polite"><DialogBodyText>{t(phases[stage][1])}</DialogBodyText><ProgressBar nProgress={phases[stage][0]} /></div>}
       </DialogBody>

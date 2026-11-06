@@ -20,7 +20,7 @@ from waydroid_manager.proc import active_launch, clean_env
 from waydroid_manager.artwork import apk_images, missing_artwork, package_apks, persistent_apks
 from waydroid_manager.metrics import GpuMetrics
 from waydroid_manager.packages import apk_members, stage_apks, install_apks, check_result
-from waydroid_manager.verification import InstallVerification, commit_install
+from waydroid_manager.verification import InstallCancelled, InstallVerification, commit_install
 from waydroid_manager.steam import read_shortcuts, shortcuts_path, shortcut_key, migrated_launch_options
 from waydroid_manager.container import CONFIG_DIR, SERVICE, container_pid
 from waydroid_manager.control import ServiceControl, control_path
@@ -39,6 +39,7 @@ class Plugin:
     def __init__(self):
         self._state_lock = threading.RLock()
         self._package_progress: dict[str, str] = {}
+        self._install_confirmation = None
 
     @contextmanager
     def _edit_state(self, home: Path):
@@ -533,16 +534,20 @@ class Plugin:
     def _check_package_result(self, output: str) -> None:
         check_result(output)
 
-    def _install_package(self, value: str, approve_verification: bool = False) -> None:
+    def _install_package(self, value: str) -> bool:
         self._set_package_progress("install", value, "preparing")
         try:
-            self._install_archive(value, approve_verification)
+            self._install_archive(value)
             self._set_package_progress("install", value, "complete")
+            return True
+        except InstallCancelled:
+            self._set_package_progress("install", value, "cancelled")
+            return False
         except Exception:
             self._set_package_progress("install", value, "failed")
             raise
 
-    def _install_archive(self, value: str, approve_verification: bool = False) -> None:
+    def _install_archive(self, value: str) -> None:
         if not self._initialized():
             raise RuntimeError("WAYDROID_NOT_INSTALLED")
         path = self._install_file(value)
@@ -559,24 +564,47 @@ class Plugin:
                     installed = stage_apks(archive, members, host_dir)
                     guest_dir = f"/data/local/tmp/{host_dir.name}"
                     report("installing")
-                    commit = None
-                    if approve_verification:
-                        helper = Path(decky.DECKY_PLUGIN_DIR) / "bin/waydroid-verifier.dex"
-                        commit = lambda session: commit_install(
-                            ["waydroid", "shell", "--", "pm", "install-commit", session],
-                            InstallVerification(self._run, session, host_dir, guest_dir, helper),
-                        )
-                    install_apks(self._run, host_dir, guest_dir, installed, commit=commit)
+                    install_apks(self._run, host_dir, guest_dir, installed,
+                                 commit=lambda session: self._commit_package_install(session, value, host_dir, guest_dir))
         except zipfile.BadZipFile as error:
             raise RuntimeError("INVALID_PACKAGE_ARCHIVE") from error
         finally:
             shutil.rmtree(host_dir, ignore_errors=True)
 
-    async def install_package(self, value: str, approve_verification: bool = False) -> None:
-        if type(approve_verification) is not bool:
-            raise RuntimeError("INVALID_PACKAGE_FILE")
+    async def install_package(self, value: str) -> bool:
         async with self._package_lock:
-            await asyncio.to_thread(self._install_package, value, approve_verification)
+            return await asyncio.to_thread(self._install_package, value)
+
+    def _commit_package_install(self, session: str, target: str, directory: Path, guest: str) -> str:
+        helper = Path(decky.DECKY_PLUGIN_DIR) / "bin/waydroid-verifier.dex"
+        return commit_install(
+            ["waydroid", "shell", "--", "pm", "install-commit", session],
+            InstallVerification(self._run, session, directory, guest, helper),
+            lambda active: self._confirm_package_install(target, active),
+        )
+
+    def _confirm_package_install(self, target: str, active: Callable[[], bool]) -> bool | None:
+        token, event, decision = uuid.uuid4().hex, threading.Event(), []
+        self._install_confirmation = (target, token, event, decision)
+        self._set_package_progress("install", target, "confirmation")
+        deadline = time.monotonic() + 180
+        try:
+            while active():
+                if event.wait(0.5):
+                    return decision[0]
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("PACKAGE_INSTALL_TIMEOUT")
+            return None
+        finally:
+            self._install_confirmation = None
+            self._set_package_progress("install", target, "installing")
+
+    async def confirm_package_install(self, target: str, token: str, approved: bool) -> None:
+        pending = self._install_confirmation
+        if not pending or pending[:2] != (target, token) or type(approved) is not bool or pending[2].is_set():
+            raise RuntimeError("ANDROID_VERIFICATION_UNAVAILABLE")
+        pending[3].append(approved)
+        pending[2].set()
 
     async def _change_service(self, action: str) -> None:
         async with self._package_lock:
@@ -612,11 +640,15 @@ class Plugin:
     def _set_package_progress(self, operation: str, target: str, stage: str) -> None:
         self._package_progress = {"operation": operation, "target": target, "stage": stage}
 
-    async def get_package_progress(self, operation: str, target: str) -> str:
+    async def get_package_progress(self, operation: str, target: str) -> dict[str, str]:
         progress = self._package_progress
         if (progress.get("operation"), progress.get("target")) == (operation, target):
-            return progress["stage"]
-        return "preparing"
+            result = {"stage": progress["stage"]}
+            pending = self._install_confirmation
+            if operation == "install" and pending and pending[0] == target:
+                result["confirmation"] = pending[1]
+            return result
+        return {"stage": "preparing"}
 
     def _remove_installed_package(self, package: str) -> int | None:
         self._set_package_progress("uninstall", package, "checking")

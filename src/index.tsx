@@ -382,10 +382,10 @@ function Content() {
                     if (!path) return;
                     openModal(<PackageOperationModal
                       name={path.split("/").pop() || path}
-                      operation="install" target={path}
+                      operation="install" target={path} autoStart
                       onError={(error) => reportError(error, setMessage)}
                       perform={async () => {
-                        await installPackage(path, true);
+                        if (!await installPackage(path)) return;
                         setApps(await listApps());
                         setMessage(null);
                         toast(t("waydroid"), t("packageInstalled"));

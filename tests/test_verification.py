@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
-from waydroid_manager.verification import InstallVerification, commit_install, verification_id
+from waydroid_manager.verification import InstallCancelled, InstallVerification, commit_install, verification_id, verification_dialog
 
 
 REQUEST = """BroadcastRecord{abc u0 android.intent.action.PACKAGE_NEEDS_VERIFICATION} to user 0
@@ -15,9 +15,26 @@ REQUEST = """BroadcastRecord{abc u0 android.intent.action.PACKAGE_NEEDS_VERIFICA
       extras: Bundle[{android.content.pm.extra.VERIFICATION_INSTALLER_UID=0, android.content.pm.extra.VERIFICATION_ID=7, android.content.pm.extra.SESSION_ID=42}]
     caller=android 305:system/1000 pid=305 uid=1000
 """
+ACTIVITIES = "topResumedActivity=ActivityRecord{abc u0 example.verifier/example.PlayProtectDialogsActivity}"
+COMPLETED = """BroadcastRecord{def u0 android.intent.action.PACKAGE_VERIFIED} to user 0
+    Intent { act=android.intent.action.PACKAGE_VERIFIED dat=file:///data/app/vmdl43.tmp }
+      extras: Bundle[{android.content.pm.extra.VERIFICATION_ID=8, android.content.pm.extra.VERIFICATION_RESULT=1}]
+    caller=android 305:system/1000 pid=305 uid=1000
+"""
 
 
 class VerificationRequestTests(unittest.TestCase):
+    def test_warning_requires_the_configured_verifiers_blocking_activity(self):
+        self.assertTrue(verification_dialog(ACTIVITIES, "example.verifier"))
+        self.assertFalse(verification_dialog(ACTIVITIES.replace("PlayProtectDialogsActivity", "StoreActivity"), "example.verifier"))
+        self.assertFalse(verification_dialog(ACTIVITIES, "other.verifier"))
+
+    def test_other_pending_installs_are_ambiguous_but_finished_installs_are_not(self):
+        other = REQUEST.replace("42", "43").replace("VERIFICATION_ID=7", "VERIFICATION_ID=8")
+        self.assertIsNone(verification_id(REQUEST + other, "42", "example.verifier"))
+        self.assertEqual(verification_id(REQUEST + other + COMPLETED, "42", "example.verifier"), 7)
+        self.assertIsNone(verification_id(REQUEST + COMPLETED.replace("VERIFICATION_ID=8", "VERIFICATION_ID=7"), "42", "example.verifier"))
+
     def test_requires_owned_session_system_sender_root_installer_and_configured_provider(self):
         self.assertEqual(verification_id(REQUEST, "42", "example.verifier"), 7)
         for text in (
@@ -65,60 +82,85 @@ class VerificationBridgeTests(unittest.TestCase):
             return "Required: example.verifier (uid=10123)"
         if args[-2:] == ["activity", "broadcasts"]:
             return REQUEST
+        if args[-2:] == ["activity", "activities"]:
+            return ACTIVITIES
         return "VERIFICATION_SENT"
 
     def test_uses_dynamic_uid_and_exact_request_without_settings_or_visual_tools(self):
-        self.bridge.approve_pending()
-        self.bridge.approve_pending()
-        self.assertEqual(len(self.commands), 3)
+        self.assertTrue(self.bridge.warning_pending())
+        self.bridge.respond(True)
+        self.assertEqual(len(self.commands), 4)
         self.assertEqual(self.commands[-1][:6], ["waydroid", "shell", "--uid", "10123", "--", "env"])
         self.assertEqual(self.commands[-1][-3:], ["waydroid.manager.InstallVerifier", "7", "2"])
         self.assertEqual((self.directory / "verifier.dex").read_bytes(), self.helper.read_bytes())
 
     def test_waits_for_request_and_never_guesses_an_id(self):
-        self.run.side_effect = ["Required: example.verifier (uid=10123)", ""]
-        self.bridge.approve_pending()
-        self.assertFalse(self.bridge.approved)
+        self.run.side_effect = ["Required: example.verifier (uid=10123)", ACTIVITIES, ""]
+        self.assertFalse(self.bridge.warning_pending())
         self.assertFalse((self.directory / "verifier.dex").exists())
 
     def test_no_required_verifier_needs_no_helper(self):
         self.run.side_effect = None
         self.run.return_value = "Required: none"
-        self.bridge.approve_pending()
+        self.assertFalse(self.bridge.warning_pending())
         self.assertEqual(self.run.call_count, 1)
 
     def test_container_restart_cannot_reuse_an_old_verification_id(self):
+        self.assertTrue(self.bridge.warning_pending())
         self.identity_mock.return_value = (100, "201")
         with self.assertRaisesRegex(RuntimeError, "WAYDROID_NOT_RUNNING"):
-            self.bridge.approve_pending()
-        self.assertEqual(len(self.commands), 2)
+            self.bridge.respond(True)
+        self.assertEqual(len(self.commands), 3)
 
     def test_waydroid_zero_exit_status_without_helper_marker_is_not_success(self):
-        self.run.side_effect = ["Required: example.verifier (uid=10123)", REQUEST, ""]
+        self.run.side_effect = ["Required: example.verifier (uid=10123)", ACTIVITIES, REQUEST, ""]
+        self.assertTrue(self.bridge.warning_pending())
         with self.assertRaisesRegex(RuntimeError, "VERIFICATION_UNAVAILABLE"):
-            self.bridge.approve_pending()
-        self.assertFalse(self.bridge.approved)
+            self.bridge.respond(True)
 
 
 class InstallCommitTests(unittest.TestCase):
     def test_pending_commit_checks_native_verification_then_returns_package_result(self):
         process = Mock(returncode=0)
         process.communicate.side_effect = [subprocess.TimeoutExpired("pm", 1), ("Success\n", None)]
-        process.poll.side_effect = [None, 0]
+        process.poll.side_effect = [None, None, 0]
         verifier = Mock()
+        confirm = Mock(return_value=True)
         with patch("waydroid_manager.verification.subprocess.Popen", return_value=process):
-            self.assertEqual(commit_install(["pm"], verifier), "Success")
-        verifier.approve_pending.assert_called_once()
+            self.assertEqual(commit_install(["pm"], verifier, confirm), "Success")
+        verifier.respond.assert_called_once_with(True)
+        confirm.assert_called_once()
+
+    def test_ordinary_verification_never_opens_confirmation(self):
+        process = Mock(returncode=0)
+        process.communicate.side_effect = [subprocess.TimeoutExpired("pm", 1), ("Success\n", None)]
+        process.poll.side_effect = [None, 0]
+        verifier, confirm = Mock(), Mock()
+        verifier.warning_pending.return_value = False
+        with patch("waydroid_manager.verification.subprocess.Popen", return_value=process):
+            self.assertEqual(commit_install(["pm"], verifier, confirm), "Success")
+        confirm.assert_not_called()
+        verifier.respond.assert_not_called()
+
+    def test_declining_warning_rejects_only_that_install_and_cleans_up(self):
+        process = Mock(pid=123)
+        process.communicate.side_effect = [subprocess.TimeoutExpired("pm", 1), ("", None)]
+        process.poll.return_value = None
+        verifier = Mock()
+        with patch("waydroid_manager.verification.subprocess.Popen", return_value=process), patch("waydroid_manager.verification.os.killpg", create=True):
+            with self.assertRaises(InstallCancelled):
+                commit_install(["pm"], verifier, Mock(return_value=False))
+        verifier.respond.assert_called_once_with(False)
 
     def test_verification_failure_kills_owned_commit_before_abandonment(self):
         process = Mock(pid=123)
         process.communicate.side_effect = [subprocess.TimeoutExpired("pm", 1), ("", None)]
         process.poll.return_value = None
         verifier = Mock()
-        verifier.approve_pending.side_effect = RuntimeError("VERIFICATION_UNAVAILABLE")
+        verifier.warning_pending.side_effect = RuntimeError("VERIFICATION_UNAVAILABLE")
         with patch("waydroid_manager.verification.subprocess.Popen", return_value=process), patch("waydroid_manager.verification.os.killpg", create=True) as kill:
             with self.assertRaisesRegex(RuntimeError, "VERIFICATION_UNAVAILABLE"):
-                commit_install(["pm"], verifier)
+                commit_install(["pm"], verifier, Mock())
             if sys.platform == "win32":
                 process.kill.assert_called_once()
             else:
@@ -131,5 +173,5 @@ class InstallCommitTests(unittest.TestCase):
         verifier = Mock()
         with patch("waydroid_manager.verification.subprocess.Popen", return_value=process), patch("waydroid_manager.verification.os.killpg", create=True), patch("waydroid_manager.verification.time.monotonic", side_effect=[0, 301]):
             with self.assertRaisesRegex(RuntimeError, "PACKAGE_INSTALL_TIMEOUT"):
-                commit_install(["pm"], verifier)
-        verifier.approve_pending.assert_not_called()
+                commit_install(["pm"], verifier, Mock())
+        verifier.warning_pending.assert_not_called()
