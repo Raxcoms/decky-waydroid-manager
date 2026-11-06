@@ -63,6 +63,10 @@ class FrameLimiter:
         if not fps:
             self.restore()
             return
+        for uid, applied_fps in list(self.applied.items()):
+            if applied_fps != fps:
+                self.override(uid, fps)
+                self.applied[uid] = fps
         if self.sdk is None:
             output = self.android("getprop", "ro.build.version.sdk")
             sdk = next((line.strip() for line in output.splitlines() if line.strip().isdecimal()), "")

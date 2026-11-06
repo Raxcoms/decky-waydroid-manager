@@ -21,6 +21,7 @@ Waydroid Manager is a Decky Loader plugin for ArmadaOS handhelds. It initializes
 
 - [Installation](docs/installation.md)
 - [Features](docs/features.md)
+- [Live validation and remaining limits](docs/validation.md)
 - [Architecture](docs/architecture.md)
 
 ## Development

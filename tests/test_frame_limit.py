@@ -58,6 +58,14 @@ class FrameLimitTests(unittest.TestCase):
         self.limiter.sync(24, None)
         self.assertEqual(self.android.overrides, {10151: 50, 10152: 0})
 
+    def test_profile_changes_update_previously_seen_android_ui_as_well(self):
+        self.limiter.sync(30, self.launch)
+        self.android.package = "example.browser"
+        self.limiter.sync(60, self.launch)
+        self.assertEqual(self.android.overrides, {10151: 60, 10152: 60})
+        self.limiter.sync(24, self.launch)
+        self.assertEqual(self.android.overrides, {10151: 24, 10152: 24})
+
     def test_no_launch_does_not_contact_android(self):
         limiter = FrameLimiter(lambda args: self.fail("Android should stay untouched"))
         limiter.sync(24, None)
