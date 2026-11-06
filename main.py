@@ -6,7 +6,6 @@ import os
 import pwd
 import re
 import shutil
-import struct
 import subprocess
 import tempfile
 import threading
@@ -23,6 +22,7 @@ from waydroid_manager.proc import clean_env
 from waydroid_manager.artwork import apk_images, missing_artwork, package_apks, persistent_apks
 from waydroid_manager.metrics import GpuMetrics
 from waydroid_manager.packages import apk_members, stage_apks
+from waydroid_manager.steam import read_shortcuts, shortcuts_path, shortcut_key
 
 
 PACKAGE_RE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -30,7 +30,6 @@ WAYDROID_DIR = Path("/var/lib/waydroid")
 SERVICE = "waydroid-container.service"
 MAX_ICON_BYTES = 2 * 1024 * 1024
 WAYDROID_SHORTCUT_KEY = "waydroid"
-LAUNCH_WRAPPER = "/usr/libexec/armada/armada-game-launch"
 
 
 class Plugin:
@@ -72,7 +71,7 @@ class Plugin:
         for account in pwd.getpwall():
             if account.pw_uid >= 1000 and Path(account.pw_dir).is_dir():
                 return account.pw_name, account.pw_uid, Path(account.pw_dir)
-        raise RuntimeError("Could not find the ArmadaOS user")
+        raise RuntimeError("Could not find the Decky user")
 
     def _initialized(self) -> bool:
         return (WAYDROID_DIR / "waydroid.cfg").is_file()
@@ -85,23 +84,6 @@ class Plugin:
             stderr=subprocess.DEVNULL,
             check=False,
         ).returncode == 0
-
-    def _panel_resolution(self) -> dict[str, int] | None:
-        resolutions: set[tuple[int, int]] = set()
-        for modes in Path("/sys/class/drm").glob("*/modes"):
-            try:
-                for mode in modes.read_text().splitlines():
-                    match = re.fullmatch(r"(\d+)x(\d+)", mode.strip())
-                    if match:
-                        resolutions.add((int(match.group(1)), int(match.group(2))))
-            except OSError:
-                continue
-        if not resolutions:
-            return None
-        width, height = max(resolutions, key=lambda mode: mode[0] * mode[1])
-        if self._gamescope_orientation() in {"left", "right"}:
-            width, height = height, width
-        return {"width": width, "height": height}
 
     def _launcher(self) -> Path:
         path = Path(decky.DECKY_PLUGIN_DIR) / "bin" / "waydroid-launcher"
@@ -135,26 +117,6 @@ class Plugin:
             stderr=subprocess.DEVNULL,
             check=False,
         )
-
-    def _steam_gamescope_processes(self) -> dict[str, list[bytes]]:
-        processes: dict[str, list[bytes]] = {}
-        for process in Path("/proc").glob("[0-9]*"):
-            try:
-                arguments = (process / "cmdline").read_bytes().split(b"\0")
-                if b"--steam" in arguments and any(b"gamescope" in argument for argument in arguments):
-                    processes[process.name] = arguments
-            except OSError:
-                continue
-        return processes
-
-    def _gamescope_orientation(self) -> str:
-        for arguments in self._steam_gamescope_processes().values():
-            for index, argument in enumerate(arguments):
-                if argument == b"--force-orientation" and index + 1 < len(arguments):
-                    return arguments[index + 1].decode("ascii", errors="ignore")
-                if argument.startswith(b"--force-orientation="):
-                    return argument.partition(b"=")[2].decode("ascii", errors="ignore")
-        return ""
 
     def _steam_graphics_environment(self, uid: int) -> dict[str, str]:
         candidates: list[tuple[bool, dict[str, str]]] = []
@@ -192,41 +154,6 @@ class Plugin:
         if icon.suffix.lower() != ".png" or icon.stat().st_size > MAX_ICON_BYTES:
             return ""
         return "data:image/png;base64," + base64.b64encode(icon.read_bytes()).decode("ascii")
-
-    def _start_launcher(self, mode: str, package: str | None = None) -> None:
-        if not self._initialized():
-            raise RuntimeError("Install the GAPPS image before starting Waydroid")
-        if not shutil.which("gamescope"):
-            raise RuntimeError("Gamescope is unavailable in this ArmadaOS deployment. Update or repair the deployment before launching Waydroid.")
-        self._run(["systemctl", "start", SERVICE])
-        user, uid, home = self._user()
-        graphics_environment = self._steam_graphics_environment(uid)
-        log_path = home / ".local/state/waydroid-manager/launcher.log"
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        os.chown(log_path.parent, uid, pwd.getpwnam(user).pw_gid)
-        log_path.touch(exist_ok=True)
-        os.chown(log_path, uid, pwd.getpwnam(user).pw_gid)
-        environment = [
-            f"HOME={home}",
-            f"XDG_RUNTIME_DIR=/run/user/{uid}",
-            f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus",
-            f"DISPLAY={graphics_environment['DISPLAY']}",
-        ]
-        if graphics_environment.get("XAUTHORITY"):
-            environment.append(f"XAUTHORITY={graphics_environment['XAUTHORITY']}")
-        wayland_display = graphics_environment.get("GAMESCOPE_WAYLAND_DISPLAY") or graphics_environment.get("WAYLAND_DISPLAY")
-        if wayland_display:
-            environment.append(f"GAMESCOPE_WAYLAND_DISPLAY={wayland_display}")
-            environment.append(f"WAYLAND_DISPLAY={wayland_display}")
-        command = [
-            "runuser", "-u", user, "--", "env",
-            *environment,
-            str(self._launcher()), mode,
-        ]
-        if package:
-            command.append(package)
-        with log_path.open("a", encoding="utf-8") as log:
-            subprocess.Popen(command, env=clean_env(), start_new_session=True, stdout=log, stderr=subprocess.STDOUT)
 
     def _state_path(self, home: Path) -> Path:
         return home / ".config/waydroid-manager/state.json"
@@ -270,56 +197,25 @@ class Plugin:
         recorded = {key: value for key, value in shortcuts.items() if isinstance(key, str) and isinstance(value, int)}
         removed = set(state["removedShortcuts"])
         try:
-            saved_shortcuts = self._load_shortcuts(self._shortcuts_path(home))
+            saved_shortcuts = read_shortcuts(self._shortcuts_path(home))
         except (OSError, RuntimeError, ValueError):
             return recorded
 
         launcher = str(self._launcher())
-        names = {"waydroid": WAYDROID_SHORTCUT_KEY}
-        directory = home / ".local/share/applications"
-        for entry in directory.glob("waydroid.*.desktop"):
-            package = entry.stem.removeprefix("waydroid.")
-            if not PACKAGE_RE.fullmatch(package):
-                continue
-            try:
-                parser = configparser.ConfigParser(interpolation=None)
-                parser.read(entry, encoding="utf-8")
-                name = parser.get("Desktop Entry", "Name", fallback="").strip()
-            except (OSError, configparser.Error):
-                continue
-            if name:
-                names.setdefault(name.casefold(), package)
-
-        def shortcut_key(options: str) -> str | None:
-            if options == "full" or options.endswith(" full"):
-                return WAYDROID_SHORTCUT_KEY
-            match = re.search(r"(?:^|\s)app\s+([A-Za-z0-9._-]+)$", options)
-            return match.group(1) if match and PACKAGE_RE.fullmatch(match.group(1)) else None
-
         ids: dict[str, int] = {}
-        saved_by_id: dict[int, dict[str, tuple[int, Any]]] = {}
         for _, (_, shortcut) in saved_shortcuts.items():
             shortcut = {key.casefold(): value for key, value in shortcut.items()}
             exe = str(shortcut.get("exe", (1, ""))[1]).strip('"')
             options = str(shortcut.get("launchoptions", (1, ""))[1])
-            name = str(shortcut.get("appname", (1, ""))[1]).strip().casefold()
             app_id = shortcut.get("appid", (2, 0))[1]
             if not isinstance(app_id, int):
                 continue
             normalized_id = app_id & 0xFFFFFFFF
-            saved_by_id[normalized_id] = shortcut
-            key = shortcut_key(options) if exe == launcher else names.get(name)
+            key = shortcut_key(options) if Path(exe).resolve() == Path(launcher).resolve() else None
             if key is None:
                 continue
             if key not in removed:
                 ids[key] = normalized_id
-        for key, app_id in recorded.items():
-            shortcut = saved_by_id.get(app_id & 0xFFFFFFFF)
-            if shortcut is None or key in removed:
-                continue
-            options = str(shortcut.get("launchoptions", (1, ""))[1])
-            if shortcut_key(options) == key:
-                ids[key] = app_id & 0xFFFFFFFF
         return ids
 
     def _removable_packages(self, allow_cached: bool = True) -> set[str]:
@@ -370,93 +266,7 @@ class Plugin:
         return sorted(apps, key=lambda app: app["name"].casefold())
 
     def _shortcuts_path(self, home: Path) -> Path:
-        roots = [
-            home / ".local/share/Steam/userdata",
-            home / ".steam/steam/userdata",
-            home / ".var/app/com.valvesoftware.Steam/data/Steam/userdata",
-        ]
-        for root in roots:
-            paths = sorted(root.glob("*/config/shortcuts.vdf"))
-            if paths:
-                return paths[0]
-        raise RuntimeError("Steam has not created shortcuts.vdf for this user yet")
-
-    def _read_cstring(self, data: bytes, offset: int) -> tuple[str, int]:
-        end = data.index(b"\0", offset)
-        return data[offset:end].decode("utf-8", errors="replace"), end + 1
-
-    def _read_vdf(self, data: bytes, offset: int = 0) -> tuple[dict[str, Any], int]:
-        result: dict[str, Any] = {}
-        while offset < len(data):
-            value_type = data[offset]
-            offset += 1
-            if value_type == 8:
-                return result, offset
-            key, offset = self._read_cstring(data, offset)
-            if value_type == 0:
-                value, offset = self._read_vdf(data, offset)
-            elif value_type == 1:
-                value, offset = self._read_cstring(data, offset)
-            elif value_type == 2:
-                value = struct.unpack_from("<i", data, offset)[0]
-                offset += 4
-            elif value_type == 7:
-                value = struct.unpack_from("<Q", data, offset)[0]
-                offset += 8
-            else:
-                raise RuntimeError(f"Unsupported Steam shortcut field type {value_type}")
-            result[key] = (value_type, value)
-        raise RuntimeError("Steam shortcuts.vdf ended unexpectedly")
-
-    def _write_vdf(self, items: dict[str, tuple[int, Any]]) -> bytes:
-        output = bytearray()
-        for key, (value_type, value) in items.items():
-            output.append(value_type)
-            output.extend(key.encode("utf-8"))
-            output.append(0)
-            if value_type == 0:
-                output.extend(self._write_vdf(value))
-            elif value_type == 1:
-                output.extend(str(value).encode("utf-8"))
-                output.append(0)
-            elif value_type == 2:
-                output.extend(struct.pack("<i", value))
-            elif value_type == 7:
-                output.extend(struct.pack("<Q", value))
-            else:
-                raise RuntimeError(f"Unsupported Steam shortcut field type {value_type}")
-        output.append(8)
-        return bytes(output)
-
-    def _load_shortcuts(self, path: Path) -> dict[str, Any]:
-        if not path.exists():
-            return {}
-        root, _ = self._read_vdf(path.read_bytes())
-        if "shortcuts" not in root or root["shortcuts"][0] != 0:
-            raise RuntimeError("Steam shortcuts.vdf has an unexpected format")
-        return root["shortcuts"][1]
-
-    def _save_shortcuts(self, path: Path, shortcuts: dict[str, Any]) -> None:
-        payload = self._write_vdf({"shortcuts": (0, shortcuts)})
-        with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as temporary:
-            temporary.write(payload)
-            temporary_path = Path(temporary.name)
-        temporary_path.replace(path)
-
-    def _remove_shortcuts(self, home: Path) -> None:
-        try:
-            path = self._shortcuts_path(home)
-        except RuntimeError:
-            return
-        shortcuts = self._load_shortcuts(path)
-        launcher = f'"{self._launcher()}"'
-        removed = [key for key, (_, item) in shortcuts.items() if item.get("exe", (1, ""))[1] == launcher]
-        for key in removed:
-            del shortcuts[key]
-        if removed:
-            self._save_shortcuts(path, shortcuts)
-            owner = home.stat()
-            os.chown(path, owner.st_uid, owner.st_gid)
+        return shortcuts_path(home)
 
     async def get_status(self) -> dict[str, Any]:
         _, _, home = self._user()
@@ -466,7 +276,6 @@ class Plugin:
             "initialized": self._initialized(),
             "serviceRunning": self._service_state("active"),
             "gamescopeInstalled": shutil.which("gamescope") is not None,
-            "resolution": self._panel_resolution(),
             "autoAddApps": state["autoAddApps"],
             "waydroidShortcutId": shortcut_ids.get(WAYDROID_SHORTCUT_KEY),
         }
@@ -480,7 +289,7 @@ class Plugin:
             "name": name,
             "exe": str(self._launcher()),
             "startDir": str(home),
-            "launchOptions": f"{LAUNCH_WRAPPER} %command% " + ("full" if package is None else f"app {package}"),
+            "launchOptions": "full" if package is None else f"app {package}",
             "icon": icon,
             "key": WAYDROID_SHORTCUT_KEY if package is None else package,
         }
@@ -742,14 +551,6 @@ class Plugin:
     async def restart_service(self) -> None:
         self._run(["systemctl", "restart", SERVICE])
 
-    async def launch_waydroid(self) -> None:
-        self._start_launcher("full")
-
-    async def launch_app(self, package: str) -> None:
-        if not PACKAGE_RE.fullmatch(package):
-            raise RuntimeError("Invalid Android package name")
-        self._start_launcher("app", package)
-
     def _uninstall_package(self, package: str) -> int | None:
         if not PACKAGE_RE.fullmatch(package):
             raise RuntimeError("Invalid Android package name")
@@ -790,9 +591,10 @@ class Plugin:
         async with self._package_lock:
             return await asyncio.to_thread(self._uninstall_package, package)
 
-    async def remove_waydroid(self) -> None:
+    def _remove_image(self) -> list[int]:
         user, _, home = self._user()
-        self._run(["systemctl", "disable", "--now", SERVICE])
+        shortcuts = sorted(set(self._shortcut_ids(home).values()))
+        self._run(["systemctl", "stop", SERVICE])
         if WAYDROID_DIR.exists():
             shutil.rmtree(WAYDROID_DIR)
         user_data = home / ".local/share/waydroid"
@@ -800,9 +602,13 @@ class Plugin:
             shutil.rmtree(user_data)
         for entry in (home / ".local/share/applications").glob("waydroid.*.desktop"):
             entry.unlink(missing_ok=True)
-        self._remove_shortcuts(home)
         self._state_path(home).unlink(missing_ok=True)
         decky.logger.info("Removed Waydroid data for %s", user)
+        return shortcuts
+
+    async def remove_waydroid(self) -> list[int]:
+        async with self._package_lock:
+            return await asyncio.to_thread(self._remove_image)
 
     async def _main(self):
         self._frame_limiter = FrameLimiter(self._run)
@@ -821,9 +627,6 @@ class Plugin:
                 await asyncio.to_thread(self._frame_limiter.restore)
         finally:
             await asyncio.to_thread(self._stop_input_sync)
-
-    async def sync_frame_limit(self, fps: int) -> None:
-        await self.sync_runtime(fps)
 
     async def sync_runtime(self, fps: int | None) -> None:
         if fps is not None and (type(fps) is not int or not 0 <= fps <= 1000):

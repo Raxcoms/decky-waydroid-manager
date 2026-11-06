@@ -60,7 +60,7 @@ const saveShortcutRecord = callable<[string, number], void>("record_shortcut");
 const removeShortcutRecord = callable<[string], void>("remove_shortcut_record");
 const setAutoAddApps = callable<[boolean], void>("set_auto_add_apps");
 const pendingAutoShortcuts = callable<[number[] | null], Shortcut[]>("pending_auto_shortcuts");
-const removeWaydroid = callable<[], void>("remove_waydroid");
+const removeWaydroidImage = callable<[], number[]>("remove_waydroid");
 const installPackage = callable<[string], void>("install_package");
 
 const autoAddAttempted = new Set<string>();
@@ -400,6 +400,9 @@ function Content() {
     await removeFromSteam(status.waydroidShortcutId);
     await removeShortcutRecord("waydroid");
     setStatus((current) => current ? { ...current, waydroidShortcutId: undefined } : current);
+  };
+  const removeWaydroid = async () => {
+    for (const id of await removeWaydroidImage()) await removeFromSteam(id);
   };
   const launchFullWaydroid = async () => {
     if (!status?.waydroidShortcutId) {

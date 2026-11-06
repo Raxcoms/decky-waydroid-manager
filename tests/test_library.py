@@ -10,6 +10,8 @@ import unittest
 from unittest.mock import patch
 import zipfile
 
+from steam_fixtures import write_shortcuts
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "py_modules"))
 if os.name == "nt":
@@ -36,14 +38,29 @@ class LibraryTests(unittest.TestCase):
         self.directory.cleanup()
 
     def test_app_shortcut_matches_wrapper_and_package(self):
-        self.plugin._save_shortcuts(self.path, {"0": (0, {
+        write_shortcuts(self.path, {"0": (0, {
             "exe": (1, str(self.plugin._launcher())), "appid": (2, 123),
             "appname": (1, "An App"),
             "LaunchOptions": (1, "/usr/libexec/armada/armada-game-launch %command% app example.app"),
         })})
         self.assertEqual(self.plugin._shortcut_ids(self.home), {"example.app": 123})
-        self.plugin._save_shortcuts(self.path, {})
+        write_shortcuts(self.path, {})
         self.assertEqual(self.plugin._shortcut_ids(self.home), {})
+
+    def test_same_name_with_a_different_executable_is_not_owned(self):
+        entry = self.home / ".local/share/applications/waydroid.example.app.desktop"
+        entry.parent.mkdir(parents=True)
+        entry.write_text("[Desktop Entry]\nName=An App\nExec=waydroid app launch example.app\n")
+        write_shortcuts(self.path, {"0": (0, {
+            "Exe": (1, "/usr/bin/unrelated"), "appid": (2, 123),
+            "AppName": (1, "An App"), "LaunchOptions": (1, "app example.app"),
+        })})
+        self.assertEqual(self.plugin._shortcut_ids(self.home), {})
+
+    def test_new_shortcuts_use_only_the_bundled_launcher(self):
+        shortcut = self.plugin._shortcut_details("Example", "example.app")
+        self.assertEqual(shortcut["exe"], str(self.plugin._launcher()))
+        self.assertEqual(shortcut["launchOptions"], "app example.app")
 
     def test_third_party_packages_are_queried_with_waydroid_argument_separator(self):
         def run(args, **kwargs):
@@ -54,7 +71,7 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(self.plugin._removable_packages(), {"example.app", "another.app"})
 
     def test_native_shortcut_field_casing_and_changed_ids_are_resolved(self):
-        self.plugin._save_shortcuts(self.path, {"0": (0, {
+        write_shortcuts(self.path, {"0": (0, {
             "Exe": (1, str(self.plugin._launcher())), "appid": (2, 456),
             "AppName": (1, "Example"), "LaunchOptions": (1, "app example.app"),
         })})
@@ -101,7 +118,7 @@ class LibraryTests(unittest.TestCase):
             self.plugin._remove_installed_package("example.app")
 
     def test_uninstall_checks_package_manager_success_before_removing_the_entry(self):
-        self.plugin._save_shortcuts(self.path, {"0": (0, {
+        write_shortcuts(self.path, {"0": (0, {
             "exe": (1, str(self.plugin._launcher())), "appid": (2, 123),
             "LaunchOptions": (1, "app example.app"),
         })})
