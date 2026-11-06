@@ -1,10 +1,5 @@
-import { callable } from "@decky/api";
-
-type Role = "portrait" | "hero" | "logo" | "landscape";
-type Artwork = { roles: Role[]; ready: boolean; name: string; icon: string; images: { name: string; data: string }[] };
+import { pendingArtwork, getArtwork, type ArtworkRole as Role } from "./backend";
 type ImageAsset = { name: string; image: HTMLImageElement };
-const pendingArtwork = callable<[], { key: string; appId: number }[]>("pending_shortcut_artwork");
-const getArtwork = callable<[string, number], Artwork>("get_shortcut_artwork");
 const refreshers = new Set<() => void>();
 
 export function requestArtworkUpdate() {

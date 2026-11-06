@@ -1,5 +1,5 @@
 import { getStatus, listApps, installGapps, startService, stopService, restartService, uninstallApp, getWaydroidShortcut, getAppShortcut, saveShortcutRecord, removeShortcutRecord, setAutoAddApps, pendingAutoShortcuts, legacyShortcuts, removeWaydroidImage, installPackage, type Status, type AndroidApp } from "./backend";
-import { addToSteam, configureSteamShortcut, removeFromSteam, launchSteamShortcut } from "./steam";
+import { addToSteam, removeFromSteam, launchSteamShortcut } from "./steam";
 import { definePlugin, FileSelectionType, openFilePicker, toaster, useQuickAccessVisible } from "@decky/api";
 import {
   ButtonItem,
@@ -66,6 +66,7 @@ function reportError(error: unknown, setMessage?: (message: string | null) => vo
   if (messages[message]) message = t(messages[message]);
   setMessage?.(message);
   toast(t("operationFailed"), message);
+  return message;
 }
 
 function revealPanelTop(event: Event) {
@@ -190,8 +191,6 @@ function AppRow({ app, isLast, setShortcutId, onUninstalled, setMessage }: AppRo
     if (!app.shortcutId) {
       throw new Error(t("shortcutStateUnavailable"));
     }
-    const shortcut = await getAppShortcut(app.package);
-    await configureSteamShortcut(app.shortcutId, shortcut);
     launchSteamShortcut(app.shortcutId);
   };
   const openMenu = () => {
@@ -229,10 +228,8 @@ function AppRow({ app, isLast, setShortcutId, onUninstalled, setMessage }: AppRo
     : <AndroidRobotIcon />;
   return (
     <PanelSectionRow>
-      <ButtonItem label={app.name} description={app.package} icon={icon}
-        layout="inline" bottomSeparator={isLast ? "none" : "standard"} onClick={openMenu}>
-        {t("appActions")}
-      </ButtonItem>
+      <Field label={app.name} description={app.package} icon={icon} padding="standard"
+        bottomSeparator={isLast ? "none" : "standard"} focusable highlightOnFocus onActivate={openMenu} />
     </PanelSectionRow>
   );
 }
@@ -321,8 +318,6 @@ function Content() {
     if (!status?.waydroidShortcutId) {
       throw new Error(t("shortcutStateUnavailable"));
     }
-    const shortcut = await getWaydroidShortcut();
-    await configureSteamShortcut(status.waydroidShortcutId, shortcut);
     launchSteamShortcut(status.waydroidShortcutId);
   };
 

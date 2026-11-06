@@ -22,7 +22,7 @@ export async function addToSteam(shortcut: Shortcut) {
   return appId;
 }
 
-export async function configureSteamShortcut(appId: number, shortcut: Shortcut) {
+async function configureSteamShortcut(appId: number, shortcut: Shortcut) {
   const apps = window.SteamClient?.Apps;
   if (!apps?.SetShortcutLaunchOptions) {
     throw new Error(t("shortcutApiUnavailable"));

@@ -20,13 +20,14 @@ type Props = {
   target: string;
   perform: () => Promise<void>;
   autoStart?: boolean;
-  onError: (error: unknown) => void;
+  onError: (error: unknown) => string;
   closeModal?: () => void;
 };
 
 export function PackageOperationModal({ name, operation, target, perform, autoStart = false, onError, closeModal }: Props) {
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState<keyof typeof phases>("preparing");
+  const [error, setError] = useState<string | null>(null);
   const running = useRef(false);
 
   useEffect(() => {
@@ -53,13 +54,14 @@ export function PackageOperationModal({ name, operation, target, perform, autoSt
   const start = async () => {
     if (running.current) return;
     running.current = true;
+    setError(null);
     setStage("preparing");
     setBusy(true);
     try {
       await perform();
       closeModal?.();
     } catch (error) {
-      onError(error);
+      setError(onError(error));
     } finally {
       running.current = false;
       setBusy(false);
@@ -78,6 +80,7 @@ export function PackageOperationModal({ name, operation, target, perform, autoSt
       <DialogHeader>{operation === "install" ? t("installPackageTitle", { name }) : t("uninstallApp", { name })}</DialogHeader>
       <DialogBody>
         <DialogBodyText>{operation === "install" ? t("installPackageProgress") : t("uninstallAppDescription")}</DialogBodyText>
+        {error && <div role="alert"><DialogBodyText>{error}</DialogBodyText></div>}
         {busy && <div aria-live="polite"><DialogBodyText>{t(phases[stage][1])}</DialogBodyText><ProgressBar nProgress={phases[stage][0]} /></div>}
       </DialogBody>
       <DialogFooter>
