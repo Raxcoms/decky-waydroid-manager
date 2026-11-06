@@ -28,7 +28,7 @@ function fit(context: CanvasRenderingContext2D, image: HTMLImageElement, x: numb
 function selectImage(images: ImageAsset[], role: Role) {
   return images.filter(({ name, image }) => role === "logo"
     ? /logo/i.test(name) && image.width >= 96 && image.height >= 24
-    : !/logo/i.test(name) && image.width >= 256 && image.height >= 128)
+    : !/logo|icon|ic_launcher/i.test(name) && image.width >= 512 && image.height >= 256)
     .sort((a, b) => {
       const score = ({ name, image }: ImageAsset) => {
         const target = role === "portrait" ? 2 / 3 : role === "hero" ? 3.1 : role === "logo" ? 3 : 2.14;
@@ -95,7 +95,10 @@ export function watchShortcutArtwork() {
         }));
         const images = decoded.filter((image): image is ImageAsset => image !== null);
         const fallbackIcon = "data:image/svg+xml," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><g fill="none" stroke="white" stroke-width="6" stroke-linecap="round"><path d="M15 65a35 35 0 0 1 70 0Z M28 28l-8-12 M72 28l8-12"/><circle cx="35" cy="48" r="2"/><circle cx="65" cy="48" r="2"/></g></svg>');
-        const icon = await loadImage(artwork.icon || fallbackIcon).catch(() => undefined);
+        const bundledIcon = images.filter(({ name, image }) => /icon|ic_launcher/i.test(name.split("/").at(-1) || "")
+          && image.width >= 128 && Math.abs(image.width / image.height - 1) < 0.2)
+          .sort((a, b) => b.image.width * b.image.height - a.image.width * a.image.height)[0]?.image;
+        const icon = bundledIcon || await loadImage(artwork.icon || fallbackIcon).catch(() => undefined);
         for (const role of artwork.roles) {
           if (disposed) break;
           await apps.SetCustomArtworkForApp(appId, render(role, artwork.name, icon, images), "png", slots[role][0]);

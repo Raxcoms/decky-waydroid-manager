@@ -17,7 +17,7 @@ from typing import Any
 import decky
 from waydroid_manager.frame_limit import FrameLimiter, active_launch
 from waydroid_manager.proc import clean_env
-from waydroid_manager.artwork import apk_images, missing_artwork
+from waydroid_manager.artwork import apk_images, missing_artwork, package_apks
 
 
 PACKAGE_RE = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -557,16 +557,9 @@ class Plugin:
             pid = self._run(["lxc-info", "-P", "/var/lib/waydroid/lxc", "-n", "waydroid", "-pH"])
             if not pid.isdecimal():
                 return result
-            root = (Path("/proc") / pid / "root").resolve(strict=True)
-            paths = self._run(["waydroid", "shell", "--", "pm", "path", key]).splitlines()
-            apks = []
-            for path in paths:
-                if not path.startswith("package:/"):
-                    continue
-                apk = (root / path.removeprefix("package:/")).resolve(strict=True)
-                apk.relative_to(root)
-                if apk.suffix == ".apk":
-                    apks.append(apk)
+            # Keep proc's root link intact so files are opened in the container mount tree.
+            root = Path("/proc") / pid / "root"
+            apks = package_apks(root, self._run(["waydroid", "shell", "--", "pm", "path", key]))
             result["ready"] = bool(apks)
             result["images"] = await asyncio.to_thread(apk_images, apks)
         except (OSError, ValueError, RuntimeError, zipfile.BadZipFile, subprocess.SubprocessError):

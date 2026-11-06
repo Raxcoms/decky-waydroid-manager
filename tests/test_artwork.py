@@ -5,10 +5,15 @@ import unittest
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
-from waydroid_manager.artwork import apk_images, missing_artwork
+from waydroid_manager.artwork import apk_images, missing_artwork, package_apks
 
 
 class ArtworkTests(unittest.TestCase):
+    def test_package_paths_keep_the_container_root_link_and_reject_traversal(self):
+        root = Path("/proc/123/root")
+        paths = "package:/data/app/base.apk\npackage:/data/app/split.apk\npackage:/../../outside.apk\npackage://outside.apk\nlog text"
+        self.assertEqual(package_apks(root, paths), [root / "data/app/base.apk", root / "data/app/split.apk"])
+
     def test_user_artwork_is_preserved_and_logo_position_is_not_an_image(self):
         with tempfile.TemporaryDirectory() as directory:
             grid = Path(directory)

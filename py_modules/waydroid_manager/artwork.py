@@ -1,5 +1,5 @@
 import base64
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import zipfile
 
@@ -7,8 +7,19 @@ import zipfile
 ARTWORK_TYPES = {"portrait": (0, "p"), "hero": (1, "_hero"), "logo": (2, "_logo"), "landscape": (3, "")}
 MAX_IMAGE_BYTES = 4 * 1024 * 1024
 MAX_TOTAL_BYTES = 12 * 1024 * 1024
-IMAGE_NAME = re.compile(r"(?:banner|logo|splash|cover|hero|background|homescreen).+\.(?:png|webp|jpe?g)$|(?:banner|logo|splash|cover|hero|background)\.(?:png|webp|jpe?g)$", re.I)
+IMAGE_NAME = re.compile(r"(?:banner|logo|splash|cover|hero|background|homescreen|icon|ic_launcher)[^/]*\.(?:png|webp|jpe?g)$", re.I)
 SDK_NAME = re.compile(r"(?:google|facebook|applovin|mbridge|bigo|admob|unityads|ironsource|bytedance|tiktok|common_google|notification|billing|sentry)", re.I)
+
+
+def package_apks(root: Path, output: str) -> list[Path]:
+    apks = []
+    for line in output.splitlines():
+        if not line.startswith("package:/"):
+            continue
+        relative = PurePosixPath(line.removeprefix("package:/"))
+        if ".." not in relative.parts and not relative.is_absolute() and relative.suffix == ".apk":
+            apks.append(root / relative)
+    return apks
 
 
 def missing_artwork(grid: Path, app_id: int) -> list[str]:
