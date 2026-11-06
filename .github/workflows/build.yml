@@ -2,7 +2,6 @@ name: Build Decky plugin
 
 on:
   push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -28,14 +27,7 @@ jobs:
           node --experimental-strip-types --test tests/*.test.mts
           bash -n bin/waydroid-launcher bin/waydroid-session
       - name: Package plugin
-        run: |
-          mkdir -p package/waydroid-manager/bin package/waydroid-manager/dist
-          cp plugin.json package.json README.md LICENSE main.py package/waydroid-manager/
-          cp -r docs package/waydroid-manager/
-          cp -r py_modules package/waydroid-manager/
-          cp bin/waydroid-launcher bin/waydroid-session bin/waydroid-input-sync bin/waydroid-display-info bin/waydroid-wayland-relay package/waydroid-manager/bin/
-          cp -r dist/. package/waydroid-manager/dist/
-          chmod +x package/waydroid-manager/bin/*
+        run: python3 scripts/package.py package
       - uses: actions/upload-artifact@v4
         with:
           name: waydroid-manager
