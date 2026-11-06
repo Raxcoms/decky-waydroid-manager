@@ -511,7 +511,7 @@ class Plugin:
             state["observedApps"] = sorted({*state["observedApps"], *(app["package"] for app in self._desktop_entries())})
         self._save_state(home, state)
 
-    async def pending_auto_shortcuts(self) -> list[dict[str, str]]:
+    def _pending_auto_shortcuts(self) -> list[dict[str, str]]:
         if self._initialized():
             self._removable_packages()
         _, _, home = self._user()
@@ -535,6 +535,9 @@ class Plugin:
             for package, app in installed.items()
             if package in state["pendingApps"]
         ]
+
+    async def pending_auto_shortcuts(self) -> list[dict[str, str]]:
+        return self._pending_auto_shortcuts()
 
     async def get_waydroid_shortcut(self) -> dict[str, str]:
         return self._shortcut_details("Waydroid")
@@ -665,18 +668,25 @@ class Plugin:
             raise RuntimeError("Invalid Android package name")
         self._start_launcher("app", package)
 
-    def _uninstall_package(self, package: str) -> None:
+    def _uninstall_package(self, package: str) -> int | None:
         if not PACKAGE_RE.fullmatch(package):
             raise RuntimeError("Invalid Android package name")
         if package not in self._removable_packages(allow_cached=False):
             raise RuntimeError("APP_NOT_REMOVABLE")
+        _, _, home = self._user()
+        shortcut_id = self._shortcut_ids(home).get(package)
         output = self._run(["waydroid", "shell", "--", "pm", "uninstall", package], timeout=60)
         self._check_package_result(output)
-        _, _, home = self._user()
         (home / ".local/share/applications" / f"waydroid.{package}.desktop").unlink(missing_ok=True)
+        state = self._load_state(home)
+        state["shortcuts"].pop(package, None)
+        for key in ("observedApps", "pendingApps", "removedShortcuts", "removableApps"):
+            state[key] = [item for item in state.get(key, []) if item != package]
+        self._save_state(home, state)
+        return shortcut_id
 
-    async def uninstall_app(self, package: str) -> None:
-        self._uninstall_package(package)
+    async def uninstall_app(self, package: str) -> int | None:
+        return self._uninstall_package(package)
 
     async def remove_waydroid(self) -> None:
         user, _, home = self._user()

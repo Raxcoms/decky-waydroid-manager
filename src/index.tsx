@@ -49,7 +49,7 @@ const installGapps = callable<[], void>("install_gapps");
 const startService = callable<[], void>("start_service");
 const stopService = callable<[], void>("stop_service");
 const restartService = callable<[], void>("restart_service");
-const uninstallApp = callable<[string], void>("uninstall_app");
+const uninstallApp = callable<[string], number | null>("uninstall_app");
 const getWaydroidShortcut = callable<[], Shortcut>("get_waydroid_shortcut");
 const getAppShortcut = callable<[string], Shortcut>("get_app_shortcut");
 const recordShortcut = callable<[string, number], void>("record_shortcut");
@@ -214,7 +214,15 @@ function confirm(title: string, description: string, onConfirm: () => Promise<vo
   );
 }
 
-function AppRow({ app, isLast, setShortcutId, setMessage }: { app: AndroidApp; isLast: boolean; setShortcutId: (id?: number) => void; setMessage: (message: string | null) => void }) {
+type AppRowProps = {
+  app: AndroidApp;
+  isLast: boolean;
+  setShortcutId: (id?: number) => void;
+  onUninstalled: () => void;
+  setMessage: (message: string | null) => void;
+};
+
+function AppRow({ app, isLast, setShortcutId, onUninstalled, setMessage }: AppRowProps) {
   const add = async () => {
     const shortcut = await getAppShortcut(app.package);
     const appId = await addToSteam(shortcut);
@@ -248,11 +256,11 @@ function AppRow({ app, isLast, setShortcutId, setMessage }: { app: AndroidApp; i
         )}
         {app.removable && (
           <MenuItem onSelected={() => confirm(t("uninstallApp", { name: app.name }), t("uninstallAppDescription"), run(async () => {
-            await uninstallApp(app.package);
-            if (app.shortcutId) {
-              await removeFromSteam(app.shortcutId);
-              await removeShortcutRecord(app.package);
+            const shortcutId = (await uninstallApp(app.package)) ?? app.shortcutId;
+            if (shortcutId) {
+              await removeFromSteam(shortcutId);
             }
+            onUninstalled();
           }, async () => {}, setMessage, [app.name, t("appUninstalled")]))}>{t("uninstall")}</MenuItem>
         )}
       </Menu>,
@@ -433,7 +441,16 @@ function Content() {
               onChange={(enabled) => run(() => setAutoAddApps(enabled), refresh, setMessage)()}
             />
           </PanelSectionRow>
-          {shownApps.map((app, index) => <AppRow key={app.package} app={app} isLast={!hasMoreApps && index === shownApps.length - 1} setShortcutId={(id) => setApps((current) => current.map((item) => item.package === app.package ? { ...item, shortcutId: id } : item))} setMessage={setMessage} />)}
+          {shownApps.map((app, index) => (
+            <AppRow
+              key={app.package}
+              app={app}
+              isLast={!hasMoreApps && index === shownApps.length - 1}
+              setShortcutId={(id) => setApps((current) => current.map((item) => item.package === app.package ? { ...item, shortcutId: id } : item))}
+              onUninstalled={() => setApps((current) => current.filter((item) => item.package !== app.package))}
+              setMessage={setMessage}
+            />
+          ))}
           {!apps.length && <PanelSectionRow><Field description={t("noApps")} bottomSeparator="none" /></PanelSectionRow>}
           {hasMoreApps && (
             <PanelSectionRow>

@@ -59,6 +59,10 @@ class LibraryTests(unittest.TestCase):
             self.plugin._uninstall_package("example.app")
 
     def test_uninstall_checks_package_manager_success_before_removing_the_entry(self):
+        self.plugin._save_shortcuts(self.path, {"0": (0, {
+            "exe": (1, str(self.plugin._launcher())), "appid": (2, 123),
+            "LaunchOptions": (1, "app example.app"),
+        })})
         entry = self.home / ".local/share/applications/waydroid.example.app.desktop"
         entry.parent.mkdir(parents=True)
         entry.write_text("app")
@@ -73,7 +77,7 @@ class LibraryTests(unittest.TestCase):
             self.plugin._uninstall_package("example.app")
         self.assertTrue(entry.exists())
         result = "Success"
-        self.plugin._uninstall_package("example.app")
+        self.assertEqual(self.plugin._uninstall_package("example.app"), 123)
         self.assertFalse(entry.exists())
 
     def test_apk_install_rejects_android_failure_and_cleans_staging(self):
@@ -107,3 +111,34 @@ class LibraryTests(unittest.TestCase):
         self.plugin._run = lambda *args, **kwargs: "Session:\tSTOPPED"
         with self.assertRaisesRegex(RuntimeError, "WAYDROID_NOT_RUNNING"):
             self.plugin._install_package(str(apk))
+
+    def test_successful_uninstall_forgets_manual_removal_and_reinstall_can_auto_add(self):
+        self.state.update({
+            "autoAddApps": True,
+            "observedApps": ["example.app", "another.app"],
+            "pendingApps": ["example.app"],
+            "removedShortcuts": ["example.app"],
+            "shortcuts": {"example.app": 123, "another.app": 456},
+        })
+        result = "Failure [DELETE_FAILED_INTERNAL_ERROR]"
+        self.plugin._run = lambda args, **kwargs: "package:example.app" if "list" in args else result
+        with self.assertRaises(RuntimeError):
+            self.plugin._uninstall_package("example.app")
+        self.assertIn("example.app", self.state["removedShortcuts"])
+        self.assertIn("example.app", self.state["observedApps"])
+        self.assertEqual(self.state["shortcuts"]["example.app"], 123)
+
+        result = "Success"
+        self.assertIsNone(self.plugin._uninstall_package("example.app"))
+        self.assertEqual(self.state["shortcuts"], {"another.app": 456})
+        for key in ("observedApps", "pendingApps", "removedShortcuts", "removableApps"):
+            self.assertNotIn("example.app", self.state[key])
+        self.assertTrue(self.state["autoAddApps"])
+
+        self.plugin._initialized = lambda: False
+        self.plugin._desktop_entries = lambda: [
+            {"name": "Example", "package": "example.app", "shortcutId": None, "iconPath": ""},
+            {"name": "Another", "package": "another.app", "shortcutId": 456, "iconPath": ""},
+        ]
+        pending = self.plugin._pending_auto_shortcuts()
+        self.assertEqual([shortcut["key"] for shortcut in pending], ["example.app"])
