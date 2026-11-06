@@ -21,12 +21,10 @@ import { watchFrameLimit } from "./frameLimit";
 import { watchShortcutArtwork } from "./artwork";
 import { operationError } from "./errors";
 
-type Resolution = { width: number; height: number } | null;
 type Status = {
   initialized: boolean;
   serviceRunning: boolean;
   gamescopeInstalled: boolean;
-  resolution: Resolution;
   autoAddApps: boolean;
   waydroidShortcutId?: number;
 };
@@ -216,7 +214,7 @@ function confirm(title: string, description: string, onConfirm: () => Promise<vo
   );
 }
 
-function AppRow({ app, setShortcutId, setMessage }: { app: AndroidApp; setShortcutId: (id?: number) => void; setMessage: (message: string | null) => void }) {
+function AppRow({ app, isLast, setShortcutId, setMessage }: { app: AndroidApp; isLast: boolean; setShortcutId: (id?: number) => void; setMessage: (message: string | null) => void }) {
   const add = async () => {
     const shortcut = await getAppShortcut(app.package);
     const appId = await addToSteam(shortcut);
@@ -263,7 +261,7 @@ function AppRow({ app, setShortcutId, setMessage }: { app: AndroidApp; setShortc
 
   return (
     <PanelSectionRow>
-      <ButtonItem layout="below" onClick={openMenu}>
+      <ButtonItem layout="below" bottomSeparator={isLast ? "none" : "standard"} onClick={openMenu}>
         <div style={{ display: "flex", alignItems: "center", gap: "14px", width: "100%", minWidth: 0, minHeight: "32px", padding: 0, transform: "translateX(-10px)" }}>
           {app.icon ? (
             <img src={app.icon} alt="" style={{ width: "28px", height: "28px", borderRadius: "6px", objectFit: "cover", flex: "0 0 auto" }} />
@@ -333,9 +331,9 @@ function Content() {
     };
   }, [refresh]);
 
-  const resolution = status?.resolution ? `${status.resolution.width} × ${status.resolution.height}` : t("unavailable");
   const sortedApps = [...apps].sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" }));
   const shownApps = sortedApps.slice(0, visibleApps);
+  const hasMoreApps = visibleApps < sortedApps.length;
   const addWaydroid = async () => {
     const shortcut = await getWaydroidShortcut();
     const appId = await addToSteam(shortcut);
@@ -362,9 +360,9 @@ function Content() {
   return (
     <div>
       <Focusable flow-children="column" onGamepadFocus={revealPanelTop}>
-      <PanelSection title={t("waydroid")}>
+      <PanelSection title={t("waydroidStatus")}>
         <PanelSectionRow>
-          <Field label={status?.initialized ? t("installed") : t("notInstalled")} description={t("detectedDisplay", { resolution })} />
+          <Field label={status?.initialized ? t("installed") : t("notInstalled")} />
         </PanelSectionRow>
         {status && !status.gamescopeInstalled && (
           <PanelSectionRow>
@@ -375,6 +373,7 @@ function Content() {
           <PanelSectionRow>
             <ButtonItem
               layout="below"
+              bottomSeparator="none"
               onClick={() => confirm(t("installGapps"), t("installGappsDescription"), run(installGapps, refresh, setMessage, [t("waydroid"), t("gappsInstalled")]))}
             >
               {t("installWaydroid")}
@@ -391,6 +390,7 @@ function Content() {
             <PanelSectionRow>
               <ButtonItem
                 layout="below"
+                bottomSeparator="none"
                 onClick={status.waydroidShortcutId ? run(removeWaydroidShortcut, async () => {}, setMessage, [t("waydroid"), t("removedFromSteam")]) : run(addWaydroid, async () => {}, setMessage, [t("waydroid"), t("addedToSteam")])}
               >
                 {status.waydroidShortcutId ? t("removeWaydroidShortcut") : t("addWaydroid")}
@@ -406,6 +406,7 @@ function Content() {
           <PanelSectionRow>
             <ButtonItem
               layout="below"
+              bottomSeparator="none"
               onClick={() => {
                 openFilePicker(FileSelectionType.FILE, "/var/home", true, true)
                   .then(async (result) => {
@@ -432,11 +433,11 @@ function Content() {
               onChange={(enabled) => run(() => setAutoAddApps(enabled), refresh, setMessage)()}
             />
           </PanelSectionRow>
-          {shownApps.map((app) => <AppRow key={app.package} app={app} setShortcutId={(id) => setApps((current) => current.map((item) => item.package === app.package ? { ...item, shortcutId: id } : item))} setMessage={setMessage} />)}
-          {!apps.length && <PanelSectionRow><Field description={t("noApps")} /></PanelSectionRow>}
-          {visibleApps < sortedApps.length && (
+          {shownApps.map((app, index) => <AppRow key={app.package} app={app} isLast={!hasMoreApps && index === shownApps.length - 1} setShortcutId={(id) => setApps((current) => current.map((item) => item.package === app.package ? { ...item, shortcutId: id } : item))} setMessage={setMessage} />)}
+          {!apps.length && <PanelSectionRow><Field description={t("noApps")} bottomSeparator="none" /></PanelSectionRow>}
+          {hasMoreApps && (
             <PanelSectionRow>
-              <ButtonItem layout="below" onClick={() => setVisibleApps((count) => Math.min(count + 10, sortedApps.length))}>
+              <ButtonItem layout="below" bottomSeparator="none" onClick={() => setVisibleApps((count) => Math.min(count + 10, sortedApps.length))}>
                 {t("showMore", { count: Math.min(10, sortedApps.length - visibleApps) })}
               </ButtonItem>
             </PanelSectionRow>
@@ -462,6 +463,7 @@ function Content() {
           <PanelSectionRow>
             <ButtonItem
               layout="below"
+              bottomSeparator="none"
               onClick={() => confirm(t("removeWaydroid"), t("removeWaydroidDescription"), run(removeWaydroid, refresh, setMessage, [t("waydroid"), t("imageRemoved")]))}
             >
               {t("removeWaydroidButton")}
