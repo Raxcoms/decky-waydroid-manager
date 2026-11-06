@@ -18,6 +18,7 @@ The plugin was deployed with backups and tested in the existing primary Gamescop
 | Installation failures | A harmless invalid APK was selected through Decky's real file picker. A stopped session and an invalid archive both produced error toasts with their causes. The fixture was removed afterward. |
 | Top scrolling | Paced Steam Up navigation from the bottom reached scroll position zero while focus remained in the Waydroid section. The next Up reached Decky's back button with the top content visible. |
 | Artwork | Missing Soul Knight artwork slots were populated from bundled app assets and icon-based cards. Existing Warframe custom images were preserved. Generated output was downloaded and inspected. |
+| Artwork after shortcut recreation | Soul Knight's recreated shortcut had no files for its new app ID while Android was stopped. Offline discovery found its five installed APKs and bundled icon resources. The watcher populated all four artwork slots without starting Android; its pending queue became empty. Downloaded portrait, hero, and logo images were inspected, and Steam's actual Soul Knight details page displayed the generated hero and logo. This APK's selected image candidates were icons, so the covers use app-icon cards rather than publisher cover art. |
 | GPU usage | Android renderer and SurfaceFlinger DRM counters were present while the relay initially had none. After enabling the handle bridge, MangoApp opened the relay's real Android fdinfo records. The user confirmed that GPU usage changed above zero in Warframe. |
 
 ## Remaining limits
