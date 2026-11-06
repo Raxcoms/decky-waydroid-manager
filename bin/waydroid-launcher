@@ -6,8 +6,6 @@ package="${2:-}"
 runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 parent_display="${DISPLAY:-}"
 parent_wayland="${GAMESCOPE_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:-}}"
-output_width="${WAYDROID_MANAGER_WIDTH:-}"
-output_height="${WAYDROID_MANAGER_HEIGHT:-}"
 log_dir="${XDG_STATE_HOME:-$HOME/.local/state}/waydroid-manager"
 launcher_dir="$(cd "$(dirname "$0")" && pwd)"
 session_runner="$launcher_dir/waydroid-session"
@@ -27,7 +25,6 @@ if [[ "${WAYDROID_MANAGER_CLEAN_ENV:-}" != 1 ]]; then
     DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}" \
     DISPLAY="$parent_display" XAUTHORITY="${XAUTHORITY:-}" \
     GAMESCOPE_WAYLAND_DISPLAY="$parent_wayland" WAYLAND_DISPLAY="$parent_wayland" \
-    WAYDROID_MANAGER_WIDTH="$output_width" WAYDROID_MANAGER_HEIGHT="$output_height" \
     GAMESCOPE_LIMITER_FILE="${GAMESCOPE_LIMITER_FILE:-}" \
     SteamAppId="${SteamAppId:-}" SteamGameId="${SteamGameId:-}" \
     XDG_STATE_HOME="${XDG_STATE_HOME:-}" \

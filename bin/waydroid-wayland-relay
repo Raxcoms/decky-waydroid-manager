@@ -16,6 +16,7 @@ import tempfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
 from waydroid_manager.wayland import SurfaceCommits
 from waydroid_manager.metrics import MetricsSocket
+from waydroid_manager.resolution import launch_resolution
 
 
 MAX_PENDING = 1024 * 1024
@@ -37,13 +38,14 @@ def close_fds(fds: list[int]) -> None:
 
 
 class Relay:
-    def __init__(self, listener: socket.socket, parent: str, coalesce: bool = False):
+    def __init__(self, listener: socket.socket, parent: str, coalesce: bool = False, resolution: tuple[int, int] | None = None):
         self.listener = listener
         self.parent = parent
         self.selector = selectors.DefaultSelector()
         self.selector.register(listener, selectors.EVENT_READ, None)
         self.endpoints: set[Endpoint] = set()
         self.coalesce = coalesce
+        self.resolution = resolution
 
     def update(self, endpoint: Endpoint) -> None:
         events = 0
@@ -95,7 +97,7 @@ class Relay:
         host.setblocking(False)
         downstream, upstream = Endpoint(client), Endpoint(host)
         if self.coalesce:
-            downstream.protocol = SurfaceCommits()
+            downstream.protocol = SurfaceCommits(self.resolution)
             upstream.protocol = downstream.protocol
             upstream.upstream = True
         downstream.peer, upstream.peer = upstream, downstream
@@ -122,11 +124,11 @@ class Relay:
             return
         if endpoint.protocol:
             if endpoint.upstream:
-                endpoint.protocol.observe_server(data)
+                data, fds = endpoint.protocol.feed_server(data, fds)
             else:
                 data, fds = endpoint.protocol.feed(data, fds)
-                if not data:
-                    return
+            if not data:
+                return
         endpoint.peer.pending.append((memoryview(data), fds))
         endpoint.peer.pending_bytes += len(data)
         self.update(endpoint)
@@ -178,6 +180,11 @@ def main() -> int:
         raise SystemExit("Usage: waydroid-wayland-relay PARENT_SOCKET -- COMMAND [ARGS...]")
     runtime = Path(os.environ["XDG_RUNTIME_DIR"])
     parent = str(runtime / sys.argv[1])
+    resolution = launch_resolution(os.environ.get("DISPLAY", ""))
+    if resolution:
+        print(f"Steam game resolution: {resolution[0]}x{resolution[1]}", file=sys.stderr, flush=True)
+    else:
+        print("Steam game resolution unavailable; keeping compositor size hints", file=sys.stderr, flush=True)
     stopping = False
 
     def stop(*_) -> None:
@@ -194,7 +201,7 @@ def main() -> int:
             os.chmod(path, 0o600)
             listener.listen(16)
             listener.setblocking(False)
-            relay = Relay(listener, parent, coalesce=True)
+            relay = Relay(listener, parent, coalesce=True, resolution=resolution)
             def report(*_):
                 protocols = [endpoint.protocol for endpoint in relay.endpoints if endpoint.protocol and not endpoint.upstream]
                 print(f"Wayland commits: {sum(p.commits for p in protocols)}, empty commits suppressed: {sum(p.dropped for p in protocols)}", file=sys.stderr, flush=True)

@@ -12,10 +12,12 @@ class Surface:
 
 
 class SurfaceCommits:
-    def __init__(self):
+    def __init__(self, resolution: tuple[int, int] | None = None):
         self.pending = bytearray()
         self.events = bytearray()
         self.fds: list[int] = []
+        self.server_fds: list[int] = []
+        self.resolution = resolution
         self.objects = {1: "wl_display"}
         self.surfaces: dict[int, Surface] = {}
         self.xdg_surfaces: dict[int, int] = {}
@@ -24,9 +26,10 @@ class SurfaceCommits:
         self.commits = 0
         self.enabled = True
 
-    def observe_server(self, data: bytes) -> None:
+    def observe_server(self, data: bytes) -> bytes:
         self.events.extend(data)
         offset = 0
+        messages = []
         while len(self.events) - offset >= 8:
             object_id, header = struct.unpack_from("=II", self.events, offset)
             size, opcode = header >> 16, header & 65535
@@ -39,8 +42,28 @@ class SurfaceCommits:
                 self.objects.pop(deleted, None)
             elif self.objects.get(object_id) == "zwp_linux_buffer_params_v1" and opcode == 0 and size == 12:
                 self.objects[struct.unpack_from("=I", self.events, offset + 8)[0]] = "wl_buffer"
+            message = bytearray(self.events[offset:offset + size])
+            if self.resolution and self.enabled:
+                kind = self.objects.get(object_id)
+                # Steam sets the game mode on its inherited Xwayland display, not the native output.
+                if kind == "wl_output" and opcode == 1 and size == 24:
+                    struct.pack_into("=ii", message, 12, *self.resolution)
+                elif kind == "wl_output" and opcode == 3 and size == 12:
+                    struct.pack_into("=i", message, 8, 1)
+                elif (kind == "xdg_toplevel" and opcode in (0, 2) and size >= 16) or (kind == "zxdg_output_v1" and opcode == 1 and size == 16):
+                    struct.pack_into("=ii", message, 8, *self.resolution)
+            messages.append(message)
             offset += size
         del self.events[:offset]
+        return b"".join(messages)
+
+    def feed_server(self, data: bytes, fds: list[int]) -> tuple[bytes, list[int]]:
+        self.server_fds.extend(fds)
+        output = self.observe_server(data)
+        if not output:
+            return b"", []
+        descriptors, self.server_fds = self.server_fds, []
+        return output, descriptors
 
     def keep(self, message: bytes) -> bool:
         object_id, header = struct.unpack_from("=II", message)
@@ -113,6 +136,8 @@ class SurfaceCommits:
             if opcode == 0:
                 self.xdg_surfaces.pop(object_id, None)
                 self.objects.pop(object_id, None)
+            elif opcode in (1, 2):
+                self.objects[struct.unpack_from("=I", body)[0]] = "xdg_toplevel" if opcode == 1 else "xdg_popup"
             elif opcode in (3, 4):
                 surface = self.surfaces.get(self.xdg_surfaces[object_id])
                 if surface:
@@ -120,6 +145,8 @@ class SurfaceCommits:
                         surface.dirty = True
                     if opcode == 3:
                         surface.state["geometry"] = body
+        elif kind == "zxdg_output_manager_v1" and opcode == 1:
+            self.objects[struct.unpack_from("=I", body)[0]] = "zxdg_output_v1"
         elif kind not in {"wl_display", "wl_registry", "wp_presentation", "wl_region", "wl_seat", "wl_pointer", "wl_keyboard", "wl_touch", "wl_buffer", "wl_shm", "wl_shm_pool", "zwp_linux_dmabuf_v1", "zwp_linux_buffer_params_v1"}:
             # Unknown extensions may add pending surface state.
             for surface in self.surfaces.values():
@@ -161,6 +188,7 @@ class SurfaceCommits:
         return b"".join(messages), descriptors
 
     def close(self) -> None:
-        for fd in self.fds:
+        for fd in self.fds + self.server_fds:
             os.close(fd)
         self.fds.clear()
+        self.server_fds.clear()

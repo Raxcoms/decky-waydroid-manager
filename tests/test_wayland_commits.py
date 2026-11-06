@@ -86,6 +86,45 @@ class SurfaceCommitTests(unittest.TestCase):
         self.assertNotIn(30, self.protocol.objects)
         self.assertEqual(self.protocol.feed(message(30, 0), [])[0], message(30, 0))
 
+    def test_game_resolution_updates_output_and_toplevel_without_changing_refresh_or_states(self):
+        protocol = SurfaceCommits((1280, 720))
+        setup = BOOTSTRAP + bind(30, "wl_output") + bind(31, "xdg_wm_base")
+        setup += message(31, 2, 32, 4) + message(32, 1, 33)
+        setup += bind(34, "zxdg_output_manager_v1") + message(34, 1, 35, 30)
+        protocol.feed(setup, [])
+        stream = message(30, 1, 3, 1920, 1080, 120000) + message(30, 3, 2)
+        stream += message(33, 0, 1920, 1080, 4, 2) + message(33, 2, 1920, 1080)
+        stream += message(35, 1, 1920, 1080)
+        expected = message(30, 1, 3, 1280, 720, 120000) + message(30, 3, 1)
+        expected += message(33, 0, 1280, 720, 4, 2) + message(33, 2, 1280, 720)
+        expected += message(35, 1, 1280, 720)
+        for boundary in range(len(stream) + 1):
+            with self.subTest(boundary=boundary):
+                self.assertEqual(protocol.observe_server(stream[:boundary]) + protocol.observe_server(stream[boundary:]), expected)
+
+    def test_no_resolution_override_preserves_native_events(self):
+        self.protocol.feed(bind(30, "wl_output"), [])
+        event = message(30, 1, 3, 1920, 1080, 120000)
+        self.assertEqual(self.protocol.observe_server(event), event)
+
+    def test_fragmented_server_event_keeps_descriptors_until_it_can_be_forwarded(self):
+        read_fd, write_fd = os.pipe()
+        pending = os.dup(read_fd)
+        try:
+            self.protocol.feed(bind(30, "wl_output"), [])
+            event = message(30, 1, 3, 1920, 1080, 120000)
+            self.assertEqual(self.protocol.feed_server(event[:5], [pending]), (b"", []))
+            self.assertEqual(self.protocol.feed_server(event[5:], []), (event, [pending]))
+            os.close(pending)
+            pending = os.dup(read_fd)
+            self.protocol.feed_server(event[:5], [pending])
+            self.protocol.close()
+            with self.assertRaises(OSError):
+                os.fstat(pending)
+        finally:
+            os.close(read_fd)
+            os.close(write_fd)
+
     def test_unknown_object_lifetimes_disable_filtering_without_losing_bytes(self):
         self.protocol.feed(bind(30, "wl_shm"), [])
         stream = message(30, 0)

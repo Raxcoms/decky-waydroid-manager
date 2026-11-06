@@ -7,6 +7,7 @@ Waydroid Manager is a Decky Loader plugin for ArmadaOS handhelds. It initializes
 - One-confirmation GAPPS setup that follows the running device architecture.
 - A private Wayland socket that connects Android directly to Steam's compositor without another rendering pass.
 - Primary Steam compositor discovery for devices with separate display compositors and explicit Android touch passthrough.
+- Steam global and per-shortcut resolution selection through the launch's virtual display mode.
 - Android app discovery from Waydroid's generated desktop entries.
 - Steam shortcut creation and launch for Waydroid or individual apps.
 - Steam shortcut state, removal, and optional automatic shortcuts for newly installed Android apps.
