@@ -473,6 +473,7 @@ class Plugin:
         except RuntimeError:
             pass
         else:
+            self._wait_for_android(progress)
             yield
             return
 
@@ -497,20 +498,7 @@ class Plugin:
                 f"--unit={unit}", "--property=KillMode=control-group",
                 "env", f"WAYLAND_DISPLAY={wayland}", "waydroid", "session", "start",
             ])
-            progress("booting")
-            deadline = time.monotonic() + 180
-            while time.monotonic() < deadline:
-                try:
-                    ready = self._run(["waydroid", "shell", "--", "getprop", "sys.boot_completed"], timeout=10)
-                    if ready == "1":
-                        break
-                except (RuntimeError, subprocess.TimeoutExpired):
-                    pass
-                if self._run([*user_command, "systemctl", "--user", "show", unit, "--property=ActiveState", "--value"]) not in {"active", "activating"}:
-                    raise RuntimeError("WAYDROID_START_FAILED")
-                time.sleep(1)
-            else:
-                raise RuntimeError("WAYDROID_START_FAILED")
+            self._wait_for_android(progress, [*user_command, "systemctl", "--user", "show", unit, "--property=ActiveState", "--value"])
             yield
         finally:
             progress("cleaning")
@@ -523,6 +511,23 @@ class Plugin:
                     self._require_session()
                 except RuntimeError:
                     self._run(["systemctl", "stop", SERVICE])
+
+    def _wait_for_android(self, progress: Callable[[str], None], unit_status: list[str] | None = None) -> None:
+        progress("booting")
+        deadline = time.monotonic() + 180
+        while time.monotonic() < deadline:
+            try:
+                if self._run(["waydroid", "shell", "--", "getprop", "sys.boot_completed"], timeout=10) == "1":
+                    return
+            except (RuntimeError, subprocess.TimeoutExpired):
+                pass
+            if unit_status:
+                if self._run(unit_status) not in {"active", "activating"}:
+                    raise RuntimeError("WAYDROID_START_FAILED")
+            else:
+                self._require_session()
+            time.sleep(1)
+        raise RuntimeError("WAYDROID_START_FAILED")
 
     def _check_package_result(self, output: str) -> None:
         if "Success" not in output.splitlines():

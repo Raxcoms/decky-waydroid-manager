@@ -255,8 +255,18 @@ class PackageSessionTests(unittest.TestCase):
     def test_running_session_is_reused_and_left_running(self):
         self.session_running = True
         self.assertEqual(self.plugin._uninstall_package("example.app"), 123)
-        self.assertEqual(self.commands, [["waydroid", "status"]])
+        self.assertEqual(self.commands, [["waydroid", "status"], ["waydroid", "shell", "--", "getprop", "sys.boot_completed"]])
         self.assertEqual(self.removed, ["example.app"])
+
+    def test_running_but_unready_session_is_waited_for_and_preserved(self):
+        self.session_running = True
+        self.booted = "0"
+        def boot(*_):
+            self.booted = "1"
+        with patch.object(backend.time, "sleep", side_effect=boot):
+            self.plugin._uninstall_package("example.app")
+        self.assertEqual(self.removed, ["example.app"])
+        self.assertFalse(any("stop" in command or "start" in command or "systemd-run" in command for command in self.commands))
 
     def test_stopped_session_boots_hidden_on_steam_socket_and_stops_only_owned_unit(self):
         self.assertEqual(self.plugin._uninstall_package("example.app"), 123)

@@ -72,7 +72,7 @@ class ServiceControl:
                     raise RuntimeError("Invalid Waydroid Manager service request")
                 await asyncio.wait_for(self.start_service(), 30)
                 result = {"ok": True}
-            except (RuntimeError, OSError, ValueError, TimeoutError, subprocess.SubprocessError) as error:
+            except (RuntimeError, OSError, ValueError, asyncio.TimeoutError, subprocess.SubprocessError) as error:
                 result = {"ok": False, "error": str(error) or "Waydroid service start timed out"}
             writer.write((json.dumps(result) + "\n").encode())
             await writer.drain()
