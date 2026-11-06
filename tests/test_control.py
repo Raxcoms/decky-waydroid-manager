@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import socket
 import sys
+import subprocess
 import tempfile
 import unittest
 
@@ -13,6 +14,26 @@ from waydroid_manager.control import ServiceControl
 
 @unittest.skipUnless(hasattr(socket, "SO_PEERCRED"), "Requires Linux peer credentials")
 class ServiceControlTests(unittest.TestCase):
+    def test_failed_service_command_returns_an_error_response(self):
+        async def exercise(directory):
+            async def start():
+                raise subprocess.TimeoutExpired("systemctl", 30)
+            control = ServiceControl(Path(directory) / "control.sock", os.getuid(), start)
+            await control.open()
+            try:
+                reader, writer = await asyncio.open_unix_connection(str(control.path))
+                writer.write(b"START\n")
+                await writer.drain()
+                result = json.loads(await reader.readline())
+                self.assertFalse(result["ok"])
+                self.assertIn("systemctl", result["error"])
+                writer.close()
+                await writer.wait_closed()
+            finally:
+                await control.close()
+        with tempfile.TemporaryDirectory() as directory:
+            asyncio.run(exercise(directory))
+
     def test_service_start_is_authenticated_and_runtime_socket_is_removed(self):
         async def exercise(directory):
             starts = []

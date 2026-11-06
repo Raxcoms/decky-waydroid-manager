@@ -16,8 +16,7 @@ from typing import Any, Callable
 
 import decky
 from waydroid_manager.frame_limit import FrameLimiter
-from waydroid_manager.proc import active_launch
-from waydroid_manager.proc import clean_env
+from waydroid_manager.proc import active_launch, clean_env
 from waydroid_manager.artwork import apk_images, missing_artwork, package_apks, persistent_apks
 from waydroid_manager.metrics import GpuMetrics
 from waydroid_manager.packages import apk_members, stage_apks
@@ -64,7 +63,7 @@ class Plugin:
     def _user(self) -> tuple[str, int, Path]:
         user_home = getattr(decky, "DECKY_USER_HOME", None)
         if user_home:
-            home = Path(user_home)
+            home = Path(user_home).resolve()
             if home.is_dir():
                 account = pwd.getpwuid(home.stat().st_uid)
                 return account.pw_name, account.pw_uid, home
@@ -72,7 +71,7 @@ class Plugin:
         accounts = [account for account in pwd.getpwall() if account.pw_uid >= 1000 and Path(account.pw_dir).is_dir()]
         if len(accounts) == 1:
             account = accounts[0]
-            return account.pw_name, account.pw_uid, Path(account.pw_dir)
+            return account.pw_name, account.pw_uid, Path(account.pw_dir).resolve()
         raise RuntimeError("Could not find the Decky user")
 
     def _initialized(self) -> bool:
@@ -82,6 +81,7 @@ class Plugin:
         return subprocess.run(
             ["systemctl", "is-" + action, SERVICE],
             env=clean_env(),
+            timeout=10,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,
@@ -102,6 +102,7 @@ class Plugin:
     def _start_input_sync(self) -> None:
         subprocess.run(
             ["systemctl", "stop", self.INPUT_SYNC_UNIT],
+            env=clean_env(), timeout=10,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,
@@ -116,6 +117,7 @@ class Plugin:
     def _stop_input_sync(self) -> None:
         subprocess.run(
             ["systemctl", "stop", self.INPUT_SYNC_UNIT],
+            env=clean_env(), timeout=10,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,
@@ -399,7 +401,7 @@ class Plugin:
         return [{"key": key, "appId": app_id} for key, app_id in self._shortcut_ids(home).items()
                 if missing_artwork(grid, app_id)]
 
-    async def get_shortcut_artwork(self, key: str, app_id: int) -> dict[str, Any]:
+    def _shortcut_artwork(self, key: str, app_id: int) -> dict[str, Any]:
         self._validate_shortcut_key(key)
         _, _, home = self._user()
         if self._shortcut_ids(home).get(key) != app_id:
@@ -417,10 +419,13 @@ class Plugin:
                     # Keep proc's root link intact for the container mount tree.
                     root = Path("/proc") / str(pid) / "root"
                     apks = package_apks(root, self._run(["waydroid", "shell", "--", "pm", "path", key]))
-            result["images"] = await asyncio.to_thread(apk_images, apks)
+            result["images"] = apk_images(apks)
         except (OSError, ValueError, RuntimeError, zipfile.BadZipFile, subprocess.SubprocessError):
             pass
         return result
+
+    async def get_shortcut_artwork(self, key: str, app_id: int) -> dict[str, Any]:
+        return await asyncio.to_thread(self._shortcut_artwork, key, app_id)
 
     def _install_gapps(self) -> None:
         if self._initialized():

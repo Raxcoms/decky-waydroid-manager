@@ -50,3 +50,6 @@ class SteamFilesTests(unittest.TestCase):
                     read_shortcuts(path)
             write_shortcuts(path, {"0": (0, {"AppName": (1, "An app"), "appid": (2, -1)})})
             self.assertEqual(read_shortcuts(path)["0"][1]["appid"], (2, -1))
+            write_shortcuts(path, {"0": (1, "invalid shortcut")})
+            with self.assertRaises(RuntimeError):
+                read_shortcuts(path)

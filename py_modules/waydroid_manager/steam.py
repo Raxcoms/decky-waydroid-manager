@@ -46,6 +46,8 @@ def read_shortcuts(path: Path) -> dict:
         kind, shortcuts = root["shortcuts"]
         if kind != 0:
             raise ValueError("Invalid shortcut root")
+        if any(kind != 0 for kind, _ in shortcuts.values()):
+            raise ValueError("Invalid shortcut entry")
         return shortcuts
     except (KeyError, ValueError, struct.error) as error:
         raise RuntimeError("Steam shortcuts.vdf is malformed") from error
