@@ -10,7 +10,7 @@ Waydroid Manager is a Decky Loader plugin for ArmadaOS handhelds. It initializes
 - Android app discovery from Waydroid's generated desktop entries.
 - Steam shortcut creation and launch for Waydroid or individual apps.
 - Steam shortcut state, removal, and optional automatic shortcuts for newly installed Android apps.
-- Library artwork from bundled APK images, with app-icon cards for missing artwork and preservation of custom images.
+- Library artwork from installed APK images even while Android is stopped, with app-icon cards for missing artwork and preservation of custom images.
 - Local APK and split-package XAPK installation through Decky's file picker.
 - Third-party app uninstall with background startup, phase progress, cleanup, and completion or failure notifications.
 - Android 13 QAM frame-limit synchronization and redundant frame-commit filtering.

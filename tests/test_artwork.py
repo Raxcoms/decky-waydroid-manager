@@ -1,14 +1,48 @@
 from pathlib import Path
+import os
 import sys
 import tempfile
 import unittest
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
-from waydroid_manager.artwork import apk_images, missing_artwork, package_apks
+from waydroid_manager.artwork import apk_images, missing_artwork, package_apks, persistent_apks
 
 
 class ArtworkTests(unittest.TestCase):
+    def test_offline_apks_include_base_and_splits_from_the_latest_package_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            data = Path(directory)
+            old = data / "app/example.app-old"
+            new = data / "app/~~token/example.app-new"
+            sibling = data / "app/~~token/example.application-other"
+            for path in (old, new, sibling):
+                path.mkdir(parents=True)
+                (path / "base.apk").write_bytes(b"apk")
+            (new / "split_assets.apk").write_bytes(b"split")
+            (new / "base.dm").write_bytes(b"metadata")
+            os.utime(old, (10, 10))
+            os.utime(new, (20, 20))
+            self.assertEqual(persistent_apks(data, "example.app"), [new / "base.apk", new / "split_assets.apk"])
+            self.assertEqual(persistent_apks(data, "../example.app"), [])
+
+    @unittest.skipIf(os.name == "nt", "Requires Unix symlinks")
+    def test_offline_apks_do_not_follow_package_or_split_links_outside_android_data(self):
+        with tempfile.TemporaryDirectory() as directory:
+            data = Path(directory) / "data"
+            outside = Path(directory) / "outside"
+            outside.mkdir()
+            (outside / "base.apk").write_bytes(b"apk")
+            app = data / "app"
+            app.mkdir(parents=True)
+            (app / "example.app-link").symlink_to(outside, target_is_directory=True)
+            self.assertEqual(persistent_apks(data, "example.app"), [])
+            valid = app / "example.app-valid"
+            valid.mkdir()
+            (valid / "base.apk").write_bytes(b"apk")
+            (valid / "split.apk").symlink_to(outside / "base.apk")
+            self.assertEqual(persistent_apks(data, "example.app"), [valid / "base.apk"])
+
     def test_package_paths_keep_the_container_root_link_and_reject_traversal(self):
         root = Path("/proc/123/root")
         paths = "package:/data/app/base.apk\npackage:/data/app/split.apk\npackage:/../../outside.apk\npackage://outside.apk\nlog text"

@@ -11,6 +11,23 @@ IMAGE_NAME = re.compile(r"(?:banner|logo|splash|cover|hero|background|homescreen
 SDK_NAME = re.compile(r"(?:google|facebook|applovin|mbridge|bigo|admob|unityads|ironsource|bytedance|tiktok|common_google|notification|billing|sentry)", re.I)
 
 
+def persistent_apks(data: Path, package: str) -> list[Path]:
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", package):
+        return []
+    root = (data / "app").resolve()
+    directories = []
+    for pattern in (f"{package}-*", f"*/{package}-*"):
+        for directory in root.glob(pattern):
+            directory = directory.resolve()
+            if directory.is_relative_to(root) and (directory / "base.apk").is_file():
+                directories.append(directory)
+    if not directories:
+        return []
+    directory = max(directories, key=lambda path: path.stat().st_mtime_ns)
+    return [path for path in sorted(directory.glob("*.apk"))
+            if path.resolve().is_relative_to(directory) and path.is_file()][:64]
+
+
 def package_apks(root: Path, output: str) -> list[Path]:
     apks = []
     for line in output.splitlines():

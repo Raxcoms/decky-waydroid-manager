@@ -5,6 +5,11 @@ type Artwork = { roles: Role[]; ready: boolean; name: string; icon: string; imag
 type ImageAsset = { name: string; image: HTMLImageElement };
 const pendingArtwork = callable<[], { key: string; appId: number }[]>("pending_shortcut_artwork");
 const getArtwork = callable<[string, number], Artwork>("get_shortcut_artwork");
+const refreshers = new Set<() => void>();
+
+export function requestArtworkUpdate() {
+  refreshers.forEach((refresh) => refresh());
+}
 const slots: Record<Role, [number, number, number]> = {
   portrait: [0, 600, 900], hero: [1, 1920, 620], logo: [2, 960, 320], landscape: [3, 920, 430],
 };
@@ -88,29 +93,33 @@ export function watchShortcutArtwork() {
     try {
       for (const { key, appId } of await pendingArtwork()) {
         if (disposed) break;
-        const artwork = await getArtwork(key, appId);
-        if (!artwork.ready) continue;
-        const decoded = await Promise.all(artwork.images.map(async ({ name, data }) => {
-          try { return { name, image: await loadImage(data) }; } catch { return null; }
-        }));
-        const images = decoded.filter((image): image is ImageAsset => image !== null);
-        const fallbackIcon = "data:image/svg+xml," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><g fill="none" stroke="white" stroke-width="6" stroke-linecap="round"><path d="M15 65a35 35 0 0 1 70 0Z M28 28l-8-12 M72 28l8-12"/><circle cx="35" cy="48" r="2"/><circle cx="65" cy="48" r="2"/></g></svg>');
-        const bundledIcon = images.filter(({ name, image }) => /icon|ic_launcher/i.test(name.split("/").at(-1) || "")
-          && image.width >= 128 && Math.abs(image.width / image.height - 1) < 0.2)
-          .sort((a, b) => b.image.width * b.image.height - a.image.width * a.image.height)[0]?.image;
-        const icon = bundledIcon || await loadImage(artwork.icon || fallbackIcon).catch(() => undefined);
-        for (const role of artwork.roles) {
-          if (disposed) break;
-          await apps.SetCustomArtworkForApp(appId, render(role, artwork.name, icon, images), "png", slots[role][0]);
-        }
-        const details = (window as unknown as { appDetailsStore?: {
-          GetCustomLogoPosition?: (app: unknown) => unknown;
-          SaveCustomLogoPosition?: (app: unknown, position: unknown) => Promise<void>;
-        } }).appDetailsStore;
-        const overview = window.appStore?.GetAppOverviewByAppID(appId);
-        // Steam shortcuts need a logo position before their logo is displayed.
-        if (artwork.roles.includes("logo") && overview && !details?.GetCustomLogoPosition?.(overview)) {
-          await details?.SaveCustomLogoPosition?.(overview, { pinnedPosition: "BottomLeft", nWidthPct: 50, nHeightPct: 50 });
+        try {
+          const artwork = await getArtwork(key, appId);
+          if (!artwork.ready) continue;
+          const decoded = await Promise.all(artwork.images.map(async ({ name, data }) => {
+            try { return { name, image: await loadImage(data) }; } catch { return null; }
+          }));
+          const images = decoded.filter((image): image is ImageAsset => image !== null);
+          const fallbackIcon = "data:image/svg+xml," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><g fill="none" stroke="white" stroke-width="6" stroke-linecap="round"><path d="M15 65a35 35 0 0 1 70 0Z M28 28l-8-12 M72 28l8-12"/><circle cx="35" cy="48" r="2"/><circle cx="65" cy="48" r="2"/></g></svg>');
+          const bundledIcon = images.filter(({ name, image }) => /icon|ic_launcher/i.test(name.split("/").at(-1) || "")
+            && image.width >= 128 && Math.abs(image.width / image.height - 1) < 0.2)
+            .sort((a, b) => b.image.width * b.image.height - a.image.width * a.image.height)[0]?.image;
+          const icon = bundledIcon || await loadImage(artwork.icon || fallbackIcon).catch(() => undefined);
+          for (const role of artwork.roles) {
+            if (disposed) break;
+            await apps.SetCustomArtworkForApp(appId, render(role, artwork.name, icon, images), "png", slots[role][0]);
+          }
+          const details = (window as unknown as { appDetailsStore?: {
+            GetCustomLogoPosition?: (app: unknown) => unknown;
+            SaveCustomLogoPosition?: (app: unknown, position: unknown) => Promise<void>;
+          } }).appDetailsStore;
+          const overview = window.appStore?.GetAppOverviewByAppID(appId);
+          // Steam shortcuts need a logo position before their logo is displayed.
+          if (artwork.roles.includes("logo") && overview && !details?.GetCustomLogoPosition?.(overview)) {
+            await details?.SaveCustomLogoPosition?.(overview, { pinnedPosition: "BottomLeft", nWidthPct: 50, nHeightPct: 50 });
+          }
+        } catch (error) {
+          console.warn("Waydroid shortcut artwork failed", key, error);
         }
       }
     } catch (error) {
@@ -119,7 +128,9 @@ export function watchShortcutArtwork() {
       busy = false;
     }
   };
-  void sync();
-  const timer = window.setInterval(() => void sync(), 15000);
-  return () => { disposed = true; window.clearInterval(timer); };
+  const refresh = () => void sync();
+  refreshers.add(refresh);
+  refresh();
+  const timer = window.setInterval(refresh, 15000);
+  return () => { disposed = true; refreshers.delete(refresh); window.clearInterval(timer); };
 }

@@ -19,7 +19,7 @@ import {
 import { useCallback, useEffect, useState, type ReactElement } from "react";
 import { t } from "./i18n";
 import { watchRuntime } from "./runtime";
-import { watchShortcutArtwork } from "./artwork";
+import { requestArtworkUpdate, watchShortcutArtwork } from "./artwork";
 import { operationError } from "./errors";
 import { liveShortcutIds, waitForShortcut } from "./library";
 import { UninstallModal } from "./UninstallModal";
@@ -56,7 +56,7 @@ const restartService = callable<[], void>("restart_service");
 const uninstallApp = callable<[string], number | null>("uninstall_app");
 const getWaydroidShortcut = callable<[], Shortcut>("get_waydroid_shortcut");
 const getAppShortcut = callable<[string], Shortcut>("get_app_shortcut");
-const recordShortcut = callable<[string, number], void>("record_shortcut");
+const saveShortcutRecord = callable<[string, number], void>("record_shortcut");
 const removeShortcutRecord = callable<[string], void>("remove_shortcut_record");
 const setAutoAddApps = callable<[boolean], void>("set_auto_add_apps");
 const pendingAutoShortcuts = callable<[number[] | null], Shortcut[]>("pending_auto_shortcuts");
@@ -69,6 +69,11 @@ const libraryListeners = new Set<() => void>();
 let cachedStatus: Status | null = null;
 let cachedApps: AndroidApp[] = [];
 const appListState = new AppListState();
+
+async function recordShortcut(key: string, appId: number) {
+  await saveShortcutRecord(key, appId);
+  requestArtworkUpdate();
+}
 
 function toast(title: string, body: string) {
   toaster.toast({ title, body });

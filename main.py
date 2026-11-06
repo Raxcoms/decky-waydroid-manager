@@ -20,7 +20,7 @@ from typing import Any, Callable
 import decky
 from waydroid_manager.frame_limit import FrameLimiter, active_launch
 from waydroid_manager.proc import clean_env
-from waydroid_manager.artwork import apk_images, missing_artwork, package_apks
+from waydroid_manager.artwork import apk_images, missing_artwork, package_apks, persistent_apks
 from waydroid_manager.metrics import GpuMetrics
 
 
@@ -596,17 +596,17 @@ class Plugin:
             raise RuntimeError("The Steam shortcut no longer exists")
         roles = missing_artwork(self._shortcuts_path(home).parent / "grid", app_id)
         app = next((item for item in self._desktop_entries() if item["package"] == key), None)
-        result = {"roles": roles, "ready": not app, "name": app["name"] if app else "Waydroid", "icon": app["icon"] if app else "", "images": []}
-        if not roles or not app or not self._service_state("active"):
+        result = {"roles": roles, "ready": True, "name": app["name"] if app else "Waydroid", "icon": app["icon"] if app else "", "images": []}
+        if not roles or not app:
             return result
         try:
-            pid = self._run(["lxc-info", "-P", "/var/lib/waydroid/lxc", "-n", "waydroid", "-pH"])
-            if not pid.isdecimal():
-                return result
-            # Keep proc's root link intact so files are opened in the container mount tree.
-            root = Path("/proc") / pid / "root"
-            apks = package_apks(root, self._run(["waydroid", "shell", "--", "pm", "path", key]))
-            result["ready"] = bool(apks)
+            apks = persistent_apks(home / ".local/share/waydroid/data", key)
+            if not apks and self._service_state("active"):
+                pid = self._run(["lxc-info", "-P", "/var/lib/waydroid/lxc", "-n", "waydroid", "-pH"])
+                if pid.isdecimal():
+                    # Keep proc's root link intact for the container mount tree.
+                    root = Path("/proc") / pid / "root"
+                    apks = package_apks(root, self._run(["waydroid", "shell", "--", "pm", "path", key]))
             result["images"] = await asyncio.to_thread(apk_images, apks)
         except (OSError, ValueError, RuntimeError, zipfile.BadZipFile, subprocess.SubprocessError):
             pass
