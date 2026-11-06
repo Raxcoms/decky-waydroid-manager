@@ -1,4 +1,5 @@
 import importlib.util
+import copy
 import os
 from pathlib import Path
 import sys
@@ -50,6 +51,45 @@ class LibraryTests(unittest.TestCase):
             return "package:example.app\npackage:another.app\n"
         self.plugin._run = run
         self.assertEqual(self.plugin._removable_packages(), {"example.app", "another.app"})
+
+    def test_native_shortcut_field_casing_and_changed_ids_are_resolved(self):
+        self.plugin._save_shortcuts(self.path, {"0": (0, {
+            "Exe": (1, str(self.plugin._launcher())), "appid": (2, 456),
+            "AppName": (1, "Example"), "LaunchOptions": (1, "app example.app"),
+        })})
+        self.assertEqual(self.plugin._shortcut_ids(self.home), {"example.app": 456})
+        self.state.update({"autoAddApps": True, "observedApps": ["example.app"], "pendingApps": []})
+        self.plugin._initialized = lambda: False
+        self.plugin._desktop_entries = lambda: []
+        self.assertEqual(self.plugin._pending_auto_shortcuts([456]), [])
+        self.assertEqual(self.state["shortcuts"], {"example.app": 456})
+        self.assertEqual(self.state["removedShortcuts"], [])
+
+    def test_live_library_removal_stays_removed_until_uninstall_and_reinstall(self):
+        self.state.update({"autoAddApps": True, "observedApps": ["example.app"], "pendingApps": []})
+        self.plugin._initialized = lambda: False
+        self.plugin._desktop_entries = lambda: [
+            {"name": "Example", "package": "example.app", "shortcutId": None, "iconPath": ""},
+        ]
+        self.assertEqual(self.plugin._pending_auto_shortcuts([]), [])
+        self.assertEqual(self.state["shortcuts"], {})
+        self.assertIn("example.app", self.state["removedShortcuts"])
+        self.plugin._run = lambda args, **kwargs: "package:example.app" if "list" in args else "Success"
+        self.plugin._remove_installed_package("example.app")
+        pending = self.plugin._pending_auto_shortcuts([])
+        self.assertEqual([item["key"] for item in pending], ["example.app"])
+
+    def test_package_poll_does_not_overwrite_uninstall_history_cleanup(self):
+        self.state.update({"observedApps": ["example.app"], "removedShortcuts": ["example.app"]})
+        self.plugin._load_state = lambda home: copy.deepcopy(self.state)
+        def run(*args, **kwargs):
+            self.state.update({"observedApps": [], "removedShortcuts": [], "shortcuts": {}})
+            return "package:another.app"
+        self.plugin._run = run
+        self.plugin._removable_packages()
+        self.assertEqual(self.state["observedApps"], [])
+        self.assertEqual(self.state["removedShortcuts"], [])
+        self.assertEqual(self.state["shortcuts"], {})
 
     def test_stopped_android_keeps_menu_metadata_but_cannot_authorize_uninstall(self):
         self.plugin._run = lambda *args, **kwargs: "package:example.app"

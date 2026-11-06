@@ -9,6 +9,7 @@ import shutil
 import struct
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 import zipfile
@@ -33,6 +34,17 @@ LAUNCH_WRAPPER = "/usr/libexec/armada/armada-game-launch"
 
 class Plugin:
     INPUT_SYNC_UNIT = "waydroid-manager-input-sync.service"
+
+    def __init__(self):
+        self._state_lock = threading.RLock()
+        self._uninstall_progress: dict[str, str] = {}
+
+    @contextmanager
+    def _edit_state(self, home: Path):
+        with self._state_lock:
+            state = self._load_state(home)
+            yield state
+            self._save_state(home, state)
 
     def _run(self, command: list[str], timeout: int = 30) -> str:
         result = subprocess.run(
@@ -292,8 +304,9 @@ class Plugin:
         ids: dict[str, int] = {}
         saved_by_id: dict[int, dict[str, tuple[int, Any]]] = {}
         for _, (_, shortcut) in saved_shortcuts.items():
+            shortcut = {key.casefold(): value for key, value in shortcut.items()}
             exe = str(shortcut.get("exe", (1, ""))[1]).strip('"')
-            options = str(shortcut.get("LaunchOptions", (1, ""))[1])
+            options = str(shortcut.get("launchoptions", (1, ""))[1])
             name = str(shortcut.get("appname", (1, ""))[1]).strip().casefold()
             app_id = shortcut.get("appid", (2, 0))[1]
             if not isinstance(app_id, int):
@@ -309,14 +322,13 @@ class Plugin:
             shortcut = saved_by_id.get(app_id & 0xFFFFFFFF)
             if shortcut is None or key in removed:
                 continue
-            options = str(shortcut.get("LaunchOptions", (1, ""))[1])
+            options = str(shortcut.get("launchoptions", (1, ""))[1])
             if shortcut_key(options) == key:
                 ids[key] = app_id & 0xFFFFFFFF
         return ids
 
     def _removable_packages(self, allow_cached: bool = True) -> set[str]:
         _, _, home = self._user()
-        state = self._load_state(home)
         try:
             output = self._run(["waydroid", "shell", "--", "pm", "list", "packages", "-3"], timeout=10)
         except (RuntimeError, subprocess.TimeoutExpired):
@@ -327,13 +339,12 @@ class Plugin:
             if line.startswith("package:") and PACKAGE_RE.fullmatch(line.removeprefix("package:"))
         }
         if packages or not output:
-            if sorted(packages) != state.get("removableApps", []):
+            with self._edit_state(home) as state:
                 state["removableApps"] = sorted(packages)
-                self._save_state(home, state)
             return packages
         if not allow_cached:
             raise RuntimeError("WAYDROID_NOT_RUNNING")
-        return set(state.get("removableApps", []))
+        return set(self._load_state(home).get("removableApps", []))
 
     def _desktop_entries(self, removable_packages: set[str] | None = None) -> list[dict[str, Any]]:
         _, _, home = self._user()
@@ -490,35 +501,51 @@ class Plugin:
         if not isinstance(app_id, int) or app_id == 0:
             raise RuntimeError("Steam did not return a valid shortcut ID")
         _, _, home = self._user()
-        state = self._load_state(home)
-        state["shortcuts"][key] = app_id
-        state["removedShortcuts"] = [item for item in state["removedShortcuts"] if item != key]
-        state["pendingApps"] = [item for item in state["pendingApps"] if item != key]
-        self._save_state(home, state)
+        with self._edit_state(home) as state:
+            state["shortcuts"][key] = app_id
+            state["removedShortcuts"] = [item for item in state["removedShortcuts"] if item != key]
+            state["pendingApps"] = [item for item in state["pendingApps"] if item != key]
 
     async def remove_shortcut_record(self, key: str) -> None:
         self._validate_shortcut_key(key)
         _, _, home = self._user()
-        state = self._load_state(home)
-        state["shortcuts"].pop(key, None)
-        state["pendingApps"] = [item for item in state["pendingApps"] if item != key]
-        if key not in state["removedShortcuts"]:
-            state["removedShortcuts"].append(key)
-        self._save_state(home, state)
+        with self._edit_state(home) as state:
+            state["shortcuts"].pop(key, None)
+            state["pendingApps"] = [item for item in state["pendingApps"] if item != key]
+            if key not in state["removedShortcuts"]:
+                state["removedShortcuts"].append(key)
 
     async def set_auto_add_apps(self, enabled: bool) -> None:
         _, _, home = self._user()
-        state = self._load_state(home)
-        state["autoAddApps"] = enabled
-        if enabled:
-            state["observedApps"] = sorted({*state["observedApps"], *(app["package"] for app in self._desktop_entries())})
-        self._save_state(home, state)
+        with self._edit_state(home) as state:
+            state["autoAddApps"] = enabled
+            if enabled:
+                state["observedApps"] = sorted({*state["observedApps"], *(app["package"] for app in self._desktop_entries())})
 
-    def _pending_auto_shortcuts(self) -> list[dict[str, str]]:
+    def _pending_auto_shortcuts(self, live_ids: list[int] | None = None) -> list[dict[str, str]]:
         if self._initialized():
             self._removable_packages()
         _, _, home = self._user()
+        with self._state_lock:
+            return self._update_auto_shortcuts(home, live_ids)
+
+    def _update_auto_shortcuts(self, home: Path, live_ids: list[int] | None) -> list[dict[str, str]]:
         state = self._load_state(home)
+        if live_ids is not None:
+            ids = set(live_ids)
+            discovered = self._shortcut_ids(home)
+            for key, app_id in list(state["shortcuts"].items()):
+                if app_id in ids:
+                    continue
+                replacement = discovered.get(key)
+                if replacement in ids:
+                    state["shortcuts"][key] = replacement
+                else:
+                    state["shortcuts"].pop(key)
+                    if key not in state["removedShortcuts"]:
+                        state["removedShortcuts"].append(key)
+                    state["pendingApps"] = [item for item in state["pendingApps"] if item != key]
+            self._save_state(home, state)
         if not state["autoAddApps"]:
             return []
 
@@ -539,8 +566,8 @@ class Plugin:
             if package in state["pendingApps"]
         ]
 
-    async def pending_auto_shortcuts(self) -> list[dict[str, str]]:
-        return self._pending_auto_shortcuts()
+    async def pending_auto_shortcuts(self, live_ids: list[int] | None = None) -> list[dict[str, str]]:
+        return self._pending_auto_shortcuts(live_ids)
 
     async def get_waydroid_shortcut(self) -> dict[str, str]:
         return self._shortcut_details("Waydroid")
@@ -742,11 +769,10 @@ class Plugin:
         output = self._run(["waydroid", "shell", "--", "pm", "uninstall", package], timeout=60)
         self._check_package_result(output)
         (home / ".local/share/applications" / f"waydroid.{package}.desktop").unlink(missing_ok=True)
-        state = self._load_state(home)
-        state["shortcuts"].pop(package, None)
-        for key in ("observedApps", "pendingApps", "removedShortcuts", "removableApps"):
-            state[key] = [item for item in state.get(key, []) if item != package]
-        self._save_state(home, state)
+        with self._edit_state(home) as state:
+            state["shortcuts"].pop(package, None)
+            for key in ("observedApps", "pendingApps", "removedShortcuts", "removableApps"):
+                state[key] = [item for item in state.get(key, []) if item != package]
         return shortcut_id
 
     async def uninstall_app(self, package: str) -> int | None:

@@ -20,6 +20,7 @@ import { t } from "./i18n";
 import { watchRuntime } from "./runtime";
 import { watchShortcutArtwork } from "./artwork";
 import { operationError } from "./errors";
+import { liveShortcutIds, waitForShortcut } from "./library";
 
 type Status = {
   initialized: boolean;
@@ -55,7 +56,7 @@ const getAppShortcut = callable<[string], Shortcut>("get_app_shortcut");
 const recordShortcut = callable<[string, number], void>("record_shortcut");
 const removeShortcutRecord = callable<[string], void>("remove_shortcut_record");
 const setAutoAddApps = callable<[boolean], void>("set_auto_add_apps");
-const pendingAutoShortcuts = callable<[], Shortcut[]>("pending_auto_shortcuts");
+const pendingAutoShortcuts = callable<[number[] | null], Shortcut[]>("pending_auto_shortcuts");
 const removeWaydroid = callable<[], void>("remove_waydroid");
 const installPackage = callable<[string], void>("install_package");
 
@@ -105,7 +106,7 @@ function watchAutoShortcuts() {
     if (busy || disposed) return;
     busy = true;
     try {
-      for (const shortcut of await pendingAutoShortcuts()) {
+      for (const shortcut of await pendingAutoShortcuts(liveShortcutIds())) {
         if (disposed || autoAddAttempted.has(shortcut.key)) continue;
         autoAddAttempted.add(shortcut.key);
         try {
@@ -146,6 +147,7 @@ async function addToSteam(shortcut: Shortcut) {
   }
   try {
     await configureSteamShortcut(appId, shortcut);
+    if (!await waitForShortcut(appId)) throw new Error(t("shortcutNotCreated"));
   } catch (error) {
     await apps.RemoveShortcut?.(appId);
     throw error;
