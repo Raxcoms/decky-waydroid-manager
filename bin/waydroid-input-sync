@@ -52,36 +52,13 @@ def steam_controllers() -> dict[str, int]:
     return controllers
 
 
-def shared_controller_layout(root: Path) -> tuple[str, bytes] | None:
+def steam_controller_layout(root: Path) -> tuple[str, bytes] | None:
+    # Steam emits Xbox 360 codes, not the handheld driver's face buttons or D-pad keys.
+    source = root / "system/usr/keylayout/Vendor_045e_Product_028e.kl"
     try:
-        records = subprocess.run(
-            ["udevadm", "info", "--export-db", "--subsystem-match=input"],
-            capture_output=True,
-            text=True,
-            timeout=2,
-            check=False,
-        ).stdout.split("\n\n")
-    except subprocess.SubprocessError:
-        return None
-
-    layout_root = root / "data/system/devices/keylayout"
-    for record in records:
-        properties = dict(
-            line[3:].split("=", 1)
-            for line in record.splitlines()
-            if line.startswith("E: ") and "=" in line
-        )
-        if properties.get("INPUTPLUMBER_SHARED_GAMEPAD") != "1":
-            continue
-        event = Path(properties.get("DEVNAME", "")).name
-        identity = input_identity(event)
-        if not identity:
-            continue
-        source = layout_root / f"Vendor_{identity[0]}_Product_{identity[1]}.kl"
-        try:
-            return source.name, source.read_bytes()
-        except OSError:
-            continue
+        return source.name, source.read_bytes()
+    except OSError:
+        pass
     return None
 
 
@@ -163,11 +140,12 @@ def main() -> None:
             root = Path("/proc") / pid / "root"
             inputs = root / "dev/input"
             try:
-                if sync_keylayout(root, shared_controller_layout(root)):
-                    for name, device in published.items():
+                controllers = steam_controllers()
+                if sync_keylayout(root, steam_controller_layout(root)):
+                    for name, device in controllers.items():
                         remove_node(inputs, name, device)
                     published = {}
-                published = sync(inputs, steam_controllers(), published)
+                published = sync(inputs, controllers, published)
             except OSError:
                 published = {}
         time.sleep(1)

@@ -68,6 +68,20 @@ class FrameLimitTests(unittest.TestCase):
             self.limiter.sync(24, self.launch)
         self.assertEqual(self.android.writes, [])
 
+    def test_container_startup_message_is_not_cached_as_android_version(self):
+        self.android.sdk = "[00:01:02] WayDroid container is STOPPED"
+        self.limiter.sync(24, self.launch)
+        self.assertEqual(self.android.writes, [])
+        self.android.sdk = "33"
+        self.limiter.sync(24, self.launch)
+        self.assertEqual(self.android.writes, [(10151, 24)])
+
+    def test_activity_formats_do_not_depend_on_the_app(self):
+        for value in ("topResumedActivity=", "mResumedActivity:", "ResumedActivity: "):
+            with self.subTest(value=value):
+                limiter = FrameLimiter(lambda args: value + "ActivityRecord{abc u0 example.browser/.Activity}")
+                self.assertEqual(limiter.foreground_package(), "example.browser")
+
 
 if __name__ == "__main__":
     unittest.main()

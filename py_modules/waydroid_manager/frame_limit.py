@@ -32,7 +32,7 @@ class FrameLimiter:
 
     def foreground_package(self) -> str | None:
         output = self.android("dumpsys", "activity", "activities")
-        match = re.search(r"(?:topResumedActivity|mResumedActivity)=.*?\bu\d+\s+([A-Za-z0-9._]+)/", output)
+        match = re.search(r"(?:topResumedActivity|mResumedActivity|ResumedActivity)\s*[:=]\s*.*?\bu\d+\s+([A-Za-z0-9._]+)/", output)
         return match.group(1) if match else None
 
     def package_uid(self, package: str) -> int | None:
@@ -64,7 +64,8 @@ class FrameLimiter:
             self.restore()
             return
         if self.sdk is None:
-            sdk = self.android("getprop", "ro.build.version.sdk").strip()
+            output = self.android("getprop", "ro.build.version.sdk")
+            sdk = next((line.strip() for line in output.splitlines() if line.strip().isdecimal()), "")
             if not sdk:
                 return
             self.sdk = sdk
