@@ -6,9 +6,11 @@ Use a native Steam Game Mode session with Decky Loader. Your device needs Waydro
 
 ## Install the plugin
 
-1. Open a successful [GitHub Actions build](https://github.com/Raxcoms/decky-waydroid-manager/actions/workflows/build.yml) and download its `waydroid-manager-<commit>` artifact.
+1. Open the [latest official release](https://github.com/Raxcoms/decky-waydroid-manager/releases/latest) and download the `waydroid-manager-<version>.zip` asset.
 2. Copy the ZIP to your device. In Game Mode, open Decky's settings and use **Install Plugin from ZIP** in the developer options.
 3. Select the ZIP, confirm installation, then open **Waydroid Manager** in Decky.
+
+For development testing, you can also download a `waydroid-manager-<commit>` artifact from a successful [CI build](https://github.com/Raxcoms/decky-waydroid-manager/actions/workflows/build.yml) and install it the same way.
 
 ## Set up Android
 
