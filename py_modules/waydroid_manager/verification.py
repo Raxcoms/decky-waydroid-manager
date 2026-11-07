@@ -20,7 +20,14 @@ def verification_dialog(activities: str, provider: str) -> bool:
     return bool(focused and focused[1] == provider and focused[2].endswith(".PlayProtectDialogsActivity"))
 
 
-def verification_id(dump: str, session: str, provider: str) -> int | None:
+def active_install_sessions(dump: str) -> set[str]:
+    active = re.split(r"(?m)^(?:Finalized|Historical) install sessions:", dump, maxsplit=1)[0]
+    sessions = re.split(r"(?m)^\s*Active Session (\d+):\s*$", active)
+    return {session for session, details in zip(sessions[1::2], sessions[2::2])
+            if re.search(r"\bmCommitted=true\b", details) and re.search(r"\bmDestroyed=false\b", details)}
+
+
+def verification_id(dump: str, session: str, provider: str, active_sessions: set[str]) -> int | None:
     requests, completed = set(), set()
     for record in dump.split("BroadcastRecord{")[1:]:
         if not re.search(r"caller=android [^\n]*\buid=1000\b", record):
@@ -41,7 +48,7 @@ def verification_id(dump: str, session: str, provider: str) -> int | None:
         staged = re.search(r"/vmdl(\d+)\.tmp\b", intent[0])
         if staged and values.get("SESSION_ID") == staged[1] and re.search(rf"targetComp: \{{{re.escape(provider)}/", record):
             requests.add((staged[1], int(value), values.get("VERIFICATION_INSTALLER_UID")))
-    pending = {item for item in requests if item[1] not in completed}
+    pending = {item for item in requests if item[0] in active_sessions and item[1] not in completed}
     owned = {item[1] for item in pending if item[0] == session and item[2] == "0"}
     if len(owned) > 1:
         raise RuntimeError("ANDROID_VERIFICATION_AMBIGUOUS")
@@ -74,10 +81,13 @@ class InstallVerification:
             return False
         if not verification_dialog(self.android("dumpsys", "activity", "activities"), provider[1]):
             return False
-        request = verification_id(self.android("dumpsys", "activity", "broadcasts"), self.session, provider[1])
+        active = active_install_sessions(self.android("dumpsys", "package", "installs"))
+        if self.session not in active:
+            return False
+        request = verification_id(self.android("dumpsys", "activity", "broadcasts"), self.session, provider[1], active)
         if request is None:
             return False
-        self.request, self.provider = request, provider
+        self.request, self.provider = request, provider.groups()
         return True
 
     def respond(self, approved: bool) -> None:
@@ -87,15 +97,18 @@ class InstallVerification:
             raise RuntimeError("WAYDROID_NOT_RUNNING")
         if not self.helper.is_file():
             raise RuntimeError("ANDROID_VERIFICATION_UNAVAILABLE")
+        request, provider = self.request, self.provider
+        if not self.warning_pending() or (self.request, self.provider) != (request, provider):
+            raise RuntimeError("ANDROID_VERIFICATION_UNAVAILABLE")
         target = self.directory / "verifier.dex"
         shutil.copyfile(self.helper, target)
         self.directory.chmod(0o755)
         target.chmod(0o644)
         # Waydroid supplies Android's classpath and runs only this helper as the configured verifier.
         output = self.run([
-            "waydroid", "shell", "--uid", self.provider[2], "--", "env",
+            "waydroid", "shell", "--uid", provider[1], "--", "env",
             f"CLASSPATH={self.guest}/verifier.dex", "/system/bin/app_process", "/system/bin",
-            "waydroid.manager.InstallVerifier", str(self.request), "2" if approved else "-1",
+            "waydroid.manager.InstallVerifier", str(request), "2" if approved else "-1",
         ], timeout=15)
         if "VERIFICATION_SENT" not in output.splitlines():
             raise RuntimeError("ANDROID_VERIFICATION_UNAVAILABLE")

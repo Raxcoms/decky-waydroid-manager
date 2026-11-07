@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
-from waydroid_manager.verification import InstallCancelled, InstallVerification, commit_install, verification_id, verification_dialog
+from waydroid_manager.verification import InstallCancelled, InstallVerification, active_install_sessions, commit_install, verification_id, verification_dialog
 
 
 REQUEST = """BroadcastRecord{abc u0 android.intent.action.PACKAGE_NEEDS_VERIFICATION} to user 0
@@ -16,6 +16,11 @@ REQUEST = """BroadcastRecord{abc u0 android.intent.action.PACKAGE_NEEDS_VERIFICA
     caller=android 305:system/1000 pid=305 uid=1000
 """
 ACTIVITIES = "topResumedActivity=ActivityRecord{abc u0 example.verifier/example.PlayProtectDialogsActivity}"
+ACTIVE = """Active install sessions:
+  Active Session 42:
+    mCommitted=true mSealed=true
+    mDestroyed=false
+"""
 COMPLETED = """BroadcastRecord{def u0 android.intent.action.PACKAGE_VERIFIED} to user 0
     Intent { act=android.intent.action.PACKAGE_VERIFIED dat=file:///data/app/vmdl43.tmp }
       extras: Bundle[{android.content.pm.extra.VERIFICATION_ID=8, android.content.pm.extra.VERIFICATION_RESULT=1}]
@@ -31,12 +36,28 @@ class VerificationRequestTests(unittest.TestCase):
 
     def test_other_pending_installs_are_ambiguous_but_finished_installs_are_not(self):
         other = REQUEST.replace("42", "43").replace("VERIFICATION_ID=7", "VERIFICATION_ID=8")
-        self.assertIsNone(verification_id(REQUEST + other, "42", "example.verifier"))
-        self.assertEqual(verification_id(REQUEST + other + COMPLETED, "42", "example.verifier"), 7)
-        self.assertIsNone(verification_id(REQUEST + COMPLETED.replace("VERIFICATION_ID=8", "VERIFICATION_ID=7"), "42", "example.verifier"))
+        self.assertIsNone(verification_id(REQUEST + other, "42", "example.verifier", {"42", "43"}))
+        self.assertEqual(verification_id(REQUEST + other, "42", "example.verifier", {"42"}), 7)
+        self.assertEqual(verification_id(REQUEST + other + COMPLETED, "42", "example.verifier", {"42", "43"}), 7)
+        self.assertIsNone(verification_id(REQUEST + COMPLETED.replace("VERIFICATION_ID=8", "VERIFICATION_ID=7"), "42", "example.verifier", {"42"}))
+        self.assertIsNone(verification_id(REQUEST, "42", "example.verifier", set()))
+
+    def test_only_live_committed_sessions_can_be_waiting_for_verification(self):
+        dump = ACTIVE + """  Active Session 43:
+    mCommitted=false mDestroyed=false
+  Active Session 44:
+    mCommitted=true mDestroyed=true
+Finalized install sessions:
+  Active Session 45:
+    mCommitted=true mDestroyed=false
+Historical install sessions:
+  Session 46:
+    mCommitted=true mDestroyed=false
+"""
+        self.assertEqual(active_install_sessions(dump), {"42"})
 
     def test_requires_owned_session_system_sender_root_installer_and_configured_provider(self):
-        self.assertEqual(verification_id(REQUEST, "42", "example.verifier"), 7)
+        self.assertEqual(verification_id(REQUEST, "42", "example.verifier", {"42"}), 7)
         for text in (
             REQUEST.replace("vmdl42.tmp", "vmdl420.tmp"),
             REQUEST.replace("SESSION_ID=42", "SESSION_ID=420"),
@@ -47,17 +68,17 @@ class VerificationRequestTests(unittest.TestCase):
             REQUEST.replace("PACKAGE_NEEDS_VERIFICATION", "PACKAGE_NEEDS_INTEGRITY_VERIFICATION"),
         ):
             with self.subTest(text=text):
-                self.assertIsNone(verification_id(text, "42", "example.verifier"))
+                self.assertIsNone(verification_id(text, "42", "example.verifier", {"42"}))
 
     def test_duplicate_history_is_accepted_but_conflicting_ids_are_rejected(self):
-        self.assertEqual(verification_id(REQUEST + REQUEST, "42", "example.verifier"), 7)
+        self.assertEqual(verification_id(REQUEST + REQUEST, "42", "example.verifier", {"42"}), 7)
         with self.assertRaisesRegex(RuntimeError, "AMBIGUOUS"):
-            verification_id(REQUEST + REQUEST.replace("VERIFICATION_ID=7", "VERIFICATION_ID=8"), "42", "example.verifier")
+            verification_id(REQUEST + REQUEST.replace("VERIFICATION_ID=7", "VERIFICATION_ID=8"), "42", "example.verifier", {"42"})
 
     def test_ignores_incomplete_or_out_of_range_request_metadata(self):
         for value in ("-1", "unknown", "2147483648"):
-            self.assertIsNone(verification_id(REQUEST.replace("VERIFICATION_ID=7", "VERIFICATION_ID=" + value), "42", "example.verifier"))
-        self.assertIsNone(verification_id(REQUEST.replace("extras:", "summary:"), "42", "example.verifier"))
+            self.assertIsNone(verification_id(REQUEST.replace("VERIFICATION_ID=7", "VERIFICATION_ID=" + value), "42", "example.verifier", {"42"}))
+        self.assertIsNone(verification_id(REQUEST.replace("extras:", "summary:"), "42", "example.verifier", {"42"}))
 
 
 class VerificationBridgeTests(unittest.TestCase):
@@ -84,18 +105,20 @@ class VerificationBridgeTests(unittest.TestCase):
             return REQUEST
         if args[-2:] == ["activity", "activities"]:
             return ACTIVITIES
+        if args[-2:] == ["package", "installs"]:
+            return ACTIVE
         return "VERIFICATION_SENT"
 
     def test_uses_dynamic_uid_and_exact_request_without_settings_or_visual_tools(self):
         self.assertTrue(self.bridge.warning_pending())
         self.bridge.respond(True)
-        self.assertEqual(len(self.commands), 4)
+        self.assertEqual(self.commands[:4], self.commands[4:8])
         self.assertEqual(self.commands[-1][:6], ["waydroid", "shell", "--uid", "10123", "--", "env"])
         self.assertEqual(self.commands[-1][-3:], ["waydroid.manager.InstallVerifier", "7", "2"])
         self.assertEqual((self.directory / "verifier.dex").read_bytes(), self.helper.read_bytes())
 
     def test_waits_for_request_and_never_guesses_an_id(self):
-        self.run.side_effect = ["Required: example.verifier (uid=10123)", ACTIVITIES, ""]
+        self.run.side_effect = ["Required: example.verifier (uid=10123)", ACTIVITIES, ACTIVE, ""]
         self.assertFalse(self.bridge.warning_pending())
         self.assertFalse((self.directory / "verifier.dex").exists())
 
@@ -110,10 +133,18 @@ class VerificationBridgeTests(unittest.TestCase):
         self.identity_mock.return_value = (100, "201")
         with self.assertRaisesRegex(RuntimeError, "WAYDROID_NOT_RUNNING"):
             self.bridge.respond(True)
-        self.assertEqual(len(self.commands), 3)
+        self.assertEqual(len(self.commands), 4)
+
+    def test_finished_or_changed_request_cannot_use_an_old_approval(self):
+        self.assertTrue(self.bridge.warning_pending())
+        self.run.side_effect = ["Required: example.verifier (uid=10123)", ACTIVITIES, ACTIVE,
+                                REQUEST.replace("VERIFICATION_ID=7", "VERIFICATION_ID=8")]
+        with self.assertRaisesRegex(RuntimeError, "VERIFICATION_UNAVAILABLE"):
+            self.bridge.respond(True)
+        self.assertFalse((self.directory / "verifier.dex").exists())
 
     def test_waydroid_zero_exit_status_without_helper_marker_is_not_success(self):
-        self.run.side_effect = ["Required: example.verifier (uid=10123)", ACTIVITIES, REQUEST, ""]
+        self.run.side_effect = ["Required: example.verifier (uid=10123)", ACTIVITIES, ACTIVE, REQUEST] * 2 + [""]
         self.assertTrue(self.bridge.warning_pending())
         with self.assertRaisesRegex(RuntimeError, "VERIFICATION_UNAVAILABLE"):
             self.bridge.respond(True)
