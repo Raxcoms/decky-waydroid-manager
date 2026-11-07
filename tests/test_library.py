@@ -61,7 +61,7 @@ class LibraryTests(unittest.TestCase):
 
             def run(args, report):
                 if args == command:
-                    return "ERROR: You must provide 'System OTA' and 'Vendor OTA' URLs."
+                    raise RuntimeError("ERROR: You must provide 'System OTA' and 'Vendor OTA' URLs.")
                 self.assertEqual(args, [
                     *command,
                     "--system_channel", "https://ota.waydro.id/system",
@@ -417,6 +417,20 @@ class PackageSessionTests(unittest.TestCase):
         self.plugin._run = run
         self.assertEqual(self.plugin._uninstall_package("example.app"), 123)
         self.assertTrue(any("stop" in command and "--user" in command for command in self.commands))
+
+    def test_service_cleanup_still_runs_when_the_user_bus_is_unavailable(self):
+        self.service_active = False
+
+        def run(command, **kwargs):
+            if "show" in command:
+                raise RuntimeError("Failed to connect to user bus")
+            return self.run_command(command, **kwargs)
+
+        self.plugin._run = run
+        with patch.object(backend.decky, "logger", create=True):
+            with self.assertRaisesRegex(RuntimeError, "WAYDROID_CLEANUP_FAILED"):
+                self.plugin._uninstall_package("example.app")
+        self.assertIn(["systemctl", "stop", backend.SERVICE], self.commands)
 
     def test_failed_boot_does_not_attempt_removal(self):
         self.booted = "0"

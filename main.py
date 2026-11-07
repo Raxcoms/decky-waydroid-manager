@@ -424,9 +424,15 @@ class Plugin:
         if self._initialized():
             raise RuntimeError("Waydroid is already initialized. Remove it before installing a new image.")
         command = ["waydroid", "init", "--system_type", "GAPPS"]
-        output = run_init(command, self._set_image_progress)
+        missing_channels = "You must provide 'System OTA' and 'Vendor OTA' URLs"
+        try:
+            output = run_init(command, self._set_image_progress)
+        except RuntimeError as error:
+            if self._initialized() or missing_channels not in str(error):
+                raise
+            output = str(error)
         # Some distributions ship without default OTA channels.
-        if not self._initialized() and "You must provide 'System OTA' and 'Vendor OTA' URLs" in output:
+        if not self._initialized() and missing_channels in output:
             output = run_init([
                 *command,
                 "--system_channel", "https://ota.waydro.id/system",
@@ -573,22 +579,27 @@ class Plugin:
         finally:
             progress("cleaning")
             try:
-                try:
-                    state = self._run(unit_status, timeout=5)
-                except subprocess.TimeoutExpired:
-                    state = None
-                if state is None or state in {"active", "activating", "deactivating", "reloading"}:
-                    # Let systemd finish stopping the owned unit before checking the container.
-                    self._run([*user_command, "systemctl", "--user", "stop", unit], timeout=60)
-                if not service_was_active:
-                    try:
-                        self._require_session()
-                    except RuntimeError:
-                        self._run(["systemctl", "stop", SERVICE])
+                self._cleanup_package_session(user_command, unit, unit_status, service_was_active)
             except (OSError, RuntimeError, subprocess.SubprocessError) as error:
                 decky.logger.warning("Could not close the temporary Android session: %s", error)
                 if completed:
                     raise RuntimeError("WAYDROID_CLEANUP_FAILED") from error
+
+    def _cleanup_package_session(self, user_command: list[str], unit: str,
+                                 unit_status: list[str], service_was_active: bool) -> None:
+        try:
+            try:
+                state = self._run(unit_status, timeout=5)
+            except subprocess.TimeoutExpired:
+                state = None
+            if state is None or state in {"active", "activating", "deactivating", "reloading"}:
+                self._run([*user_command, "systemctl", "--user", "stop", unit], timeout=60)
+        finally:
+            if not service_was_active and self._service_running():
+                try:
+                    self._require_session()
+                except RuntimeError:
+                    self._run(["systemctl", "stop", SERVICE])
 
     def _wait_for_android(self, progress: Callable[[str], None], unit_status: list[str] | None = None) -> None:
         progress("booting")
