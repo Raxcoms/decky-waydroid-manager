@@ -6,7 +6,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
-from waydroid_manager.artwork import ARTWORK_VERSION, artwork_slots, prune_artwork
+from waydroid_manager.artwork import ARTWORK_VERSION, artwork_updates, prune_artwork
 from waydroid_manager.state import StateStore
 
 
@@ -23,16 +23,33 @@ class ArtworkTests(unittest.TestCase):
             (grid / "123.json").write_text("{}")
             digest = hashlib.sha256(b"generated").hexdigest()
             records = {str(Path("grid") / name): digest for name in ("123p.png", "123_hero.png", "123.png")}
-            self.assertEqual(artwork_slots(home, grid, 123, records), ["portrait", "logo"])
+            self.assertEqual(artwork_updates(home, grid, 123, records), (["portrait"], False))
+            records[str(Path("grid") / "123p.png")] = f"1:{digest}"
+            self.assertEqual(artwork_updates(home, grid, 123, records), (["portrait"], False))
             records[str(Path("grid") / "123p.png")] = f"{ARTWORK_VERSION}:{digest}"
-            self.assertEqual(artwork_slots(home, grid, 123, records), ["logo"])
+            self.assertEqual(artwork_updates(home, grid, 123, records), ([], False))
 
     def test_untracked_artwork_is_preserved(self):
         with tempfile.TemporaryDirectory() as directory:
             grid = Path(directory)
             (grid / "123p.jpg").write_bytes(b"cover")
             (grid / "123_logo.png").write_bytes(b"custom")
-            self.assertEqual(artwork_slots(grid, grid, 123, {}), ["hero", "landscape"])
+            self.assertEqual(artwork_updates(grid, grid, 123, {}), (["hero", "landscape"], False))
+
+    def test_only_owned_title_logo_is_marked_for_removal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            grid = Path(directory)
+            logo = grid / "123_logo.png"
+            logo.write_bytes(b"generated")
+            digest = hashlib.sha256(b"generated").hexdigest()
+            records = {logo.name: f"1:{digest}"}
+            self.assertTrue(artwork_updates(grid, grid, 123, records)[1])
+            custom = grid / "123_logo.webp"
+            custom.touch()
+            self.assertFalse(artwork_updates(grid, grid, 123, records)[1])
+            custom.unlink()
+            logo.write_bytes(b"custom")
+            self.assertFalse(artwork_updates(grid, grid, 123, records)[1])
 
     def test_state_loads_legacy_and_versioned_artwork_records(self):
         with tempfile.TemporaryDirectory() as directory:

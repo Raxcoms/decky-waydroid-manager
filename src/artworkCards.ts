@@ -1,34 +1,53 @@
 import type { ArtworkRole } from "./backend";
 
 export const artworkSlots: Record<ArtworkRole, [number, number, number]> = {
-  portrait: [0, 600, 900], hero: [1, 1920, 620], logo: [2, 960, 320], landscape: [3, 920, 430],
+  portrait: [0, 600, 900], hero: [1, 1920, 620], landscape: [3, 920, 430],
 };
 
-export function iconHue(icon: HTMLImageElement) {
+export function iconBackground(icon: HTMLImageElement): [string, string] {
   const sample = document.createElement("canvas");
-  sample.width = sample.height = 24;
+  sample.width = sample.height = 32;
   const context = sample.getContext("2d", { willReadFrequently: true });
-  if (!context) return 215;
-  context.drawImage(icon, 0, 0, 24, 24);
-  const pixels = context.getImageData(0, 0, 24, 24).data;
-  const hues = Array<number>(12).fill(0);
+  if (!context) return ["#292929", "#171717"];
+  context.drawImage(icon, 0, 0, sample.width, sample.height);
+  const pixels = context.getImageData(0, 0, sample.width, sample.height).data;
+  const colors = new Map<number, { count: number; red: number; green: number; blue: number }>();
+  let dominant = { count: 0, red: 0, green: 0, blue: 0 };
   for (let i = 0; i < pixels.length; i += 4) {
     const [r, g, b, alpha] = pixels.subarray(i, i + 4);
-    const max = Math.max(r, g, b);
-    const chroma = max - Math.min(r, g, b);
-    if (alpha < 192 || max < 52 || chroma < 32) continue;
-    const hue = max === r ? (g - b) / chroma : max === g ? 2 + (b - r) / chroma : 4 + (r - g) / chroma;
-    hues[Math.floor((hue * 2 + 12) % 12)] += chroma;
+    if (alpha < 192) continue;
+    // Group nearby colors so antialiasing does not split the dominant color.
+    const key = ((r >> 5) * 8 + (g >> 5)) * 8 + (b >> 5);
+    const color = colors.get(key) ?? { count: 0, red: 0, green: 0, blue: 0 };
+    color.count++;
+    color.red += r;
+    color.green += g;
+    color.blue += b;
+    colors.set(key, color);
+    if (color.count > dominant.count) dominant = color;
   }
-  const weight = Math.max(...hues);
-  return weight ? hues.indexOf(weight) * 30 + 15 : 215;
+  if (!dominant.count) return ["#292929", "#171717"];
+
+  const scale = dominant.count * 255;
+  const red = dominant.red / scale;
+  const green = dominant.green / scale;
+  const blue = dominant.blue / scale;
+  const max = Math.max(red, green, blue);
+  const min = Math.min(red, green, blue);
+  const chroma = max - min;
+  const lightness = (max + min) / 2;
+  const hue = chroma === 0 ? 0 : max === red ? (green - blue) / chroma : max === green ? 2 + (blue - red) / chroma : 4 + (red - green) / chroma;
+  const saturation = chroma ? Math.min(100, 100 * chroma / (1 - Math.abs(2 * lightness - 1)) + 8) : 0;
+  const top = Math.max(6, Math.min(22, lightness * 38));
+  const bottom = top * 0.66;
+  return [`hsl(${hue * 60} ${saturation}% ${top}%)`, `hsl(${hue * 60} ${saturation}% ${bottom}%)`];
 }
 
 function drawIcon(context: CanvasRenderingContext2D, icon: HTMLImageElement, x: number, y: number, size: number) {
   context.save();
   context.beginPath();
   context.roundRect(x, y, size, size, size * 0.22);
-  context.fillStyle = "#141c29";
+  context.fillStyle = "#00000026";
   context.fill();
   context.clip();
   const padding = size * 0.08;
@@ -69,39 +88,30 @@ function drawTitle(context: CanvasRenderingContext2D, name: string, x: number, y
   if (second) context.fillText(ellipsis(second), x, y + size * 0.58);
 }
 
-export function renderArtwork(role: ArtworkRole, name: string, icon: HTMLImageElement, hue: number) {
+export function renderArtwork(role: ArtworkRole, name: string, icon: HTMLImageElement, background: [string, string]) {
   const [, width, height] = artworkSlots[role];
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
   const context = canvas.getContext("2d");
   if (!context) throw new Error("Artwork canvas is unavailable");
-  if (role === "logo") {
-    drawTitle(context, name, 24, height / 2, width - 48, 112, "left");
-  } else {
-    const portrait = role === "portrait";
-    const hero = role === "hero";
-    const size = portrait ? 258 : hero ? 306 : 184;
-    const x = portrait ? (width - size) / 2 : hero ? width * 0.72 : 68;
-    const y = portrait ? 206 : (height - size) / 2;
-    const base = context.createLinearGradient(0, 0, width, height);
-    base.addColorStop(0, `hsl(${hue} 34% 18%)`);
-    base.addColorStop(1, "#0c111e");
-    context.fillStyle = base;
-    context.fillRect(0, 0, width, height);
-    const light = context.createRadialGradient(x + size / 2, y + size / 2, 0, x + size / 2, y + size / 2, size * 1.8);
-    light.addColorStop(0, `hsl(${hue} 72% 57% / 0.58)`);
-    light.addColorStop(1, `hsl(${hue} 72% 57% / 0)`);
-    context.fillStyle = light;
-    context.fillRect(0, 0, width, height);
-    context.strokeStyle = "#ffffff20";
-    context.lineWidth = 2;
-    context.beginPath();
-    context.roundRect(20, 20, width - 40, height - 40, 28);
-    context.stroke();
-    drawIcon(context, icon, x, y, size);
-    if (portrait) drawTitle(context, name, width / 2, 570, width - 100, 53, "center");
-    if (role === "landscape") drawTitle(context, name, 300, height / 2, width - 368, 54, "left");
-  }
+  const portrait = role === "portrait";
+  const hero = role === "hero";
+  const size = portrait ? 258 : hero ? 306 : 184;
+  const x = portrait ? (width - size) / 2 : hero ? width * 0.72 : 68;
+  const y = portrait ? 206 : (height - size) / 2;
+  const base = context.createLinearGradient(0, 0, width, height);
+  base.addColorStop(0, background[0]);
+  base.addColorStop(1, background[1]);
+  context.fillStyle = base;
+  context.fillRect(0, 0, width, height);
+  context.strokeStyle = "#ffffff20";
+  context.lineWidth = 2;
+  context.beginPath();
+  context.roundRect(20, 20, width - 40, height - 40, 28);
+  context.stroke();
+  drawIcon(context, icon, x, y, size);
+  if (portrait) drawTitle(context, name, width / 2, 570, width - 100, 53, "center");
+  if (role === "landscape") drawTitle(context, name, 300, height / 2, width - 368, 54, "left");
   return canvas.toDataURL("image/png").split(",")[1];
 }

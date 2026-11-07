@@ -18,7 +18,7 @@ from typing import Any, Callable
 import decky
 from waydroid_manager.frame_limit import FrameLimiter
 from waydroid_manager.proc import active_launch, clean_env
-from waydroid_manager.artwork import ARTWORK_TYPES, ARTWORK_VERSION, artwork_filename, artwork_slots, prune_artwork
+from waydroid_manager.artwork import ARTWORK_TYPES, ARTWORK_VERSION, artwork_filename, artwork_updates, prune_artwork
 from waydroid_manager.metrics import GpuMetrics
 from waydroid_manager.packages import apk_members, stage_apks, install_apks, check_result
 from waydroid_manager.verification import InstallCancelled, InstallVerification, commit_install
@@ -425,7 +425,7 @@ class Plugin:
             return []
         records = self._load_state(home)["artwork"]
         return [{"key": key, "appId": app_id} for key, app_id in self._shortcut_ids(home).items()
-                if artwork_slots(home, grid, app_id, records)]
+                if any(artwork_updates(home, grid, app_id, records))]
 
     async def pending_shortcut_artwork(self) -> list[dict[str, Any]]:
         return await asyncio.to_thread(self._pending_shortcut_artwork)
@@ -436,11 +436,11 @@ class Plugin:
         if self._shortcut_ids(home).get(key) != app_id:
             raise RuntimeError("The Steam shortcut no longer exists")
         grid = self._shortcuts_path(home).parent / "grid"
-        roles = artwork_slots(home, grid, app_id, self._load_state(home)["artwork"])
+        roles, clear_logo = artwork_updates(home, grid, app_id, self._load_state(home)["artwork"])
         app = next((item for item in self._desktop_entries() if item["package"] == key), None)
         if not app and key != WAYDROID_SHORTCUT_KEY:
             roles = []
-        return {"roles": roles, "name": app["name"] if app else "Waydroid", "icon": app["icon"] if app else ""}
+        return {"roles": roles, "clearLogo": clear_logo, "name": app["name"] if app else "Waydroid", "icon": app["icon"] if app else ""}
 
     async def get_shortcut_artwork(self, key: str, app_id: int) -> dict[str, Any]:
         return await asyncio.to_thread(self._shortcut_artwork, key, app_id)
@@ -448,7 +448,7 @@ class Plugin:
     async def record_shortcut_artwork(self, app_id: int, role: str, digest: str, version: int = 0) -> None:
         if (type(app_id) is not int or not 0 < app_id <= 0xFFFFFFFF
                 or role not in {*ARTWORK_TYPES, "logoPosition"} or not re.fullmatch(r"[0-9a-f]{64}", digest)
-                or type(version) is not int or version not in {0, ARTWORK_VERSION}):
+                or type(version) is not int or not 0 <= version <= ARTWORK_VERSION):
             raise RuntimeError("Invalid Steam artwork record")
         _, _, home = self._user()
         grid = (self._shortcuts_path(home).parent / "grid").resolve()

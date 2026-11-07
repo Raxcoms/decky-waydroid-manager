@@ -8,7 +8,7 @@ ARTWORK_TYPES = {"portrait": (0, "p"), "hero": (1, "_hero"), "logo": (2, "_logo"
 MAX_TOTAL_BYTES = 12 * 1024 * 1024
 ARTWORK_FILE = re.compile(r"(\d{1,10})(?:(?:_hero|_logo|p)?\.png|\.json)")
 ARTWORK_RECORD = re.compile(r"(?:[1-9]\d{0,2}:)?[0-9a-f]{64}")
-ARTWORK_VERSION = 1
+ARTWORK_VERSION = 2
 
 
 def artwork_filename(app_id: int, role: str) -> str:
@@ -27,16 +27,18 @@ def _matches_record(path: Path, record: str) -> bool:
     return digest == record.rsplit(":", 1)[-1] and (after.st_ino, after.st_ctime_ns) == (before.st_ino, before.st_ctime_ns)
 
 
-def artwork_slots(home: Path, grid: Path, app_id: int, recorded: dict[str, str]) -> list[str]:
+def artwork_updates(home: Path, grid: Path, app_id: int, recorded: dict[str, str]) -> tuple[list[str], bool]:
     home, grid = home.resolve(), grid.resolve()
     if not grid.is_relative_to(home):
-        return []
+        return [], False
     roles = []
+    clear_logo = False
     for role, (_, suffix) in ARTWORK_TYPES.items():
         stem = f"{app_id & 0xFFFFFFFF}{suffix}"
         existing = [path for path in grid.glob(f"{stem}.*") if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}]
         if not existing:
-            roles.append(role)
+            if role != "logo":
+                roles.append(role)
             continue
         path = grid / f"{stem}.png"
         record = recorded.get(str(path.relative_to(home)))
@@ -45,13 +47,16 @@ def artwork_slots(home: Path, grid: Path, app_id: int, recorded: dict[str, str])
         version, separator, _ = record.partition(":")
         if separator and int(version) >= ARTWORK_VERSION:
             continue
-        # Replace only untouched artwork recorded by an older generator.
+        # Update only untouched artwork recorded by an older generator.
         try:
             if _matches_record(path, record):
-                roles.append(role)
+                if role == "logo":
+                    clear_logo = True
+                else:
+                    roles.append(role)
         except OSError:
             continue
-    return roles
+    return roles, clear_logo
 
 
 def prune_artwork(home: Path, grid: Path, recorded: dict[str, str], live_ids: set[int]) -> None:

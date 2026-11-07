@@ -29,7 +29,7 @@ Third-party Android packages can be removed directly from the app action menu th
 
 Install, uninstall, library, image-removal, and service failures produce error toasts. Routine polling failures are kept out of the toast stream. Automatic shortcut creation reports a failure once per pending app until it succeeds. The top Waydroid section reveals its status fields when controller focus returns to it, before focus can leave for Decky's back button. A native separator divides service controls from full image removal.
 
-The plugin uses the Android launcher icon and app name to create matching portrait, landscape, hero, and logo artwork for Steam. The icon supplies the accent color, and the hero leaves room for Steam to display the title logo. Existing shortcuts get the new design automatically when their older artwork matches the plugin's records. You can still use your own artwork in any slot.
+The plugin creates matching portrait, landscape, and hero artwork for Steam. Each background uses a subtle, dark gradient based on the launcher icon's most common color. The hero image contains no app name. Existing shortcuts get the new design automatically when their older artwork matches the plugin's records. The update also clears older generated title logos and preserves custom artwork.
 
 ## Game Mode rendering
 

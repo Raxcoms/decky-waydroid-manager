@@ -57,9 +57,9 @@ Steam writes its own `shortcuts.vdf` data after the frontend calls `SteamClient.
 
 Shortcut creation waits for Steam's live app overview before applying the name, working directory and launch options with the published setters. Some clients initially use the executable's filename despite the supplied name. The migration watcher repairs that exact default name on owned entries; user custom names, IDs, artwork and other launch options are preserved.
 
-The frontend renders Steam's four artwork formats from Waydroid's exported launcher icon and app name. It uses the Android robot when the icon is unavailable. Shortcut creation requests artwork immediately, and a background watcher fills missing slots through `SetCustomArtworkForApp` every fifteen seconds. The watcher also initializes Steam's logo position when absent.
+The frontend renders Steam's portrait, landscape, and hero artwork using Waydroid's exported launcher icon. It uses the Android robot when the icon is unavailable. Shortcut creation requests artwork immediately, and a background watcher fills missing slots through `SetCustomArtworkForApp` every fifteen seconds.
 
-The plugin records the generator version and SHA-256 of each image it writes. It upgrades a slot only when the existing PNG matches the recorded digest from an older generator and is the only image in that slot. Cleanup uses the same digest to identify owned files. Artwork with no matching record stays in place.
+The plugin records the generator version and SHA-256 of each image it writes. It upgrades a slot or clears an older title logo through Steam's native artwork API only when the existing PNG matches the recorded digest from an older generator and is the only image in that slot. Cleanup uses the same digest to identify owned files. Artwork with no matching record stays in place.
 
 The shortcut watcher passes Steam's live non-Steam app IDs to the backend. Recorded IDs are reconciled with this list, including changed IDs found in native VDF entries whose field names use different capitalization. Library deletions remain suppressed until uninstall clears the package's history. Shortcut creation is recorded only after Steam publishes its live app overview. State read-modify-write operations share a lock, so package polling cannot restore history cleared by a concurrent uninstall worker.
 
