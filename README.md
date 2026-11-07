@@ -10,6 +10,10 @@ Set up Android from Decky and launch Android apps from your Steam library. Waydr
 
 For setup requirements, Android packages, or help with launch settings, see the [installation guide](docs/installation.md) and [user guide](docs/features.md).
 
+## Known issue
+
+Steam's frame cap can differ from the rate Android actually renders. On the tested 120 Hz Waydroid mode, a 100 FPS cap ran at 60 FPS. See [frame cap precision](docs/features.md#known-issue-with-frame-cap-precision) for the current behavior and the Waydroid change needed to improve it.
+
 ## For contributors
 
 See the [architecture overview](docs/architecture.md) for the responsibilities of Decky, Steam, Waydroid, and the bundled helpers.
