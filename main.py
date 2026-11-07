@@ -22,7 +22,7 @@ from waydroid_manager.artwork import ARTWORK_TYPES, ARTWORK_VERSION, artwork_fil
 from waydroid_manager.metrics import GpuMetrics
 from waydroid_manager.packages import apk_members, stage_apks, install_apks, check_result
 from waydroid_manager.verification import InstallCancelled, InstallVerification, commit_install
-from waydroid_manager.steam import known_accounts, read_shortcuts, shortcuts_path, shortcut_key, migrated_launch_options
+from waydroid_manager.steam import known_accounts, read_shortcuts, shortcuts_path, shortcut_key, shortcut_owners, migrated_launch_options
 from waydroid_manager.container import CONFIG_DIR, SERVICE, container_pid
 from waydroid_manager.image import launcher_packages, require_unmounted, require_unredirected, run_init
 from waydroid_manager.control import ServiceControl, control_path
@@ -168,26 +168,10 @@ class Plugin:
             history = self._account_state(home, self._load_state(home), account_id)
         removed = set(history["removedShortcuts"])
         try:
-            saved_shortcuts = read_shortcuts(path)
+            owners = shortcut_owners(path, self._launcher())
         except (OSError, RuntimeError, ValueError):
             return history["shortcuts"].copy()
-
-        launcher = str(self._launcher())
-        ids: dict[str, int] = {}
-        for _, (_, shortcut) in saved_shortcuts.items():
-            shortcut = {key.casefold(): value for key, value in shortcut.items()}
-            exe = str(shortcut.get("exe", (1, ""))[1]).strip('"')
-            options = str(shortcut.get("launchoptions", (1, ""))[1])
-            app_id = shortcut.get("appid", (2, 0))[1]
-            if not isinstance(app_id, int) or not app_id:
-                continue
-            normalized_id = app_id & 0xFFFFFFFF
-            key = shortcut_key(options) if Path(exe).resolve() == Path(launcher).resolve() else None
-            if key is None:
-                continue
-            if key not in removed:
-                ids[key] = normalized_id
-        return ids
+        return {key: app_id for app_id, key in owners.items() if key is not None and key not in removed}
 
     def _removable_packages(self, allow_cached: bool = True) -> set[str]:
         _, _, home = self._user()
@@ -286,6 +270,10 @@ class Plugin:
         self._shortcuts_path(home, account_id)
         with self._edit_state(home) as state:
             history = self._account_state(home, state, account_id)
+            if key in history["pendingRemovals"].values():
+                raise RuntimeError("STEAM_SHORTCUT_CLEANUP_PENDING")
+            if key != WAYDROID_SHORTCUT_KEY and next(app_exports(home, key), None) is None:
+                raise RuntimeError("Android app is no longer installed")
             history["shortcuts"][key] = app_id
             history["removedShortcuts"] = [item for item in history["removedShortcuts"] if item != key]
             history["pendingApps"] = [item for item in history["pendingApps"] if item != key]
@@ -347,19 +335,45 @@ class Plugin:
         removed = set(history["removedShortcuts"])
         recorded = set(history["shortcuts"])
         pending = set(history["pendingApps"])
-        pending.update(package for package, app in installed.items() if package not in observed and package not in removed and package not in recorded and not app["shortcutId"])
-        pending = {package for package in pending if package in installed and not installed[package]["shortcutId"]}
+        removing = set(history["pendingRemovals"].values())
+        missing = {package for package, app in installed.items() if not app["shortcutId"] or package in removing}
+        pending.update(missing - observed - removed - recorded)
+        pending &= missing
         history["observedApps"] = sorted(observed | set(installed))
-        history["pendingApps"] = sorted(pending & set(installed))
+        history["pendingApps"] = sorted(pending)
         self._save_state(home, state)
         return [
             self._shortcut_details(account_id, app["name"], package, app["iconPath"])
             for package, app in installed.items()
-            if package in history["pendingApps"]
+            if package in pending - removing
         ]
 
     async def pending_auto_shortcuts(self, account_id: int, live_ids: list[int] | None = None) -> list[dict[str, Any]]:
         return await asyncio.to_thread(self._pending_auto_shortcuts, account_id, live_ids)
+
+    def _pending_shortcut_removals(self, account_id: int, live_ids: list[int] | None) -> dict[str, Any]:
+        _, _, home = self._user()
+        path = self._shortcuts_path(home, account_id)
+        with self._edit_state(home) as state:
+            history = self._account_state(home, state, account_id)
+            queued = history["pendingRemovals"]
+            if live_ids is None or not queued:
+                return {"ids": [], "waiting": bool(queued)}
+            owners = shortcut_owners(path, self._launcher())
+            live = set(live_ids)
+            ready = []
+            for value, key in list(queued.items()):
+                app_id = int(value)
+                if app_id in owners and owners[app_id] != key:
+                    queued.pop(value)
+                elif app_id not in owners and app_id not in live:
+                    queued.pop(value)
+                elif owners.get(app_id) == key and app_id in live:
+                    ready.append(app_id)
+            return {"ids": ready, "waiting": len(queued) > len(ready)}
+
+    async def pending_shortcut_removals(self, account_id: int, live_ids: list[int] | None = None) -> dict[str, Any]:
+        return await asyncio.to_thread(self._pending_shortcut_removals, account_id, live_ids)
 
     def _legacy_shortcuts(self, account_id: int) -> list[dict[str, Any]]:
         _, _, home = self._user()
@@ -387,9 +401,15 @@ class Plugin:
     async def legacy_shortcuts(self, account_id: int) -> list[dict[str, Any]]:
         return await asyncio.to_thread(self._legacy_shortcuts, account_id)
 
-    async def get_waydroid_shortcut(self, account_id: int) -> dict[str, Any]:
+    def _require_shortcut_available(self, account_id: int, key: str) -> None:
         _, _, home = self._user()
         self._shortcuts_path(home, account_id)
+        history = self._account_state(home, self._load_state(home), account_id)
+        if key in history["pendingRemovals"].values():
+            raise RuntimeError("STEAM_SHORTCUT_CLEANUP_PENDING")
+
+    async def get_waydroid_shortcut(self, account_id: int) -> dict[str, Any]:
+        self._require_shortcut_available(account_id, WAYDROID_SHORTCUT_KEY)
         return self._shortcut_details(account_id, "Waydroid")
 
     async def get_app_shortcut(self, account_id: int, package: str) -> dict[str, Any]:
@@ -398,8 +418,7 @@ class Plugin:
         app = next(iter(self._desktop_entries(package=package)), None)
         if not app:
             raise RuntimeError("Android app is no longer installed")
-        _, _, home = self._user()
-        self._shortcuts_path(home, account_id)
+        self._require_shortcut_available(account_id, package)
         return self._shortcut_details(account_id, app["name"], package, app["iconPath"])
 
     def _pending_shortcut_artwork(self, account_id: int) -> list[dict[str, Any]]:
@@ -767,26 +786,63 @@ class Plugin:
             return result
         return {"stage": "preparing"}
 
+    def _queue_shortcut_removals(self, home: Path, state: dict, active_account: int | None,
+                                 package: str | None = None) -> list[int]:
+        accounts = {int(key) for key in state["accounts"]}
+        if active_account is not None:
+            accounts.add(active_account)
+        try:
+            accounts.update(known_accounts(home))
+        except (OSError, RuntimeError, ValueError):
+            pass
+        active_ids = []
+        for account_id in sorted(accounts):
+            history = self._account_state(home, state, account_id)
+            owners = {app_id: key for key, app_id in history["shortcuts"].items() if key not in history["removedShortcuts"]}
+            try:
+                path = self._shortcuts_path(home, account_id)
+                owners.update(shortcut_owners(path, self._launcher()))
+            except (OSError, RuntimeError, ValueError):
+                pass
+            queued = {str(app_id): key for app_id, key in owners.items() if key is not None
+                      and key not in history["removedShortcuts"] and (package is None or key == package)}
+            history["pendingRemovals"].update(queued)
+            if account_id == active_account:
+                active_ids = sorted(map(int, queued))
+            if package is None:
+                state["accounts"][str(account_id)] = {**StateStore.shortcut_defaults(),
+                                                       "pendingRemovals": history["pendingRemovals"]}
+            else:
+                self._forget_app_history(history, package)
+        if "legacy" in state:
+            if package is None:
+                state.pop("legacy")
+            else:
+                self._forget_app_history(state["legacy"], package)
+        return active_ids
+
+    @staticmethod
+    def _forget_app_history(history: dict, package: str) -> None:
+        history["shortcuts"].pop(package, None)
+        for key in ("observedApps", "pendingApps", "removedShortcuts"):
+            history[key] = [item for item in history[key] if item != package]
+
     def _remove_installed_package(self, package: str, account_id: int | None = None) -> int | None:
         self._set_package_progress("uninstall", package, "checking")
         if package not in self._removable_packages(allow_cached=False):
             raise RuntimeError("APP_NOT_REMOVABLE")
         _, _, home = self._user()
-        shortcut_id = self._shortcut_ids(home, account_id).get(package)
         self._set_package_progress("uninstall", package, "removing")
         output = self._run(["waydroid", "shell", "--", "pm", "uninstall", package], timeout=60)
         self._check_package_result(output)
-        (home / ".local/share/applications" / f"waydroid.{package}.desktop").unlink(missing_ok=True)
-        with self._edit_state(home) as state:
-            state["removableApps"] = [item for item in state["removableApps"] if item != package]
-            histories = list(state["accounts"].values())
-            if "legacy" in state:
-                histories.append(state["legacy"])
-            for history in histories:
-                history["shortcuts"].pop(package, None)
-                for key in ("observedApps", "pendingApps", "removedShortcuts"):
-                    history[key] = [item for item in history[key] if item != package]
-        return shortcut_id
+        with self._state_lock:
+            try:
+                (home / ".local/share/applications" / f"waydroid.{package}.desktop").unlink(missing_ok=True)
+            finally:
+                with self._edit_state(home) as state:
+                    state["removableApps"] = [item for item in state["removableApps"] if item != package]
+                    queued = self._queue_shortcut_removals(home, state, account_id, package)
+        return next(iter(queued), None)
 
     async def uninstall_app(self, package: str, account_id: int | None = None) -> int | None:
         async with self._package_lock:
@@ -799,7 +855,6 @@ class Plugin:
         data_paths = (WAYDROID_DIR, user_data)
         for path in (*data_paths, applications):
             require_unredirected(path)
-        shortcuts = sorted(set(self._shortcut_ids(home, account_id).values()))
         self._run(["systemctl", "stop", SERVICE])
         require_unmounted(data_paths)
         self._set_image_progress("deleting", None)
@@ -807,12 +862,12 @@ class Plugin:
             require_unredirected(path)
             if path.exists():
                 shutil.rmtree(path)
+        with self._edit_state(home) as state:
+            state["removableApps"] = []
+            shortcuts = self._queue_shortcut_removals(home, state, account_id)
         require_unredirected(applications)
         for entry in applications.glob("waydroid.*.desktop"):
             entry.unlink(missing_ok=True)
-        with self._state_lock:
-            store = StateStore(home)
-            store.save({**store.defaults(), "artwork": store.load()["artwork"]})
         decky.logger.info("Removed Waydroid data for %s", user)
         return shortcuts
 

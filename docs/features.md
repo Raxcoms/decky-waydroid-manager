@@ -22,6 +22,8 @@ The plugin generates matching portrait, landscape, and header artwork from the A
 
 The progress dialog follows the operation while Android starts in the background if needed. Per-install verification approval is supported on the tested Android 13 GAPPS image.
 
+If Steam cannot remove a shortcut right away after an uninstall or image removal, Waydroid Manager retries the shortcut cleanup in the background. For another Steam account, cleanup resumes when you sign in to that account.
+
 ## Adjust a Steam launch
 
 Close the running Android shortcut before opening another. Waydroid uses one Android session at a time.

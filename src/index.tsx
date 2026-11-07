@@ -1,5 +1,5 @@
 import { getStatus, listApps, installGapps, startService, stopService, restartService, uninstallApp, getWaydroidShortcut, getAppShortcut, removeShortcutRecord, setAutoAddApps, pendingAutoShortcuts, legacyShortcuts, removeWaydroidImage, installPackage, type Status, type AndroidApp } from "./backend";
-import { addToSteam, removeFromSteam, launchSteamShortcut, requireSteamAccount, updateSteamShortcut } from "./steam";
+import { addToSteam, removeFromSteam, launchSteamShortcut, requireSteamAccount, retrySteamShortcutRemovals, updateSteamShortcut } from "./steam";
 import { definePlugin, FileSelectionType, openFilePicker, toaster, useQuickAccessVisible } from "@decky/api";
 import {
   ButtonItem,
@@ -60,11 +60,21 @@ function reportError(error: unknown, setMessage?: (message: string | null) => vo
     WAYDROID_CLEANUP_FAILED: "packageCleanupFailed",
     XAPK_TOO_MANY_APKS: "xapkTooManyApks", PACKAGE_NO_SPACE: "packageNoSpace",
     IMAGE_APP_EXPORT_TIMEOUT: "imageAppExportTimeout",
+    STEAM_SHORTCUT_CLEANUP_PENDING: "steamCleanupPending",
   };
   if (messages[message]) message = t(messages[message]);
   setMessage?.(message);
   toast(t("operationFailed"), message);
   return message;
+}
+
+async function finishSteamCleanup(accountId: number) {
+  try {
+    if (await retrySteamShortcutRemovals(accountId)) return;
+  } catch (error) {
+    console.warn("Waydroid Steam shortcut cleanup unavailable", error);
+  }
+  toast(t("waydroid"), t("steamCleanupPending"));
 }
 
 function revealPanelTop(event: Event) {
@@ -96,6 +106,12 @@ function watchAutoShortcuts() {
     }
     busy = true;
     try {
+      try {
+        await retrySteamShortcutRemovals(accountId);
+      } catch (error) {
+        console.warn("Waydroid Steam shortcut cleanup unavailable", error);
+      }
+      if (disposed || currentSteamAccount() !== accountId) return;
       const live = liveShortcutIds();
       for (const shortcut of await legacyShortcuts(accountId)) {
         if (disposed || currentSteamAccount() !== accountId) return;
@@ -208,8 +224,8 @@ function AppRow({ app, accountId, isLast, rowRef, setShortcutId, onUninstalled, 
             <MenuItem onSelected={() => openModal(
               <PackageOperationModal name={app.name} operation="uninstall" target={app.package} onError={(error) => reportError(error, setMessage)} perform={async () => {
                 const shortcutId = await uninstallApp(app.package, accountId);
-                if (shortcutId && accountId) await removeFromSteam(shortcutId, accountId);
                 onUninstalled();
+                if (shortcutId && accountId) await finishSteamCleanup(accountId);
                 setMessage(null);
                 toast(app.name, t("appUninstalled"));
               }} />,
@@ -337,7 +353,7 @@ function Content() {
     const accountId = currentSteamAccount();
     const shortcuts = await removeWaydroidImage(accountId);
     if (shortcuts.length) showLibraryProgress();
-    if (accountId) for (const id of shortcuts) await removeFromSteam(id, accountId);
+    if (accountId && shortcuts.length) await finishSteamCleanup(accountId);
     await refresh();
     setMessage(null);
     toast(t("waydroid"), t("imageRemoved"));

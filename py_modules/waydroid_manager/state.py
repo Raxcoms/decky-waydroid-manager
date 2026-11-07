@@ -18,7 +18,8 @@ class StateStore:
 
     @staticmethod
     def shortcut_defaults() -> dict:
-        return {"autoAddApps": False, "observedApps": [], "pendingApps": [], "shortcuts": {}, "removedShortcuts": []}
+        return {"autoAddApps": False, "observedApps": [], "pendingApps": [], "shortcuts": {},
+                "removedShortcuts": [], "pendingRemovals": {}}
 
     @staticmethod
     def account(state: dict, account_id: int) -> dict:
@@ -29,6 +30,10 @@ class StateStore:
         return sorted({value for value in values if isinstance(value, str)}) if isinstance(values, list) else []
 
     @staticmethod
+    def _valid_id_key(key: str) -> bool:
+        return 0 < len(key) <= 10 and key.isascii() and key.isdecimal() and 0 < int(key) <= 0xFFFFFFFF and str(int(key)) == key
+
+    @staticmethod
     def _shortcut_state(saved: dict) -> dict:
         state = StateStore.shortcut_defaults()
         state["autoAddApps"] = saved.get("autoAddApps") is True
@@ -37,6 +42,9 @@ class StateStore:
         if isinstance(saved.get("shortcuts"), dict):
             state["shortcuts"] = {key: value for key, value in saved["shortcuts"].items()
                                   if isinstance(key, str) and type(value) is int and 0 < value <= 0xFFFFFFFF}
+        if isinstance(saved.get("pendingRemovals"), dict):
+            state["pendingRemovals"] = {key: value for key, value in saved["pendingRemovals"].items()
+                                        if StateStore._valid_id_key(key) and isinstance(value, str)}
         return state
 
     def load(self) -> dict:
@@ -54,8 +62,7 @@ class StateStore:
         accounts = saved.get("accounts")
         if isinstance(accounts, dict):
             state["accounts"] = {key: self._shortcut_state(value) for key, value in accounts.items()
-                                 if key.isascii() and key.isdecimal() and 0 < len(key) <= 10
-                                 and 0 < int(key) <= 0xFFFFFFFF and str(int(key)) == key and isinstance(value, dict)}
+                                 if self._valid_id_key(key) and isinstance(value, dict)}
         legacy = saved.get("legacy", saved if accounts is None else {})
         if isinstance(legacy, dict):
             history = self._shortcut_state(legacy)

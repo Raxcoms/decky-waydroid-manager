@@ -65,6 +65,20 @@ def shortcut_key(options: str) -> str | None:
     return None
 
 
+def shortcut_owners(path: Path, launcher: Path) -> dict[int, str | None]:
+    entries = {}
+    launcher = launcher.resolve()
+    for _, (_, entry) in read_shortcuts(path).items():
+        fields = {key.casefold(): value for key, value in entry.items()}
+        app_id = fields.get("appid", (2, 0))[1]
+        if not isinstance(app_id, int) or not app_id:
+            continue
+        executable = str(fields.get("exe", (1, ""))[1]).strip('"')
+        options = str(fields.get("launchoptions", (1, ""))[1])
+        entries[app_id & 0xFFFFFFFF] = shortcut_key(options) if Path(executable).resolve() == launcher else None
+    return entries
+
+
 def migrated_launch_options(options: str) -> str | None:
     # Older shortcuts used Armada's wrapper before running our launcher.
     try:
@@ -90,7 +104,7 @@ def known_accounts(home: Path) -> set[int]:
         login = root / "config/loginusers.vdf"
         if login.is_file():
             accounts.update(int(steam_id) & 0xFFFFFFFF for steam_id in read_login_users(login))
-    return accounts
+    return {account_id for account_id in accounts if 0 < account_id <= 0xFFFFFFFF}
 
 
 def shortcuts_path(home: Path, account_id: int | None = None) -> Path:

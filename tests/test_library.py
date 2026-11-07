@@ -279,6 +279,57 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(self.plugin._remove_installed_package("example.app", 1), 123)
         self.assertFalse(entry.exists())
 
+    def test_uninstall_queues_each_accounts_shortcut_and_survives_backend_reload(self):
+        paths = {1: self.home / "first.vdf", 2: self.home / "second.vdf"}
+        for account, app_id in ((1, 123), (2, 456)):
+            write_shortcuts(paths[account], {"0": (0, {
+                "exe": (1, str(self.plugin._launcher())), "appid": (2, app_id),
+                "LaunchOptions": (1, "app example.app"),
+            })})
+        self.plugin._shortcuts_path = lambda home, account_id: paths[account_id]
+        self.plugin._load_state = lambda home: backend.StateStore(home).load()
+        self.plugin._save_state = lambda home, state: backend.StateStore(home).save(state)
+        self.plugin._run = lambda args, **kwargs: "package:example.app" if "list" in args else "Success"
+        with patch.object(backend, "known_accounts", return_value={1, 2}), patch("waydroid_manager.state.os.chown", create=True):
+            self.assertEqual(self.plugin._remove_installed_package("example.app", 1), 123)
+            fresh = backend.Plugin()
+            fresh._user = self.plugin._user
+            fresh._shortcuts_path = self.plugin._shortcuts_path
+            self.assertEqual(fresh._pending_shortcut_removals(1, None), {"ids": [], "waiting": True})
+            self.assertEqual(fresh._pending_shortcut_removals(1, [123]), {"ids": [123], "waiting": False})
+            self.assertEqual(fresh._pending_shortcut_removals(1, [123]), {"ids": [123], "waiting": False})
+            self.assertEqual(fresh._pending_shortcut_removals(1, []), {"ids": [], "waiting": True})
+            write_shortcuts(paths[1], {})
+            self.assertEqual(fresh._pending_shortcut_removals(1, []), {"ids": [], "waiting": False})
+            self.assertEqual(fresh._pending_shortcut_removals(2, [456]), {"ids": [456], "waiting": False})
+            write_shortcuts(paths[2], {"0": (0, {"exe": (1, "/usr/bin/other"), "appid": (2, 456)})})
+            self.assertEqual(fresh._pending_shortcut_removals(2, [456]), {"ids": [], "waiting": False})
+
+    def test_reinstall_waits_for_old_shortcut_cleanup_before_automatic_add(self):
+        self.history.update({"autoAddApps": True, "shortcuts": {}, "pendingRemovals": {"123": "example.app"}})
+        self.plugin._initialized = lambda: False
+        apps = [{"package": "example.app", "name": "Example", "iconPath": "", "shortcutId": 123}]
+        self.plugin._desktop_entries = lambda **kwargs: apps
+        self.assertEqual(self.plugin._pending_auto_shortcuts(1, [123]), [])
+        self.assertEqual(self.history["pendingApps"], ["example.app"])
+        self.assertEqual(self.plugin._pending_shortcut_removals(1, []), {"ids": [], "waiting": False})
+        apps[0]["shortcutId"] = None
+        self.assertEqual([item["key"] for item in self.plugin._pending_auto_shortcuts(1, [])], ["example.app"])
+
+    def test_image_removal_preserves_queued_cleanup_after_resetting_preferences(self):
+        self.history["autoAddApps"] = True
+        self.history["pendingRemovals"]["234"] = "example.older"
+        self.state["removableApps"] = ["example.app"]
+        self.plugin._run = lambda *args, **kwargs: ""
+        image = self.home.resolve() / "image"
+        image.mkdir()
+        with patch.object(backend, "WAYDROID_DIR", image), patch.object(backend, "require_unmounted"), patch.object(backend.decky, "logger", create=True):
+            self.assertEqual(self.plugin._remove_image(1), [123])
+        self.assertFalse(image.exists())
+        self.assertFalse(self.history["autoAddApps"])
+        self.assertEqual(self.state["removableApps"], [])
+        self.assertEqual(self.history["pendingRemovals"], {"123": "example.app", "234": "example.older"})
+
     def test_apk_install_rejects_android_failure_and_cleans_staging(self):
         apk = self.home / "app.apk"
         with zipfile.ZipFile(apk, "w") as archive:
