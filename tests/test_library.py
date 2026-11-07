@@ -67,6 +67,13 @@ class LibraryTests(unittest.TestCase):
                 self.plugin._install_gapps()
             run.assert_called_once()
 
+    def test_image_setup_preserves_existing_android_language_preferences(self):
+        (self.home / ".local/share/waydroid/data").mkdir(parents=True)
+        self.plugin._package_session = lambda progress: self.fail("Setup booted existing Android data")
+        with patch.object(self.plugin, "_install_gapps") as initialize:
+            self.assertTrue(self.plugin._initialize_image("pt-BR"))
+            initialize.assert_called_once()
+
     def test_install_confirmation_replies_require_current_target_token_and_one_boolean_decision(self):
         event, decision = threading.Event(), []
         self.plugin._install_confirmation = ("app.apk", "current", event, decision)

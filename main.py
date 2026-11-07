@@ -6,6 +6,7 @@ import pwd
 import re
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -478,11 +479,47 @@ class Plugin:
         if not self._initialized():
             raise RuntimeError(output or "Waydroid did not finish initializing its image")
 
-    async def install_gapps(self) -> None:
+    def _initialize_image(self, locale: str | None) -> bool:
+        _, _, home = self._user()
+        data = home / ".local/share/waydroid/data"
+        has_user_data = data.exists()
+        self._install_gapps()
+        if has_user_data or not locale:
+            return True
+
+        tags = locale if locale.lower().split("-")[0] == "en" else f"{locale},en-US"
+        helper = Path(decky.DECKY_PLUGIN_DIR) / "bin/waydroid-verifier.dex"
+        try:
+            with self._package_session(lambda stage: self._set_image_progress(stage, None)):
+                self._set_image_progress("language", None)
+                staging = data / "local/tmp"
+                with tempfile.TemporaryDirectory(prefix="waydroid-manager-", dir=staging) as temporary:
+                    directory = Path(temporary)
+                    directory.chmod(0o755)
+                    dex = directory / "locale.dex"
+                    shutil.copyfile(helper, dex)
+                    dex.chmod(0o644)
+                    self._run([
+                        "waydroid", "shell", "--", "env", f"CLASSPATH=/data/local/tmp/{directory.name}/{dex.name}",
+                        "/system/bin/app_process", "/system/bin", "waydroid.manager.SetupLocale", tags,
+                    ], timeout=15)
+                    for _ in range(10):
+                        saved = self._run(["waydroid", "shell", "--", "settings", "--user", "0", "get", "system", "system_locales"])
+                        if saved.casefold() == tags.casefold():
+                            return True
+                        time.sleep(0.5)
+                    raise RuntimeError("Android did not save the requested language list")
+        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            decky.logger.warning("Initial Android language setup failed: %s", error)
+            return False
+
+    async def install_gapps(self, locale: str | None = None) -> bool:
+        if locale is not None and (not isinstance(locale, str) or not re.fullmatch(r"[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,4}", locale)):
+            locale = "en-US"
         async with self._package_lock:
             self._set_image_progress("preparing", None)
             try:
-                await asyncio.to_thread(self._install_gapps)
+                return await asyncio.to_thread(self._initialize_image, locale)
             finally:
                 self._image_progress = None
 

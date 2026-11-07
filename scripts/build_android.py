@@ -20,9 +20,10 @@ def build() -> Path:
     output = ROOT / "out/android-build"
     dex = output / "dex"
     dex.mkdir(parents=True, exist_ok=True)
-    subprocess.run([javac, "--release", "11", "-d", str(output), str(ROOT / "android/InstallVerifier.java")], check=True)
+    sources = sorted((ROOT / "android").glob("*.java"))
+    subprocess.run([javac, "--release", "11", "-d", str(output), *map(str, sources)], check=True)
     subprocess.run([str(d8), "--min-api", "26", "--lib", str(library), "--output", str(dex),
-                    str(output / "waydroid/manager/InstallVerifier.class")], check=True)
+                    *(str(output / "waydroid/manager" / (source.stem + ".class")) for source in sources)], check=True)
     target = ROOT / "bin/waydroid-verifier.dex"
     shutil.copyfile(dex / "classes.dex", target)
     return target

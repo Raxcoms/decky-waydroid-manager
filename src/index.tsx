@@ -316,10 +316,11 @@ function Content() {
     for (const id of await removeWaydroidImage()) await removeFromSteam(id);
   };
   const initializeWaydroid = async () => {
-    await installGapps();
+    const languageSet = await installGapps(navigator.language);
     await refresh();
     setMessage(null);
     toast(t("waydroid"), t("gappsInstalled"));
+    if (!languageSet) toast(t("waydroid"), t("imageLanguageUnavailable"));
   };
   const launchFullWaydroid = async () => {
     if (!status?.waydroidShortcutId) {

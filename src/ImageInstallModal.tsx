@@ -53,9 +53,13 @@ export function ImageInstallModal({ perform, onError, closeModal }: Props) {
   };
 
   const percent = progress?.percent ?? undefined;
-  const label = progress?.stage === "downloading"
-    ? percent === undefined ? t("imageDownloading") : t("imageDownloadPercent", { percent })
-    : progress?.stage === "finalizing" ? t("imageFinalizing") : t("imagePreparing");
+  const stageLabels = {
+    preparing: "imagePreparing", downloading: "imageDownloading", finalizing: "imageFinalizing",
+    starting: "packageStarting", booting: "packageBooting", language: "imageLanguage", cleaning: "packageCleaning",
+  } as const;
+  const label = progress?.stage === "downloading" && percent !== undefined
+    ? t("imageDownloadPercent", { percent })
+    : t(stageLabels[progress?.stage ?? "preparing"]);
   return <OperationDialog
     title={t("installGapps")}
     description={t("installGappsDescription")}
