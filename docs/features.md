@@ -2,7 +2,7 @@
 
 ## Image management
 
-- Initializes the GAPPS Waydroid image and shows download and setup progress in the status panel.
+- Initializes the GAPPS Waydroid image and shows download and setup progress in the installation dialog.
 - Shows whether Waydroid is installed in the Waydroid status section, with container service state in the danger zone.
 - Removes `/var/lib/waydroid`, user Waydroid data, generated Waydroid desktop entries and Steam shortcuts, and stops the container service only after confirmation. Its boot enablement is preserved.
 

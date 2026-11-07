@@ -1,7 +1,8 @@
 import { confirmPackageInstall, getPackageProgress } from "./backend";
-import { ConfirmModal, DialogBody, DialogBodyText, DialogButtonPrimary, DialogButtonSecondary, DialogFooter, DialogHeader, Focusable, ModalRoot, ProgressBar, showModal } from "@decky/ui";
+import { ConfirmModal, showModal } from "@decky/ui";
 import { useEffect, useRef, useState } from "react";
 import { t } from "./i18n";
+import { OperationDialog } from "./OperationDialog";
 
 const phases = {
   preparing: [5, "packagePreparing"],
@@ -103,28 +104,15 @@ export function PackageOperationModal({ name, operation, target, perform, autoSt
   useEffect(() => { if (autoStart) void start(); }, [autoStart]);
 
   return (
-    <ModalRoot
-      bDisableBackgroundDismiss={busy}
-      bHideCloseIcon={busy}
-      bOKDisabled={busy}
-      bCancelDisabled={busy}
-      closeModal={closeIfIdle}
-      onCancel={closeIfIdle}
-    >
-      <DialogHeader>{operation === "install" ? t("installPackageTitle", { name }) : t("uninstallApp", { name })}</DialogHeader>
-      <DialogBody>
-        {operation === "uninstall" && <DialogBodyText>{t("uninstallAppDescription")}</DialogBodyText>}
-        {error && <div role="alert"><DialogBodyText>{error}</DialogBodyText></div>}
-        {busy && <div aria-live="polite"><DialogBodyText>{t(phases[stage][1])}</DialogBodyText><ProgressBar nProgress={phases[stage][0]} /></div>}
-      </DialogBody>
-      <DialogFooter>
-        <Focusable className="DialogTwoColLayout _DialogColLayout" flow-children="row">
-          <DialogButtonPrimary disabled={busy} onClick={(event) => { event.preventDefault(); void start(); }}>
-            {busy ? t(operation === "install" ? "installing" : "uninstalling") : t(operation === "install" ? "install" : "uninstall")}
-          </DialogButtonPrimary>
-          <DialogButtonSecondary disabled={busy} onClick={(event) => { event.preventDefault(); closeIfIdle(); }}>{t("cancel")}</DialogButtonSecondary>
-        </Focusable>
-      </DialogFooter>
-    </ModalRoot>
+    <OperationDialog
+      title={operation === "install" ? t("installPackageTitle", { name }) : t("uninstallApp", { name })}
+      description={operation === "uninstall" ? t("uninstallAppDescription") : undefined}
+      action={busy ? t(operation === "install" ? "installing" : "uninstalling") : t(operation === "install" ? "install" : "uninstall")}
+      busy={busy}
+      error={error}
+      progress={{ label: t(phases[stage][1]), percent: phases[stage][0] }}
+      onStart={() => void start()}
+      onClose={closeIfIdle}
+    />
   );
 }

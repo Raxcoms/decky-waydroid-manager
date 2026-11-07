@@ -1,4 +1,4 @@
-import { getStatus, listApps, installGapps, getImageProgress, startService, stopService, restartService, uninstallApp, getWaydroidShortcut, getAppShortcut, saveShortcutRecord, removeShortcutRecord, setAutoAddApps, pendingAutoShortcuts, legacyShortcuts, removeWaydroidImage, installPackage, type Status, type AndroidApp, type ImageProgress } from "./backend";
+import { getStatus, listApps, installGapps, startService, stopService, restartService, uninstallApp, getWaydroidShortcut, getAppShortcut, saveShortcutRecord, removeShortcutRecord, setAutoAddApps, pendingAutoShortcuts, legacyShortcuts, removeWaydroidImage, installPackage, type Status, type AndroidApp } from "./backend";
 import { addToSteam, removeFromSteam, launchSteamShortcut, updateSteamShortcut } from "./steam";
 import { definePlugin, FileSelectionType, openFilePicker, toaster, useQuickAccessVisible } from "@decky/api";
 import {
@@ -10,7 +10,6 @@ import {
   MenuItem,
   PanelSection,
   PanelSectionRow,
-  ProgressBar,
   ToggleField,
   showContextMenu,
   showModal,
@@ -24,6 +23,7 @@ import { requestArtworkUpdate, watchShortcutArtwork } from "./artwork";
 import { operationError } from "./errors";
 import { liveShortcutIds } from "./library";
 import { PackageOperationModal } from "./PackageOperationModal";
+import { ImageInstallModal } from "./ImageInstallModal";
 import { AppListState } from "./panelState";
 
 function AndroidRobotIcon() {
@@ -154,7 +154,7 @@ function openModal(modal: ReactElement) {
   }
 }
 
-function confirm(title: string, description: string, onConfirm: () => void | Promise<void>) {
+function confirm(title: string, description: string, onConfirm: () => Promise<void>) {
   openModal(
     <ConfirmModal strTitle={title} strDescription={description} onOK={onConfirm} />,
   );
@@ -240,8 +240,6 @@ function Content() {
   const [status, setStatusState] = useState<Status | null>(cachedStatus);
   const [apps, setAppsState] = useState<AndroidApp[]>(cachedApps);
   const [message, setMessage] = useState<string | null>(null);
-  const [initializing, setInitializing] = useState(false);
-  const [imageProgress, setImageProgress] = useState<ImageProgress | null>(null);
   const [visibleApps, setVisibleAppsState] = useState(appListState.visible);
   const setVisibleApps = (next: number | ((current: number) => number)) => {
     setVisibleAppsState((current) => {
@@ -284,27 +282,6 @@ function Content() {
   }, [refresh]);
 
   useEffect(() => {
-    if (!quickAccessVisible || (status?.initialized && !initializing && !imageProgress)) return;
-    let disposed = false;
-    let polling = false;
-    const poll = async () => {
-      if (polling) return;
-      polling = true;
-      try {
-        const progress = await getImageProgress();
-        if (!disposed) setImageProgress(progress);
-      } catch {
-        // The operation itself reports errors.
-      } finally {
-        polling = false;
-      }
-    };
-    void poll();
-    const timer = window.setInterval(() => void poll(), 1000);
-    return () => { disposed = true; window.clearInterval(timer); };
-  }, [quickAccessVisible, status?.initialized, initializing, Boolean(imageProgress)]);
-
-  useEffect(() => {
     setVisibleApps((current) => Math.min(Math.max(current, 10), apps.length));
   }, [apps.length]);
 
@@ -339,19 +316,11 @@ function Content() {
     for (const id of await removeWaydroidImage()) await removeFromSteam(id);
   };
   const initializeWaydroid = async () => {
+    await installGapps();
+    await refresh();
     setMessage(null);
-    setInitializing(true);
-    try {
-      await run(installGapps, refresh, setMessage, [t("waydroid"), t("gappsInstalled")])();
-    } finally {
-      setInitializing(false);
-    }
+    toast(t("waydroid"), t("gappsInstalled"));
   };
-  const imageBusy = initializing || imageProgress !== null;
-  const imagePercent = imageProgress?.percent ?? undefined;
-  const imageLabel = imageProgress?.stage === "downloading"
-    ? imagePercent === undefined ? t("imageDownloading") : t("imageDownloadPercent", { percent: imagePercent })
-    : imageProgress?.stage === "finalizing" ? t("imageFinalizing") : t("imagePreparing");
   const launchFullWaydroid = async () => {
     if (!status?.waydroidShortcutId) {
       throw new Error(t("shortcutStateUnavailable"));
@@ -371,26 +340,21 @@ function Content() {
             <Field label={t("gamescopeUnavailable")} description={t("gamescopeUnavailableDescription")} />
           </PanelSectionRow>
         )}
-        {(!status?.initialized || imageBusy) && (
+        {!status?.initialized && (
           <PanelSectionRow>
             <ButtonItem
               layout="below"
               bottomSeparator="none"
-              disabled={imageBusy}
-              onClick={() => confirm(t("installGapps"), t("installGappsDescription"), () => { void initializeWaydroid(); })}
+              onClick={() => openModal(<ImageInstallModal
+                perform={initializeWaydroid}
+                onError={(error) => reportError(error, setMessage)}
+              />)}
             >
-              {t(imageBusy ? "installing" : "installWaydroid")}
+              {t("installWaydroid")}
             </ButtonItem>
           </PanelSectionRow>
         )}
-        {imageBusy && (
-          <PanelSectionRow>
-            <Field description={imageLabel} bottomSeparator="none">
-              <ProgressBar indeterminate={imagePercent === undefined} nProgress={imagePercent} focusable={false} />
-            </Field>
-          </PanelSectionRow>
-        )}
-        {status?.initialized && !imageBusy && (
+        {status?.initialized && (
           <>
             {status.waydroidShortcutId && (
               <PanelSectionRow>
@@ -411,7 +375,7 @@ function Content() {
       </PanelSection>
       </Focusable>
 
-      {status?.initialized && !imageBusy && (
+      {status?.initialized && (
         <PanelSection title={t("androidApps", { count: apps.length })}>
           <PanelSectionRow>
             <ButtonItem
@@ -474,7 +438,7 @@ function Content() {
         </PanelSection>
       )}
 
-      {status?.initialized && !imageBusy && (
+      {status?.initialized && (
         <PanelSection title={t("dangerZone")}>
           <PanelSectionRow>
             <Field label={t("service", { state: status.serviceRunning ? t("running") : t("stopped") })} />
