@@ -44,4 +44,6 @@ python3 scripts/check_package.py out/waydroid-manager
 
 Use Node 22 or newer and the pnpm version declared in `package.json`. Building the bundled verification Dex also requires JDK 17 or newer, Android SDK build-tools 35.0.0 and platform android-35; set `JAVA_HOME` and `ANDROID_HOME` to those installations. These are build dependencies only. Python runtime helpers require Linux and Python 3.10 or newer. Linux-only socket/device tests are skipped on Windows; run the packaged-backend import check on Linux. The build produces `dist/index.js` and `bin/waydroid-verifier.dex`; the package command stages `out/waydroid-manager` into an empty output directory without Python caches. GitHub Actions builds both helpers, runs the checks and uploads the installable plugin directory directly, including for cleanup branches.
 
+CI artifacts are named `waydroid-manager-<commit>` using the checked-out revision's short SHA. The plugin directory inside the artifact remains `waydroid-manager` for Decky installation.
+
 The direct Wayland path has been tested on Thor with app presentation, direct touch, controller input, repeat launches, Android 13 QAM cap changes, and per-game resolution overrides. Extended gameplay, other devices and rotation need broader validation. Native Gamescope mouse-cursor support remains a platform limitation; see the validation and review notes.
