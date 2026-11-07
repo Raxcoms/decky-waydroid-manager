@@ -9,3 +9,4 @@ bin/*.dex
 *.xapk
 *.apk.part
 *.xapk.part
+/.local-docs/
