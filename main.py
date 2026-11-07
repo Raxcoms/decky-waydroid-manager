@@ -924,4 +924,4 @@ class Plugin:
                 if str(error) != self._metrics_error:
                     decky.logger.warning("GPU metrics unavailable: %s", error)
                 self._metrics_error = str(error)
-            await asyncio.to_thread(self._frame_limiter.sync, fps or 0, launch)
+            await asyncio.to_thread(self._frame_limiter.sync, fps, launch)
