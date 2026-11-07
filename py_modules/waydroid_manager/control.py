@@ -11,7 +11,8 @@ from typing import Awaitable, Callable
 
 
 def control_path(uid: int) -> Path:
-    return Path(f"/run/user/{uid}/waydroid-manager-control.sock")
+    # Decky can load before logind creates the user's runtime directory.
+    return Path(f"/run/waydroid-manager-control-{uid}.sock")
 
 
 def request_service_start(path: Path) -> None:
