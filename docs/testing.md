@@ -60,7 +60,7 @@ Use the exact CI artifact for the branch revision. Its name contains the short c
 
 Test both paced and rapid controller navigation using Steam's real navigation context:
 
-1. Expand the list beyond ten items where available. Confirm alphabetical ordering and guarded batches of ten, including the final smaller batch.
+1. Expand the list beyond ten items where available. Confirm alphabetical order, batches of up to ten, and focus on the first newly revealed app. Press Down and check that focus continues to the next app.
 2. Open and close an app menu, file picker, confirmation and nested verification prompt. Check the originating row retains focus and the expanded list remains expanded.
 3. Add/remove a shortcut without remounting the panel or collapsing the list.
 4. Scroll to the final control and navigate upward. The viewport must reach the first section before focus leaves for Decky's back button. Check the full first field and final control remain visible and there is no horizontal overflow.
