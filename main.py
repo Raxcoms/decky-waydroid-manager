@@ -1,6 +1,5 @@
 import base64
 import asyncio
-import configparser
 import os
 import pwd
 import re
@@ -16,6 +15,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import decky
+from waydroid_manager.apps import PACKAGE_RE, app_exports
 from waydroid_manager.frame_limit import FrameLimiter
 from waydroid_manager.proc import active_launch, clean_env, steam_wayland_socket
 from waydroid_manager.artwork import ARTWORK_TYPES, ARTWORK_VERSION, artwork_filename, artwork_updates, prune_artwork
@@ -23,13 +23,12 @@ from waydroid_manager.metrics import GpuMetrics
 from waydroid_manager.packages import apk_members, stage_apks, install_apks, check_result
 from waydroid_manager.verification import InstallCancelled, InstallVerification, commit_install
 from waydroid_manager.steam import read_shortcuts, shortcuts_path, shortcut_key, migrated_launch_options
-from waydroid_manager.container import CONFIG_DIR, SERVICE
+from waydroid_manager.container import CONFIG_DIR, SERVICE, container_pid
 from waydroid_manager.image import launcher_packages, require_unmounted, require_unredirected, run_init
 from waydroid_manager.control import ServiceControl, control_path
 from waydroid_manager.state import StateStore
 
 
-PACKAGE_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 WAYDROID_DIR = CONFIG_DIR
 MAX_ICON_BYTES = 2 * 1024 * 1024
 WAYDROID_SHORTCUT_KEY = "waydroid"
@@ -132,12 +131,15 @@ class Plugin:
         try:
             icon = Path(value).resolve(strict=True)
             icon.relative_to(home / ".local/share/waydroid/data/icons")
+            if icon.suffix.lower() != ".png" or not icon.is_file():
+                return ""
+            with icon.open("rb") as file:
+                content = file.read(MAX_ICON_BYTES + 1)
         except (OSError, ValueError):
             return ""
-
-        if icon.suffix.lower() != ".png" or icon.stat().st_size > MAX_ICON_BYTES:
+        if len(content) > MAX_ICON_BYTES:
             return ""
-        return "data:image/png;base64," + base64.b64encode(icon.read_bytes()).decode("ascii")
+        return "data:image/png;base64," + base64.b64encode(content).decode("ascii")
 
     def _load_state(self, home: Path) -> dict[str, Any]:
         return StateStore(home).load()
@@ -197,32 +199,19 @@ class Plugin:
             raise RuntimeError("WAYDROID_NOT_RUNNING")
         return set(self._load_state(home).get("removableApps", []))
 
-    def _desktop_entries(self, removable_packages: set[str] | None = None) -> list[dict[str, Any]]:
+    def _desktop_entries(self, removable_packages: set[str] | None = None, *,
+                         package: str | None = None, include_icons: bool = False) -> list[dict[str, Any]]:
         _, _, home = self._user()
-        directory = home / ".local/share/applications"
         shortcut_ids = self._shortcut_ids(home)
-        apps: list[dict[str, Any]] = []
-        for entry in sorted(directory.glob("waydroid.*.desktop")):
-            package = entry.stem.removeprefix("waydroid.")
-            if not PACKAGE_RE.fullmatch(package):
-                continue
-            parser = configparser.ConfigParser(interpolation=None)
-            try:
-                parser.read(entry, encoding="utf-8")
-                data = parser["Desktop Entry"]
-                if data.get("Exec") != f"waydroid app launch {package}":
-                    continue
-                icon_path = data.get("Icon", "")
-                apps.append({
-                    "name": data.get("Name", package),
-                    "package": package,
-                    "icon": self._icon_data_uri(icon_path, home),
-                    "iconPath": icon_path,
-                    "shortcutId": shortcut_ids.get(package),
-                    "removable": package in removable_packages if removable_packages is not None else False,
-                })
-            except (OSError, KeyError, configparser.Error):
-                continue
+        removable = removable_packages or set()
+        apps = [{
+            "name": app.name,
+            "package": app.package,
+            "icon": self._icon_data_uri(app.icon, home) if include_icons else "",
+            "iconPath": app.icon,
+            "shortcutId": shortcut_ids.get(app.package),
+            "removable": app.package in removable,
+        } for app in app_exports(home, package)]
         return sorted(apps, key=lambda app: app["name"].casefold())
 
     def _shortcuts_path(self, home: Path) -> Path:
@@ -246,7 +235,11 @@ class Plugin:
         return await asyncio.to_thread(self._status)
 
     def _list_apps(self) -> list[dict[str, Any]]:
-        return self._desktop_entries(self._removable_packages()) if self._initialized() else []
+        if not self._initialized():
+            return []
+        _, _, home = self._user()
+        removable = set(self._load_state(home).get("removableApps", []))
+        return self._desktop_entries(removable, include_icons=True)
 
     async def list_apps(self) -> list[dict[str, Any]]:
         return await asyncio.to_thread(self._list_apps)
@@ -295,7 +288,7 @@ class Plugin:
                 state["observedApps"] = sorted({*state["observedApps"], *(app["package"] for app in self._desktop_entries())})
 
     def _pending_auto_shortcuts(self, live_ids: list[int] | None = None) -> list[dict[str, str]]:
-        if self._initialized():
+        if self._initialized() and container_pid() is not None:
             self._removable_packages()
         _, _, home = self._user()
         with self._state_lock:
@@ -380,7 +373,7 @@ class Plugin:
     async def get_app_shortcut(self, package: str) -> dict[str, str]:
         if not PACKAGE_RE.fullmatch(package):
             raise RuntimeError("Invalid Android package name")
-        app = next((item for item in self._desktop_entries() if item["package"] == package), None)
+        app = next(iter(self._desktop_entries(package=package)), None)
         if not app:
             raise RuntimeError("Android app is no longer installed")
         return self._shortcut_details(app["name"], package, app["iconPath"])
@@ -405,7 +398,7 @@ class Plugin:
             raise RuntimeError("The Steam shortcut no longer exists")
         grid = self._shortcuts_path(home).parent / "grid"
         roles, clear_logo = artwork_updates(home, grid, app_id, self._load_state(home)["artwork"])
-        app = next((item for item in self._desktop_entries() if item["package"] == key), None)
+        app = next(iter(self._desktop_entries(package=key, include_icons=True)), None) if key != WAYDROID_SHORTCUT_KEY else None
         if not app and key != WAYDROID_SHORTCUT_KEY:
             roles = []
         return {"roles": roles, "clearLogo": clear_logo, "name": app["name"] if app else "Waydroid", "icon": app["icon"] if app else ""}

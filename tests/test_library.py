@@ -41,6 +41,19 @@ class LibraryTests(unittest.TestCase):
     def tearDown(self):
         self.directory.cleanup()
 
+    def test_app_list_uses_cached_package_metadata_and_ignores_invalid_exports(self):
+        applications = self.home / ".local/share/applications"
+        applications.mkdir(parents=True)
+        (applications / "waydroid.example.app.desktop").write_text(
+            "[Desktop Entry]\nName=Example\nExec=waydroid app launch example.app\n", encoding="utf-8")
+        (applications / "waydroid.example.bad.desktop").write_bytes(b"\xff")
+        self.state["removableApps"] = ["example.app"]
+        self.plugin._initialized = lambda: True
+        self.plugin._removable_packages = lambda: self.fail("Reading the app list started an Android command")
+        apps = self.plugin._list_apps()
+        self.assertEqual([app["package"] for app in apps], ["example.app"])
+        self.assertTrue(apps[0]["removable"])
+
     def test_gapps_initialization_retries_only_when_ota_channels_are_missing(self):
         with patch.object(backend, "WAYDROID_DIR", self.home):
             command = ["waydroid", "init", "--system_type", "GAPPS"]
