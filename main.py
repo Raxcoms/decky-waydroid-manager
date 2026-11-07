@@ -18,12 +18,12 @@ from typing import Any, Callable
 import decky
 from waydroid_manager.frame_limit import FrameLimiter
 from waydroid_manager.proc import active_launch, clean_env
-from waydroid_manager.artwork import ARTWORK_TYPES, apk_images, artwork_filename, missing_artwork, package_apks, persistent_apks, prune_artwork
+from waydroid_manager.artwork import ARTWORK_TYPES, ARTWORK_VERSION, artwork_filename, artwork_slots, prune_artwork
 from waydroid_manager.metrics import GpuMetrics
 from waydroid_manager.packages import apk_members, stage_apks, install_apks, check_result
 from waydroid_manager.verification import InstallCancelled, InstallVerification, commit_install
 from waydroid_manager.steam import read_shortcuts, shortcuts_path, shortcut_key, migrated_launch_options
-from waydroid_manager.container import CONFIG_DIR, SERVICE, container_pid
+from waydroid_manager.container import CONFIG_DIR, SERVICE
 from waydroid_manager.image import launcher_packages, run_init
 from waydroid_manager.control import ServiceControl, control_path
 from waydroid_manager.state import StateStore
@@ -417,44 +417,38 @@ class Plugin:
             raise RuntimeError("Android app is no longer installed")
         return self._shortcut_details(app["name"], package, app["iconPath"])
 
-    async def pending_shortcut_artwork(self) -> list[dict[str, Any]]:
+    def _pending_shortcut_artwork(self) -> list[dict[str, Any]]:
         _, _, home = self._user()
         try:
             grid = self._shortcuts_path(home).parent / "grid"
         except RuntimeError:
             return []
+        records = self._load_state(home)["artwork"]
         return [{"key": key, "appId": app_id} for key, app_id in self._shortcut_ids(home).items()
-                if missing_artwork(grid, app_id)]
+                if artwork_slots(home, grid, app_id, records)]
+
+    async def pending_shortcut_artwork(self) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(self._pending_shortcut_artwork)
 
     def _shortcut_artwork(self, key: str, app_id: int) -> dict[str, Any]:
         self._validate_shortcut_key(key)
         _, _, home = self._user()
         if self._shortcut_ids(home).get(key) != app_id:
             raise RuntimeError("The Steam shortcut no longer exists")
-        roles = missing_artwork(self._shortcuts_path(home).parent / "grid", app_id)
+        grid = self._shortcuts_path(home).parent / "grid"
+        roles = artwork_slots(home, grid, app_id, self._load_state(home)["artwork"])
         app = next((item for item in self._desktop_entries() if item["package"] == key), None)
-        result = {"roles": roles, "ready": True, "name": app["name"] if app else "Waydroid", "icon": app["icon"] if app else "", "images": []}
-        if not roles or not app:
-            return result
-        try:
-            apks = persistent_apks(home / ".local/share/waydroid/data", key)
-            if not apks and self._service_running():
-                pid = container_pid()
-                if pid:
-                    # Keep proc's root link intact for the container mount tree.
-                    root = Path("/proc") / str(pid) / "root"
-                    apks = package_apks(root, self._run(["waydroid", "shell", "--", "pm", "path", key]))
-            result["images"] = apk_images(apks)
-        except (OSError, ValueError, RuntimeError, zipfile.BadZipFile, subprocess.SubprocessError):
-            pass
-        return result
+        if not app and key != WAYDROID_SHORTCUT_KEY:
+            roles = []
+        return {"roles": roles, "name": app["name"] if app else "Waydroid", "icon": app["icon"] if app else ""}
 
     async def get_shortcut_artwork(self, key: str, app_id: int) -> dict[str, Any]:
         return await asyncio.to_thread(self._shortcut_artwork, key, app_id)
 
-    async def record_shortcut_artwork(self, app_id: int, role: str, digest: str) -> None:
+    async def record_shortcut_artwork(self, app_id: int, role: str, digest: str, version: int = 0) -> None:
         if (type(app_id) is not int or not 0 < app_id <= 0xFFFFFFFF
-                or role not in {*ARTWORK_TYPES, "logoPosition"} or not re.fullmatch(r"[0-9a-f]{64}", digest)):
+                or role not in {*ARTWORK_TYPES, "logoPosition"} or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                or type(version) is not int or version not in {0, ARTWORK_VERSION}):
             raise RuntimeError("Invalid Steam artwork record")
         _, _, home = self._user()
         grid = (self._shortcuts_path(home).parent / "grid").resolve()
@@ -463,7 +457,7 @@ class Plugin:
         with self._edit_state(home) as state:
             if app_id in self._shortcut_ids(home).values():
                 path = grid / artwork_filename(app_id, role)
-                state["artwork"][str(path.relative_to(home))] = digest
+                state["artwork"][str(path.relative_to(home))] = f"{version}:{digest}" if version else digest
 
     def _install_gapps(self) -> None:
         if self._initialized():

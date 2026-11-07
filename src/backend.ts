@@ -14,7 +14,7 @@ export type AndroidApp = { name: string; package: string; icon: string; iconPath
 export type Shortcut = { name: string; exe: string; startDir: string; launchOptions: string; icon: string; key: string };
 export type ArtworkRole = "portrait" | "hero" | "logo" | "landscape";
 export type ImageProgress = { stage: "preparing" | "downloading" | "finalizing" | "starting" | "booting" | "language" | "apps" | "cleaning" | "stopping" | "deleting"; percent: number | null };
-export type Artwork = { roles: ArtworkRole[]; ready: boolean; name: string; icon: string; images: { name: string; data: string }[] };
+export type Artwork = { roles: ArtworkRole[]; name: string; icon: string };
 
 export const getStatus = callable<[], Status>("get_status");
 export const listApps = callable<[], AndroidApp[]>("list_apps");
@@ -39,4 +39,4 @@ export const getPackageProgress = callable<[string, string], { stage: string; co
 export const syncRuntime = callable<[number | null], void>("sync_runtime");
 export const pendingArtwork = callable<[], { key: string; appId: number }[]>("pending_shortcut_artwork");
 export const getArtwork = callable<[string, number], Artwork>("get_shortcut_artwork");
-export const recordGeneratedArtwork = callable<[number, ArtworkRole | "logoPosition", string], void>("record_shortcut_artwork");
+export const recordGeneratedArtwork = callable<[number, ArtworkRole | "logoPosition", string, number], void>("record_shortcut_artwork");

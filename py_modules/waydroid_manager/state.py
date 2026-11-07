@@ -2,8 +2,9 @@ import json
 import os
 from errno import ENOTEMPTY
 from pathlib import Path
-import re
 import tempfile
+
+from .artwork import ARTWORK_RECORD
 
 
 class StateStore:
@@ -36,7 +37,7 @@ class StateStore:
                                   if isinstance(key, str) and type(value) is int and 0 < value <= 0xFFFFFFFF}
         if isinstance(saved.get("artwork"), dict):
             state["artwork"] = {key: value for key, value in saved["artwork"].items()
-                                if isinstance(key, str) and isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value)}
+                                if isinstance(key, str) and isinstance(value, str) and ARTWORK_RECORD.fullmatch(value)}
         return state
 
     def save(self, state: dict) -> None:
