@@ -44,6 +44,8 @@ App rows are full-width native fields with an action menu. An inline button's mi
 
 Package failures show both a toast and a retained error in the operation dialog. Progress uses named phase milestones, not a fabricated elapsed-time estimate. Busy operations reject repeated submission and dismissal; failures re-enable retry and cancellation.
 
+The shared install/uninstall footer uses `Focusable` with Steam's own `DialogTwoColLayout _DialogColLayout` classes and horizontal navigation, matching the native confirmation dialog's button row. No button widths, flex styles or injected rules are needed. Image removal and verification approval use the native `ConfirmModal` row directly.
+
 ## Deliberate compatibility limits
 
 - SurfaceFlinger transaction 1039 is guarded to verified Android SDK 33. Supporting another Android release requires confirming its interface and override reporting; the plugin will not guess a Binder transaction.
