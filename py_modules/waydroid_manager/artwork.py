@@ -26,6 +26,15 @@ def _matches_record(path: Path, record: str) -> bool:
     after = path.lstat()
     return digest == record.rsplit(":", 1)[-1] and (after.st_ino, after.st_ctime_ns) == (before.st_ino, before.st_ctime_ns)
 
+def _slot_images(grid: Path, app_id: int, suffix: str) -> list[Path]:
+    stem = f"{app_id & 0xFFFFFFFF}{suffix}"
+    return [path for path in grid.glob(f"{stem}.*") if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}]
+
+
+def artwork_attached(grid: Path, app_id: int) -> bool:
+    return all(any(path.is_file() and path.stat().st_size for path in _slot_images(grid, app_id, suffix))
+               for role, (_, suffix) in ARTWORK_TYPES.items() if role != "logo")
+
 
 def artwork_updates(home: Path, grid: Path, app_id: int, recorded: dict[str, str]) -> tuple[list[str], bool]:
     home, grid = home.resolve(), grid.resolve()
@@ -35,7 +44,7 @@ def artwork_updates(home: Path, grid: Path, app_id: int, recorded: dict[str, str
     clear_logo = False
     for role, (_, suffix) in ARTWORK_TYPES.items():
         stem = f"{app_id & 0xFFFFFFFF}{suffix}"
-        existing = [path for path in grid.glob(f"{stem}.*") if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}]
+        existing = _slot_images(grid, app_id, suffix)
         if not existing:
             if role != "logo":
                 roles.append(role)

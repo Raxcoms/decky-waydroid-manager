@@ -15,7 +15,7 @@ export type AndroidApp = { name: string; package: string; icon: string; iconPath
 export type Shortcut = { accountId: number; name: string; exe: string; startDir: string; launchOptions: string; icon: string; key: string };
 export type ArtworkRole = "portrait" | "hero" | "landscape";
 export type ImageProgress = { stage: "preparing" | "downloading" | "finalizing" | "starting" | "booting" | "language" | "apps" | "cleaning" | "stopping" | "deleting"; percent: number | null };
-export type Artwork = { roles: ArtworkRole[]; clearLogo: boolean; name: string; icon: string };
+export type Artwork = { roles: ArtworkRole[]; clearLogo: boolean; ready: boolean; name: string; icon: string };
 
 export const getStatus = callable<[number | null], Status>("get_status");
 export const listApps = callable<[number | null], AndroidApp[]>("list_apps");

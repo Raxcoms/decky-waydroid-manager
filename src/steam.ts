@@ -44,7 +44,7 @@ async function createSteamShortcut(shortcut: Shortcut) {
     }
     throw error;
   }
-  requestArtworkUpdate();
+  requestArtworkUpdate(shortcut, appId);
   return appId;
 }
 

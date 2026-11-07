@@ -6,11 +6,24 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
-from waydroid_manager.artwork import ARTWORK_VERSION, artwork_updates, prune_artwork
+from waydroid_manager.artwork import ARTWORK_VERSION, artwork_attached, artwork_updates, prune_artwork
 from waydroid_manager.state import StateStore
 
 
 class ArtworkTests(unittest.TestCase):
+    def test_artwork_completion_requires_all_three_image_slots(self):
+        with tempfile.TemporaryDirectory() as directory:
+            grid = Path(directory)
+            (grid / "123p.png").write_bytes(b"portrait")
+            (grid / "123_hero.png").write_bytes(b"hero")
+            (grid / "123_logo.png").write_bytes(b"logo")
+            self.assertFalse(artwork_attached(grid, 123))
+            landscape = grid / "123.webp"
+            landscape.touch()
+            self.assertFalse(artwork_attached(grid, 123))
+            landscape.write_bytes(b"landscape")
+            self.assertTrue(artwork_attached(grid, 123))
+
     def test_missing_and_untouched_legacy_slots_are_eligible(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)

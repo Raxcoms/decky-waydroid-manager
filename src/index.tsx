@@ -124,7 +124,6 @@ function watchAutoShortcuts() {
         if (disposed || currentSteamAccount() !== accountId) break;
         try {
           await addToSteam(shortcut);
-          toast(shortcut.name, t("addedToSteam"));
           autoAddFailures.delete(shortcut.key);
           libraryListeners.forEach((listener) => listener());
         } catch (error) {
@@ -214,11 +213,11 @@ function AppRow({ app, accountId, isLast, rowRef, setShortcutId, onUninstalled, 
     try {
       showContextMenu(
         <AppMenu label={app.name} release={release}>
-          {app.shortcutId && <MenuItem onSelected={run(launch, async () => {}, setMessage, [app.name, t("launching")])}>{t("launch")}</MenuItem>}
+          {app.shortcutId && <MenuItem onSelected={run(launch, async () => {}, setMessage)}>{t("launch")}</MenuItem>}
           {app.shortcutId ? (
             <MenuItem onSelected={run(remove, async () => {}, setMessage, [app.name, t("removedFromSteam")])}>{t("removeFromSteam")}</MenuItem>
           ) : (
-            <MenuItem onSelected={run(add, async () => {}, setMessage, [app.name, t("addedToSteam")])}>{t("addToSteam")}</MenuItem>
+            <MenuItem onSelected={run(add, async () => {}, setMessage)}>{t("addToSteam")}</MenuItem>
           )}
           {app.removable && (
             <MenuItem onSelected={() => openModal(
@@ -403,14 +402,14 @@ function Content() {
           <>
             {status.waydroidShortcutId && (
               <PanelSectionRow>
-                <ButtonItem layout="below" onClick={run(launchFullWaydroid, async () => {}, setMessage, [t("waydroid"), t("launching")])}>{t("launchWaydroid")}</ButtonItem>
+                <ButtonItem layout="below" onClick={run(launchFullWaydroid, async () => {}, setMessage)}>{t("launchWaydroid")}</ButtonItem>
               </PanelSectionRow>
             )}
             <PanelSectionRow>
               <ButtonItem
                 layout="below"
                 bottomSeparator="none"
-                onClick={status.waydroidShortcutId ? run(removeWaydroidShortcut, async () => {}, setMessage, [t("waydroid"), t("removedFromSteam")]) : run(addWaydroid, async () => {}, setMessage, [t("waydroid"), t("addedToSteam")])}
+                onClick={status.waydroidShortcutId ? run(removeWaydroidShortcut, async () => {}, setMessage, [t("waydroid"), t("removedFromSteam")]) : run(addWaydroid, async () => {}, setMessage)}
               >
                 {status.waydroidShortcutId ? t("removeWaydroidShortcut") : t("addWaydroid")}
               </ButtonItem>

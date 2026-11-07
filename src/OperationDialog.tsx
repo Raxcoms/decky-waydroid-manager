@@ -29,7 +29,7 @@ export function OperationDialog({ title, description, action, busy, progress, er
     >
       {error && <div role="alert"><DialogBodyText>{error}</DialogBodyText></div>}
       {busy && (
-        <div aria-live="polite">
+        <div aria-live="polite" style={description ? { marginBlockStart: "1em" } : undefined}>
           <DialogBodyText>{progress.label}</DialogBodyText>
           <ProgressBar nProgress={progress.percent} indeterminate={progress.percent === undefined} focusable={false} />
         </div>

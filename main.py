@@ -18,7 +18,7 @@ import decky
 from waydroid_manager.apps import PACKAGE_RE, app_exports
 from waydroid_manager.frame_limit import FrameLimiter
 from waydroid_manager.proc import active_launch, clean_env, steam_wayland_socket
-from waydroid_manager.artwork import ARTWORK_TYPES, ARTWORK_VERSION, artwork_filename, artwork_updates, prune_artwork
+from waydroid_manager.artwork import ARTWORK_TYPES, ARTWORK_VERSION, artwork_attached, artwork_filename, artwork_updates, prune_artwork
 from waydroid_manager.metrics import GpuMetrics
 from waydroid_manager.packages import apk_members, stage_apks, install_apks, check_result
 from waydroid_manager.verification import InstallCancelled, InstallVerification, commit_install
@@ -439,12 +439,17 @@ class Plugin:
         _, _, home = self._user()
         if self._shortcut_ids(home, account_id).get(key) != app_id:
             raise RuntimeError("The Steam shortcut no longer exists")
-        grid = self._shortcuts_path(home, account_id).parent / "grid"
+        grid = (self._shortcuts_path(home, account_id).parent / "grid").resolve()
+        if not grid.is_relative_to(home):
+            raise RuntimeError("The Steam artwork directory is outside the user home")
         roles, clear_logo = artwork_updates(home, grid, app_id, self._load_state(home)["artwork"])
         app = next(iter(self._desktop_entries(package=key, include_icons=True)), None) if key != WAYDROID_SHORTCUT_KEY else None
-        if not app and key != WAYDROID_SHORTCUT_KEY:
-            roles = []
-        return {"roles": roles, "clearLogo": clear_logo, "name": app["name"] if app else "Waydroid", "icon": app["icon"] if app else ""}
+        available = app is not None or key == WAYDROID_SHORTCUT_KEY
+        return {
+            "roles": roles if available else [], "clearLogo": clear_logo,
+            "ready": available and not roles and artwork_attached(grid, app_id),
+            "name": app["name"] if app else "Waydroid", "icon": app["icon"] if app else "",
+        }
 
     async def get_shortcut_artwork(self, account_id: int, key: str, app_id: int) -> dict[str, Any]:
         return await asyncio.to_thread(self._shortcut_artwork, account_id, key, app_id)

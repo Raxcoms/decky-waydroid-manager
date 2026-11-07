@@ -18,7 +18,7 @@ const stageLabels = {
 
 const dialogLabels = {
   install: { title: "installGapps", description: "installGappsDescription", action: "install", busy: "installing" },
-  setup: { title: "finishImageSetup", description: "finishImageSetupDescription", action: "finishImageSetup", busy: "installing" },
+  setup: { title: "finishImageSetup", description: "installGappsDescription", action: "finishImageSetup", busy: "installing" },
   remove: { title: "removeWaydroid", description: "removeWaydroidDescription", action: "removeWaydroid", busy: "imageRemoving" },
 } as const;
 
