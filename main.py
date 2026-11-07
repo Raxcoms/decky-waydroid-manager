@@ -17,7 +17,7 @@ from typing import Any, Callable
 
 import decky
 from waydroid_manager.frame_limit import FrameLimiter
-from waydroid_manager.proc import active_launch, clean_env
+from waydroid_manager.proc import active_launch, clean_env, steam_wayland_socket
 from waydroid_manager.artwork import ARTWORK_TYPES, ARTWORK_VERSION, artwork_filename, artwork_updates, prune_artwork
 from waydroid_manager.metrics import GpuMetrics
 from waydroid_manager.packages import apk_members, stage_apks, install_apks, check_result
@@ -128,32 +128,6 @@ class Plugin:
             check=False,
         )
 
-    def _steam_graphics_environment(self, uid: int) -> dict[str, str]:
-        candidates: list[tuple[bool, dict[str, str]]] = []
-        for process in Path("/proc").glob("[0-9]*"):
-            try:
-                if process.stat().st_uid != uid:
-                    continue
-                arguments = (process / "cmdline").read_bytes().split(b"\0")
-                names = {argument.rsplit(b"/", 1)[-1] for argument in arguments}
-                if not names.intersection({b"steam", b"steamwebhelper"}):
-                    continue
-
-                environment = {}
-                for value in (process / "environ").read_bytes().split(b"\0"):
-                    key, separator, content = value.partition(b"=")
-                    if separator and key in {b"DISPLAY", b"XAUTHORITY", b"WAYLAND_DISPLAY", b"GAMESCOPE_WAYLAND_DISPLAY"}:
-                        environment[key.decode()] = content.decode(errors="ignore")
-                if "DISPLAY" in environment:
-                    candidates.append((b"steam" in names, environment))
-            except OSError:
-                continue
-
-        if candidates:
-            candidates.sort(key=lambda candidate: not candidate[0])
-            return candidates[0][1]
-        raise RuntimeError("Could not identify Steam's active Game Mode display")
-
     def _icon_data_uri(self, value: str, home: Path) -> str:
         try:
             icon = Path(value).resolve(strict=True)
@@ -258,17 +232,11 @@ class Plugin:
         _, uid, home = self._user()
         state = self._load_state(home)
         shortcut_ids = self._shortcut_ids(home)
-        try:
-            graphics = self._steam_graphics_environment(uid)
-            display = graphics.get("GAMESCOPE_WAYLAND_DISPLAY", "")
-            session_available = bool(display and (Path(f"/run/user/{uid}") / display).is_socket())
-        except RuntimeError:
-            session_available = False
         return {
             "initialized": self._initialized(),
             "hasAppEntries": any((home / ".local/share/applications").glob("waydroid.*.desktop")),
             "serviceRunning": self._service_running(),
-            "sessionAvailable": session_available,
+            "sessionAvailable": steam_wayland_socket(uid) is not None,
             "autoAddApps": state["autoAddApps"],
             "userHome": str(home),
             "waydroidShortcutId": shortcut_ids.get(WAYDROID_SHORTCUT_KEY),
@@ -589,8 +557,7 @@ class Plugin:
             return
 
         user, uid, home = self._user()
-        graphics = self._steam_graphics_environment(uid)
-        wayland = graphics.get("GAMESCOPE_WAYLAND_DISPLAY") or graphics.get("WAYLAND_DISPLAY")
+        wayland = steam_wayland_socket(uid)
         if not wayland:
             raise RuntimeError("WAYDROID_START_FAILED")
         user_command = self._user_command(user, uid, home)

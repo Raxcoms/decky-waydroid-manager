@@ -33,12 +33,11 @@ if [[ "${WAYDROID_MANAGER_CLEAN_ENV:-}" != 1 ]]; then
     "$0" "$@"
 fi
 
-if [[ -z "$parent_display" ]]; then
-  echo "Waydroid Manager needs Steam's active Game Mode display." >&2
-  exit 1
+parent_socket="$parent_wayland"
+if [[ "$parent_socket" != /* ]]; then
+  parent_socket="$runtime_dir/$parent_socket"
 fi
-
-if [[ -z "$parent_wayland" ]]; then
+if [[ ! -S "$parent_socket" ]]; then
   echo "Waydroid Manager needs Steam's active Game Mode Wayland socket." >&2
   exit 1
 fi
@@ -142,12 +141,18 @@ export DISABLE_GAMESCOPE_WSI=1
     sleep 3
   done
   if [ "$WAYDROID_MANAGER_MODE" = "app" ]; then
+    launched=0
     for _ in {1..5}; do
       if timeout 15 waydroid app launch "$WAYDROID_MANAGER_PACKAGE" >>"$WAYDROID_MANAGER_LOG_DIR/app.log" 2>&1; then
+        launched=1
         break
       fi
       sleep 3
     done
+    if [ "$launched" = 0 ]; then
+      echo "Android app did not launch. See $WAYDROID_MANAGER_LOG_DIR/app.log" >&2
+      exit 1
+    fi
   else
     waydroid show-full-ui
   fi
@@ -191,4 +196,4 @@ while kill -0 "$host_pid" 2>/dev/null; do
   fi
   sleep 1
 done
-wait "$host_pid" || true
+wait "$host_pid"

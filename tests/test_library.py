@@ -312,9 +312,9 @@ class PackageSessionTests(unittest.TestCase):
         self.plugin = backend.Plugin()
         self.plugin._initialized = lambda: True
         self.plugin._user = lambda: ("user", 1000, Path("/home/user"))
-        self.plugin._steam_graphics_environment = lambda uid: {
-            "GAMESCOPE_WAYLAND_DISPLAY": "gamescope-primary", "WAYLAND_DISPLAY": "other-display",
-        }
+        self.socket = patch.object(backend, "steam_wayland_socket", return_value=Path("gamescope-primary"))
+        self.socket.start()
+        self.addCleanup(self.socket.stop)
         self.plugin._service_running = lambda: self.service_active
         self.service_active = True
         self.session_running = False
