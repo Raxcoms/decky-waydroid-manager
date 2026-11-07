@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
-from waydroid_manager.input import InputNodes, RuntimeKeylayout, STEAM_LAYOUT
+from waydroid_manager.input import ControllerDevice, InputNodes, RuntimeKeylayout, STEAM_LAYOUT
 
 
 class InputLayoutTests(unittest.TestCase):
@@ -64,14 +64,43 @@ class InputLayoutTests(unittest.TestCase):
             original.write_bytes(b"existing Android node")
             with patch("waydroid_manager.input.os.mknod", side_effect=lambda path, *_: path.write_bytes(b"runtime node"), create=True), patch("waydroid_manager.input.os.chown", create=True), patch("waydroid_manager.input.stat.S_ISCHR", return_value=True):
                 nodes = InputNodes(root)
-                nodes.sync({"event1": 0})
+                nodes.sync({"event1": ControllerDevice(0, "input1")})
                 self.assertEqual(original.read_bytes(), b"runtime node")
                 nodes.close()
                 self.assertEqual(original.read_bytes(), b"existing Android node")
                 nodes = InputNodes(root)
-                nodes.sync({"event1": 0})
+                nodes.sync({"event1": ControllerDevice(0, "input1")})
                 replacement = inputs / "replacement"
                 replacement.write_bytes(b"external replacement")
                 replacement.replace(original)
                 nodes.close()
                 self.assertEqual(original.read_bytes(), b"external replacement")
+
+    @unittest.skipIf(os.name == "nt", "Requires Unix device metadata")
+    def test_recreated_controller_with_the_same_evdev_number_is_republished(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "dev/input").mkdir(parents=True)
+            creates, permissions, publications = [], set(), []
+            def create(path, *_):
+                creates.append(path)
+                path.write_bytes(str(len(creates)).encode())
+            def chown(path, *_):
+                permissions.add(path)
+            link = os.link
+            def publish(source, target):
+                self.assertIn(source, permissions)
+                self.assertEqual(source.stat().st_mode & 0o777, 0o660)
+                self.assertFalse(target.exists())
+                publications.append(target)
+                link(source, target)
+            with patch("waydroid_manager.input.os.mknod", side_effect=create), patch("waydroid_manager.input.os.chown", side_effect=chown), patch("waydroid_manager.input.os.link", side_effect=publish):
+                nodes = InputNodes(root)
+                nodes.sync({"event1": ControllerDevice(0, "input20/event1")})
+                nodes.sync({"event1": ControllerDevice(0, "input20/event1")})
+                self.assertEqual(len(publications), 1)
+                nodes.sync({"event1": ControllerDevice(0, "input21/event1")})
+                self.assertEqual(len(publications), 2)
+                self.assertEqual((root / "dev/input/event1").read_bytes(), b"2")
+                nodes.close()
+                self.assertFalse((root / "dev/input/event1").exists())

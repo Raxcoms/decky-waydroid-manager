@@ -25,7 +25,13 @@ def attach(pid: int, *args: str) -> None:
         raise RuntimeError(result.stdout.strip() or result.stderr.strip() or "Android input setup failed")
 
 
-def steam_controllers() -> dict[str, int]:
+@dataclass(frozen=True)
+class ControllerDevice:
+    number: int
+    identity: str
+
+
+def steam_controllers() -> dict[str, ControllerDevice]:
     devices = {}
     for event in Path("/sys/class/input").glob("event*"):
         try:
@@ -33,7 +39,7 @@ def steam_controllers() -> dict[str, int]:
             product = (event / "device/id/product").read_text().strip().lower()
             info = (Path("/dev/input") / event.name).stat()
             if (vendor, product) == (STEAM_VENDOR, STEAM_PRODUCT) and stat.S_ISCHR(info.st_mode):
-                devices[event.name] = info.st_rdev
+                devices[event.name] = ControllerDevice(info.st_rdev, str(event.resolve()))
         except OSError:
             continue
     return devices
@@ -95,7 +101,7 @@ class RuntimeKeylayout:
 
 @dataclass
 class PublishedNode:
-    device: int
+    source: ControllerDevice
     inode: int
     backup: Path | None
 
@@ -108,7 +114,7 @@ class InputNodes:
             actual, source = self.inputs.stat(), host.stat()
             if (actual.st_dev, actual.st_ino) == (source.st_dev, source.st_ino):
                 raise RuntimeError("Waydroid input directory is shared with the host")
-        self.directory = Path(tempfile.mkdtemp(prefix=".waydroid-manager-input-", dir=root / "dev"))
+        self.directory = Path(tempfile.mkdtemp(prefix=".waydroid-manager-input-", dir=self.inputs))
         self.published: dict[str, PublishedNode] = {}
 
     def remove(self, name: str) -> None:
@@ -118,7 +124,7 @@ class InputNodes:
             info = target.lstat()
         except FileNotFoundError:
             info = None
-        if info is not None and (info.st_ino, info.st_rdev) != (node.inode, node.device):
+        if info is not None and (info.st_ino, info.st_rdev) != (node.inode, node.source.number):
             self.published.pop(name)
             return
         if info is not None:
@@ -127,9 +133,10 @@ class InputNodes:
             node.backup.rename(target)
         self.published.pop(name)
 
-    def sync(self, controllers: dict[str, int]) -> None:
+    def sync(self, controllers: dict[str, ControllerDevice]) -> None:
         for name in list(self.published):
-            if controllers.get(name) != self.published[name].device:
+            # A new input device can reuse the previous evdev number.
+            if controllers.get(name) != self.published[name].source:
                 self.remove(name)
         for name, device in controllers.items():
             if name in self.published:
@@ -140,16 +147,21 @@ class InputNodes:
                     raise RuntimeError("Android input path is not an evdev node")
                 backup = self.directory / name
                 target.rename(backup)
+            staged = self.directory / f".{name}"
             try:
-                os.mknod(target, stat.S_IFCHR | 0o660, device)
-                os.chown(target, 0, ANDROID_INPUT_GID)
-                target.chmod(0o660)
+                os.mknod(staged, stat.S_IFCHR | 0o660, device.number)
+                os.chown(staged, 0, ANDROID_INPUT_GID)
+                staged.chmod(0o660)
+                inode = staged.stat().st_ino
+                # Publish only after permissions are ready for Android's create notification.
+                os.link(staged, target)
+                self.published[name] = PublishedNode(device, inode, backup)
             except Exception:
-                target.unlink(missing_ok=True)
-                if backup:
+                if backup and not target.exists():
                     backup.rename(target)
                 raise
-            self.published[name] = PublishedNode(device, target.stat().st_ino, backup)
+            finally:
+                staged.unlink(missing_ok=True)
 
     def close(self) -> None:
         for name in list(self.published):
