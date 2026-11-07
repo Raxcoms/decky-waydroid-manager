@@ -96,7 +96,7 @@ export function renderArtwork(role: ArtworkRole, name: string, icon: HTMLImageEl
     const portrait = role === "portrait";
     const iconSize = portrait ? 258 : 184;
     const fontSize = portrait ? 53 : 54;
-    const gap = portrait ? 56 : 48;
+    const gap = portrait ? 56 : 36;
     const lineHeight = fontSize * 1.16;
     context.font = `bold ${fontSize}px system-ui, sans-serif`;
     const lines = titleLines(context, name, portrait ? width - 100 : width - iconSize - gap - 136);
@@ -107,7 +107,7 @@ export function renderArtwork(role: ArtworkRole, name: string, icon: HTMLImageEl
       drawTitle(context, lines, width / 2, top + iconSize + gap + titleHeight / 2, lineHeight, "center");
     } else {
       const titleWidth = Math.max(...lines.map((line) => context.measureText(line).width));
-      const left = (width - iconSize - gap - titleWidth) / 2;
+      const left = (width - iconSize - gap - titleWidth) / 2 - 24;
       drawIcon(context, icon, left, (height - iconSize) / 2, iconSize);
       drawTitle(context, lines, left + iconSize + gap, height / 2, lineHeight, "left");
     }

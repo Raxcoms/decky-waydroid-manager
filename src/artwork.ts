@@ -1,7 +1,7 @@
 import { pendingArtwork, getArtwork, recordGeneratedArtwork, type ArtworkRole as Role } from "./backend";
 import { artworkSlots, iconBackground, renderArtwork } from "./artworkCards";
 
-const artworkVersion = 5;
+const artworkVersion = 6;
 const fallbackIcon = "data:image/svg+xml," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><g fill="none" stroke="white" stroke-width="6" stroke-linecap="round"><path d="M15 65a35 35 0 0 1 70 0Z M28 28l-8-12 M72 28l8-12"/><circle cx="35" cy="48" r="2"/><circle cx="65" cy="48" r="2"/></g></svg>');
 const refreshers = new Set<() => void>();
 
