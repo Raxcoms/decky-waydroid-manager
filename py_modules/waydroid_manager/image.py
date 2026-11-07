@@ -1,4 +1,5 @@
 from collections import deque
+from pathlib import Path
 import re
 import subprocess
 import threading
@@ -9,6 +10,18 @@ from .proc import clean_env
 
 DOWNLOAD = re.compile(r"\[Downloading\]\s+([\d.]+)\s+MB/\s*([\d.]+)\s+MB")
 ImageProgress = Callable[[str, int | None], None]
+
+
+def require_unredirected(path: Path) -> None:
+    if path.resolve() != path:
+        raise RuntimeError(f"Waydroid path is redirected: {path}")
+
+
+def require_unmounted(paths: tuple[Path, ...], mountinfo: Path = Path("/proc/self/mountinfo")) -> None:
+    for line in mountinfo.read_text().splitlines():
+        mountpoint = re.sub(r"\\([0-7]{3})", lambda match: chr(int(match[1], 8)), line.split()[4])
+        if any(Path(mountpoint).is_relative_to(path) for path in paths):
+            raise RuntimeError(f"Waydroid data is still mounted at {mountpoint}")
 
 
 def launcher_packages(output: str) -> set[str]:

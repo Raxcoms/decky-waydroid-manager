@@ -24,7 +24,7 @@ from waydroid_manager.packages import apk_members, stage_apks, install_apks, che
 from waydroid_manager.verification import InstallCancelled, InstallVerification, commit_install
 from waydroid_manager.steam import read_shortcuts, shortcuts_path, shortcut_key, migrated_launch_options
 from waydroid_manager.container import CONFIG_DIR, SERVICE
-from waydroid_manager.image import launcher_packages, run_init
+from waydroid_manager.image import launcher_packages, require_unmounted, require_unredirected, run_init
 from waydroid_manager.control import ServiceControl, control_path
 from waydroid_manager.state import StateStore
 
@@ -794,15 +794,21 @@ class Plugin:
 
     def _remove_image(self) -> list[int]:
         user, _, home = self._user()
+        user_data = home / ".local/share/waydroid"
+        applications = home / ".local/share/applications"
+        data_paths = (WAYDROID_DIR, user_data)
+        for path in (*data_paths, applications):
+            require_unredirected(path)
         shortcuts = sorted(set(self._shortcut_ids(home).values()))
         self._run(["systemctl", "stop", SERVICE])
+        require_unmounted(data_paths)
         self._set_image_progress("deleting", None)
-        if WAYDROID_DIR.exists():
-            shutil.rmtree(WAYDROID_DIR)
-        user_data = home / ".local/share/waydroid"
-        if user_data.exists():
-            shutil.rmtree(user_data)
-        for entry in (home / ".local/share/applications").glob("waydroid.*.desktop"):
+        for path in data_paths:
+            require_unredirected(path)
+            if path.exists():
+                shutil.rmtree(path)
+        require_unredirected(applications)
+        for entry in applications.glob("waydroid.*.desktop"):
             entry.unlink(missing_ok=True)
         with self._state_lock:
             store = StateStore(home)

@@ -1,9 +1,30 @@
 from pathlib import Path
+import os
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
-from waydroid_manager.image import run_init
+from waydroid_manager.image import require_unmounted, require_unredirected, run_init
+
+
+class ImageRemovalSafetyTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "Requires a Linux-style symlink")
+    def test_rejects_a_redirected_parent_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            (root / "actual").mkdir()
+            (root / "redirected").symlink_to(root / "actual", target_is_directory=True)
+            with self.assertRaisesRegex(RuntimeError, "redirected"):
+                require_unredirected(root / "redirected" / "waydroid")
+
+    def test_rejects_a_mount_inside_waydroid_data(self):
+        with tempfile.TemporaryDirectory() as directory:
+            mountinfo = Path(directory) / "mountinfo"
+            mountinfo.write_text(r"1 0 0:1 / /var/lib/waydroid/rootfs/shared\040data rw - tmpfs tmpfs rw" + "\n")
+            with self.assertRaisesRegex(RuntimeError, "shared data"):
+                require_unmounted((Path("/var/lib/waydroid"),), mountinfo)
+            require_unmounted((Path("/var/lib/waydroid-other"),), mountinfo)
 
 
 class ImageProgressTests(unittest.TestCase):
