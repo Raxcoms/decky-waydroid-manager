@@ -58,19 +58,10 @@ function drawIcon(context: CanvasRenderingContext2D, icon: HTMLImageElement, x: 
   context.restore();
 }
 
-function drawTitle(context: CanvasRenderingContext2D, name: string, x: number, y: number, width: number, size: number, align: CanvasTextAlign) {
-  context.font = `bold ${size}px system-ui, sans-serif`;
-  context.textAlign = align;
-  context.textBaseline = "middle";
-  context.fillStyle = "#f7f9ff";
-  context.shadowColor = "#050810bb";
-  context.shadowBlur = size * 0.12;
+function titleLines(context: CanvasRenderingContext2D, name: string, width: number) {
   const text = name.trim().replace(/\s+/g, " ").slice(0, 256);
   const fits = (line: string) => context.measureText(line).width <= width;
-  if (fits(text)) {
-    context.fillText(text, x, y);
-    return;
-  }
+  if (fits(text)) return [text];
   const words = text.split(" ");
   let first = words.shift() || "";
   while (words.length && fits(first + " " + words[0])) first += " " + words.shift();
@@ -81,8 +72,16 @@ function drawTitle(context: CanvasRenderingContext2D, name: string, x: number, y
     return characters.join("").trimEnd() + "…";
   };
   const second = words.join(" ");
-  context.fillText(ellipsis(first), x, second ? y - size * 0.58 : y);
-  if (second) context.fillText(ellipsis(second), x, y + size * 0.58);
+  return second ? [ellipsis(first), ellipsis(second)] : [ellipsis(first)];
+}
+
+function drawTitle(context: CanvasRenderingContext2D, lines: string[], x: number, y: number, lineHeight: number, align: CanvasTextAlign) {
+  context.textAlign = align;
+  context.textBaseline = "middle";
+  context.fillStyle = "#f7f9ff";
+  context.shadowColor = "#050810bb";
+  context.shadowBlur = lineHeight * 0.1;
+  lines.forEach((line, index) => context.fillText(line, x, y + (index - (lines.length - 1) / 2) * lineHeight));
 }
 
 export function renderArtwork(role: ArtworkRole, name: string, icon: HTMLImageElement, background: [string, string]) {
@@ -92,18 +91,33 @@ export function renderArtwork(role: ArtworkRole, name: string, icon: HTMLImageEl
   canvas.height = height;
   const context = canvas.getContext("2d");
   if (!context) throw new Error("Artwork canvas is unavailable");
-  const portrait = role === "portrait";
-  const hero = role === "hero";
-  const size = portrait ? 258 : hero ? 306 : 184;
-  const x = portrait ? (width - size) / 2 : hero ? width * 0.72 : 68;
-  const y = portrait ? 206 : (height - size) / 2;
   const base = context.createLinearGradient(0, 0, width, height);
   base.addColorStop(0, background[0]);
   base.addColorStop(1, background[1]);
   context.fillStyle = base;
   context.fillRect(0, 0, width, height);
-  drawIcon(context, icon, x, y, size);
-  if (portrait) drawTitle(context, name, width / 2, 570, width - 100, 53, "center");
-  if (role === "landscape") drawTitle(context, name, 300, height / 2, width - 368, 54, "left");
+
+  if (role === "hero") {
+    drawIcon(context, icon, width * 0.72, (height - 306) / 2, 306);
+  } else {
+    const portrait = role === "portrait";
+    const iconSize = portrait ? 258 : 184;
+    const fontSize = portrait ? 53 : 54;
+    const gap = portrait ? 56 : 48;
+    const lineHeight = fontSize * 1.16;
+    context.font = `bold ${fontSize}px system-ui, sans-serif`;
+    const lines = titleLines(context, name, portrait ? width - 100 : width - iconSize - gap - 136);
+    if (portrait) {
+      const titleHeight = fontSize + (lines.length - 1) * lineHeight;
+      const top = (height - iconSize - gap - titleHeight) / 2;
+      drawIcon(context, icon, (width - iconSize) / 2, top, iconSize);
+      drawTitle(context, lines, width / 2, top + iconSize + gap + titleHeight / 2, lineHeight, "center");
+    } else {
+      const titleWidth = Math.max(...lines.map((line) => context.measureText(line).width));
+      const left = (width - iconSize - gap - titleWidth) / 2;
+      drawIcon(context, icon, left, (height - iconSize) / 2, iconSize);
+      drawTitle(context, lines, left + iconSize + gap, height / 2, lineHeight, "left");
+    }
+  }
   return canvas.toDataURL("image/png").split(",")[1];
 }
