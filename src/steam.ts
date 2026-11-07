@@ -1,24 +1,41 @@
-import type { Shortcut } from "./backend";
+import { requestArtworkUpdate } from "./artwork";
+import { saveShortcutRecord, type Shortcut } from "./backend";
 import { t } from "./i18n";
 import { waitForShortcut } from "./library";
 
-export async function addToSteam(shortcut: Shortcut) {
+const pendingAdds = new Map<string, Promise<number>>();
+
+export function addToSteam(shortcut: Shortcut): Promise<number> {
+  const pending = pendingAdds.get(shortcut.key);
+  if (pending) return pending;
+  const creation = createSteamShortcut(shortcut).finally(() => pendingAdds.delete(shortcut.key));
+  pendingAdds.set(shortcut.key, creation);
+  return creation;
+}
+
+async function createSteamShortcut(shortcut: Shortcut) {
   const apps = window.SteamClient?.Apps;
   if (!apps?.AddShortcut) {
     throw new Error(t("shortcutApiUnavailable"));
   }
 
-  const appId = Number(await apps.AddShortcut(shortcut.name, shortcut.exe, shortcut.startDir, shortcut.launchOptions));
+  const appId = Number(await apps.AddShortcut(shortcut.name, shortcut.exe, shortcut.startDir, shortcut.launchOptions)) >>> 0;
   if (!appId) {
     throw new Error(t("shortcutNotCreated"));
   }
   try {
     if (!await waitForShortcut(appId)) throw new Error(t("shortcutNotCreated"));
     await configureSteamShortcut(appId, shortcut);
+    await saveShortcutRecord(shortcut.key, appId);
   } catch (error) {
-    await apps.RemoveShortcut?.(appId);
+    try {
+      await apps.RemoveShortcut?.(appId);
+    } catch (rollbackError) {
+      console.warn("Waydroid shortcut rollback failed", appId, rollbackError);
+    }
     throw error;
   }
+  requestArtworkUpdate();
   return appId;
 }
 

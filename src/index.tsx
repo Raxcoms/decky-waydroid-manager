@@ -1,4 +1,4 @@
-import { getStatus, listApps, installGapps, startService, stopService, restartService, uninstallApp, getWaydroidShortcut, getAppShortcut, saveShortcutRecord, removeShortcutRecord, setAutoAddApps, pendingAutoShortcuts, legacyShortcuts, removeWaydroidImage, installPackage, type Status, type AndroidApp } from "./backend";
+import { getStatus, listApps, installGapps, startService, stopService, restartService, uninstallApp, getWaydroidShortcut, getAppShortcut, removeShortcutRecord, setAutoAddApps, pendingAutoShortcuts, legacyShortcuts, removeWaydroidImage, installPackage, type Status, type AndroidApp } from "./backend";
 import { addToSteam, removeFromSteam, launchSteamShortcut, updateSteamShortcut } from "./steam";
 import { definePlugin, FileSelectionType, openFilePicker, toaster, useQuickAccessVisible } from "@decky/api";
 import {
@@ -18,7 +18,7 @@ import {
 import { useCallback, useEffect, useRef, useState, type ReactElement, type Ref } from "react";
 import { t } from "./i18n";
 import { watchRuntime } from "./runtime";
-import { requestArtworkUpdate, watchShortcutArtwork } from "./artwork";
+import { watchShortcutArtwork } from "./artwork";
 import { operationError } from "./errors";
 import { liveShortcutIds } from "./library";
 import { PackageOperationModal } from "./PackageOperationModal";
@@ -36,17 +36,11 @@ function AndroidRobotIcon() {
   );
 }
 
-const autoAddAttempted = new Set<string>();
 const autoAddFailures = new Set<string>();
 const libraryListeners = new Set<() => void>();
 let cachedStatus: Status | null = null;
 let cachedApps: AndroidApp[] = [];
 const appListState = new AppListState();
-
-async function recordShortcut(key: string, appId: number) {
-  await saveShortcutRecord(key, appId);
-  requestArtworkUpdate();
-}
 
 function toast(title: string, body: string) {
   toaster.toast({ title, body });
@@ -101,18 +95,15 @@ function watchAutoShortcuts() {
         migrated.add(shortcut.appId);
       }
       for (const shortcut of await pendingAutoShortcuts(live)) {
-        if (disposed || autoAddAttempted.has(shortcut.key)) continue;
-        autoAddAttempted.add(shortcut.key);
+        if (disposed) break;
         try {
-          await recordShortcut(shortcut.key, await addToSteam(shortcut));
+          await addToSteam(shortcut);
           toast(shortcut.name, t("addedToSteam"));
           autoAddFailures.delete(shortcut.key);
           libraryListeners.forEach((listener) => listener());
         } catch (error) {
           if (!autoAddFailures.has(shortcut.key)) reportError(error);
           autoAddFailures.add(shortcut.key);
-        } finally {
-          autoAddAttempted.delete(shortcut.key);
         }
       }
     } catch (error) {
@@ -173,7 +164,6 @@ function AppRow({ app, isLast, rowRef, setShortcutId, onUninstalled, setMessage 
   const add = async () => {
     const shortcut = await getAppShortcut(app.package);
     const appId = await addToSteam(shortcut);
-    await recordShortcut(shortcut.key, appId);
     setShortcutId(appId);
   };
   const remove = async () => {
@@ -315,7 +305,6 @@ function Content() {
   const addWaydroid = async () => {
     const shortcut = await getWaydroidShortcut();
     const appId = await addToSteam(shortcut);
-    await recordShortcut(shortcut.key, appId);
     setStatus((current) => current ? { ...current, waydroidShortcutId: appId } : current);
   };
   const removeWaydroidShortcut = async () => {
