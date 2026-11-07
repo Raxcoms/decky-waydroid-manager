@@ -55,26 +55,45 @@ class InputLayoutTests(unittest.TestCase):
             self.assertIsNone(view.directory)
 
     @unittest.skipIf(os.name == "nt", "Requires Unix device metadata")
-    def test_private_input_nodes_are_restored_and_external_replacements_are_preserved(self):
+    def test_delegated_controller_is_restored_and_platform_nodes_are_preserved(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             inputs = root / "dev/input"
             inputs.mkdir(parents=True)
-            original = inputs / "event1"
+            original = inputs / "event4"
+            alias = inputs / "waydroid-manager-event1"
             original.write_bytes(b"existing Android node")
+            steam = {"event1": ControllerDevice(0, "input1")}
+            shared = {"event4": ControllerDevice(0, "input4")}
             with patch("waydroid_manager.input.os.mknod", side_effect=lambda path, *_: path.write_bytes(b"runtime node"), create=True), patch("waydroid_manager.input.os.chown", create=True), patch("waydroid_manager.input.stat.S_ISCHR", return_value=True):
                 nodes = InputNodes(root)
-                nodes.sync({"event1": ControllerDevice(0, "input1")})
-                self.assertEqual(original.read_bytes(), b"runtime node")
-                nodes.close()
+                nodes.sync(steam, shared)
+                self.assertFalse(original.exists())
+                self.assertEqual(alias.read_bytes(), b"runtime node")
+                nodes.close(shared)
+                self.assertFalse(alias.exists())
                 self.assertEqual(original.read_bytes(), b"existing Android node")
                 nodes = InputNodes(root)
-                nodes.sync({"event1": ControllerDevice(0, "input1")})
-                replacement = inputs / "replacement"
-                replacement.write_bytes(b"external replacement")
-                replacement.replace(original)
-                nodes.close()
+                nodes.sync(steam, shared)
+                original.write_bytes(b"external replacement")
+                nodes.close(shared)
                 self.assertEqual(original.read_bytes(), b"external replacement")
+
+    @unittest.skipIf(os.name == "nt", "Requires Unix device metadata")
+    def test_ambiguous_controller_mapping_preserves_platform_inputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            inputs = root / "dev/input"
+            inputs.mkdir(parents=True)
+            (inputs / "event4").write_bytes(b"platform node")
+            with patch("waydroid_manager.input.stat.S_ISCHR", return_value=True):
+                nodes = InputNodes(root)
+                nodes.sync(
+                    {"event1": ControllerDevice(0, "input1"), "event2": ControllerDevice(0, "input2")},
+                    {"event4": ControllerDevice(0, "input4")},
+                )
+                self.assertEqual(sorted(node.name for node in inputs.iterdir() if node.is_file()), ["event4"])
+                nodes.close()
 
     @unittest.skipIf(os.name == "nt", "Requires Unix device metadata")
     def test_recreated_controller_with_the_same_evdev_number_is_republished(self):
@@ -94,13 +113,17 @@ class InputLayoutTests(unittest.TestCase):
                 self.assertFalse(target.exists())
                 publications.append(target)
                 link(source, target)
-            with patch("waydroid_manager.input.os.mknod", side_effect=create), patch("waydroid_manager.input.os.chown", side_effect=chown), patch("waydroid_manager.input.os.link", side_effect=publish):
+            with patch("waydroid_manager.input.os.mknod", side_effect=create), patch("waydroid_manager.input.os.chown", side_effect=chown), patch("waydroid_manager.input.os.link", side_effect=publish), patch("waydroid_manager.input.stat.S_ISCHR", return_value=True):
                 nodes = InputNodes(root)
                 nodes.sync({"event1": ControllerDevice(0, "input20/event1")})
                 nodes.sync({"event1": ControllerDevice(0, "input20/event1")})
                 self.assertEqual(len(publications), 1)
                 nodes.sync({"event1": ControllerDevice(0, "input21/event1")})
                 self.assertEqual(len(publications), 2)
-                self.assertEqual((root / "dev/input/event1").read_bytes(), b"2")
+                alias = root / "dev/input/waydroid-manager-event1"
+                self.assertEqual(alias.read_bytes(), b"2")
+                alias.unlink()
+                nodes.sync({"event1": ControllerDevice(0, "input21/event1")})
+                self.assertEqual(alias.read_bytes(), b"3")
                 nodes.close()
-                self.assertFalse((root / "dev/input/event1").exists())
+                self.assertFalse(alias.exists())

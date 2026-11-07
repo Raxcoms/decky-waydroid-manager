@@ -31,18 +31,25 @@ class ControllerDevice:
     identity: str
 
 
-def steam_controllers() -> dict[str, ControllerDevice]:
-    devices = {}
+def controller_sources() -> tuple[dict[str, ControllerDevice], dict[str, ControllerDevice]]:
+    steam, shared = {}, {}
     for event in Path("/sys/class/input").glob("event*"):
         try:
             vendor = (event / "device/id/vendor").read_text().strip().lower()
             product = (event / "device/id/product").read_text().strip().lower()
             info = (Path("/dev/input") / event.name).stat()
-            if (vendor, product) == (STEAM_VENDOR, STEAM_PRODUCT) and stat.S_ISCHR(info.st_mode):
-                devices[event.name] = ControllerDevice(info.st_rdev, str(event.resolve()))
+            if not stat.S_ISCHR(info.st_mode):
+                continue
+            device = ControllerDevice(info.st_rdev, str(event.resolve()))
+            if (vendor, product) == (STEAM_VENDOR, STEAM_PRODUCT):
+                steam[event.name] = device
+            elif stat.S_IMODE(info.st_mode) == 0:
+                database = Path(f"/run/udev/data/c{os.major(info.st_rdev)}:{os.minor(info.st_rdev)}")
+                if "E:INPUTPLUMBER_SHARED_GAMEPAD=1" in database.read_text().splitlines():
+                    shared[event.name] = device
         except OSError:
             continue
-    return devices
+    return steam, shared
 
 
 class RuntimeKeylayout:
@@ -103,7 +110,6 @@ class RuntimeKeylayout:
 class PublishedNode:
     source: ControllerDevice
     inode: int
-    backup: Path | None
 
 
 class InputNodes:
@@ -116,37 +122,53 @@ class InputNodes:
                 raise RuntimeError("Waydroid input directory is shared with the host")
         self.directory = Path(tempfile.mkdtemp(prefix=".waydroid-manager-input-", dir=self.inputs))
         self.published: dict[str, PublishedNode] = {}
+        self.masked: dict[str, ControllerDevice] = {}
+
+    def _alias(self, name: str) -> Path:
+        # Keep the plugin node distinct from nodes reconciled by the platform.
+        return self.inputs / f"waydroid-manager-{name}"
+
+    @staticmethod
+    def _matches(path: Path, device: ControllerDevice, inode: int | None = None) -> bool:
+        try:
+            info = path.lstat()
+            return stat.S_ISCHR(info.st_mode) and info.st_rdev == device.number and (inode is None or info.st_ino == inode)
+        except FileNotFoundError:
+            return False
 
     def remove(self, name: str) -> None:
         node = self.published[name]
-        target = self.inputs / name
-        try:
-            info = target.lstat()
-        except FileNotFoundError:
-            info = None
-        if info is not None and (info.st_ino, info.st_rdev) != (node.inode, node.source.number):
-            self.published.pop(name)
-            return
-        if info is not None:
-            target.unlink()
-        if node.backup and node.backup.exists():
-            node.backup.rename(target)
+        target = self._alias(name)
+        if self._matches(target, node.source, node.inode):
+            target.unlink(missing_ok=True)
         self.published.pop(name)
 
-    def sync(self, controllers: dict[str, ControllerDevice]) -> None:
-        for name in list(self.published):
+    def _restore_shared(self, name: str, device: ControllerDevice | None) -> None:
+        backup = self.directory / name
+        if device == self.masked[name] and backup.exists():
+            try:
+                os.link(backup, self.inputs / name)
+            except FileExistsError:
+                pass
+        backup.unlink(missing_ok=True)
+        self.masked.pop(name)
+
+    def sync(self, controllers: dict[str, ControllerDevice], shared: dict[str, ControllerDevice] | None = None) -> None:
+        shared = shared or {}
+        exposed = {name: source for name, source in shared.items()
+                   if self.masked.get(name) == source or self._matches(self.inputs / name, source)}
+        # With an ambiguous mapping, keep the platform's existing controller path.
+        if exposed and (len(exposed) != 1 or len(controllers) != 1):
+            controllers = {}
+        for name, node in list(self.published.items()):
             # A new input device can reuse the previous evdev number.
-            if controllers.get(name) != self.published[name].source:
+            if (controllers.get(name) != node.source or not self._matches(self._alias(name), node.source, node.inode)
+                    or self._matches(self.inputs / name, node.source)):
                 self.remove(name)
         for name, device in controllers.items():
-            if name in self.published:
+            if name in self.published or self._matches(self.inputs / name, device):
                 continue
-            target, backup = self.inputs / name, None
-            if target.exists():
-                if not stat.S_ISCHR(target.lstat().st_mode):
-                    raise RuntimeError("Android input path is not an evdev node")
-                backup = self.directory / name
-                target.rename(backup)
+            target = self._alias(name)
             staged = self.directory / f".{name}"
             try:
                 os.mknod(staged, stat.S_IFCHR | 0o660, device.number)
@@ -155,15 +177,26 @@ class InputNodes:
                 inode = staged.stat().st_ino
                 # Publish only after permissions are ready for Android's create notification.
                 os.link(staged, target)
-                self.published[name] = PublishedNode(device, inode, backup)
-            except Exception:
-                if backup and not target.exists():
-                    backup.rename(target)
-                raise
+                self.published[name] = PublishedNode(device, inode)
             finally:
                 staged.unlink(missing_ok=True)
+        for name, device in list(self.masked.items()):
+            if not controllers or exposed.get(name) != device:
+                self._restore_shared(name, shared.get(name))
+        if controllers:
+            for name, device in exposed.items():
+                source, backup = self.inputs / name, self.directory / name
+                if not self._matches(source, device):
+                    continue
+                # Hide only the delegated copy inside Android, so input is not delivered twice.
+                backup.unlink(missing_ok=True)
+                os.link(source, backup)
+                self.masked[name] = device
+                source.unlink(missing_ok=True)
 
-    def close(self) -> None:
+    def close(self, shared: dict[str, ControllerDevice] | None = None) -> None:
         for name in list(self.published):
             self.remove(name)
+        for name in list(self.masked):
+            self._restore_shared(name, (shared or {}).get(name))
         shutil.rmtree(self.directory, ignore_errors=True)

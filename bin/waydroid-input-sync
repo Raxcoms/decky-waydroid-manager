@@ -7,7 +7,7 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
 from waydroid_manager.container import container_pid
 from waydroid_manager.proc import active_launch
-from waydroid_manager.input import InputNodes, RuntimeKeylayout, steam_controllers
+from waydroid_manager.input import InputNodes, RuntimeKeylayout, controller_sources
 
 
 def main() -> None:
@@ -26,7 +26,7 @@ def main() -> None:
         nonlocal layout, nodes
         if nodes:
             try:
-                nodes.close()
+                nodes.close(controller_sources()[1])
                 nodes = None
             except (OSError, RuntimeError) as error:
                 print(f"Waydroid input cleanup failed: {error}", file=sys.stderr, flush=True)
@@ -50,14 +50,14 @@ def main() -> None:
                     if nodes or layout:
                         raise RuntimeError("Previous Android input setup is still active")
                     active = current
-                controllers = steam_controllers() if pid else {}
+                controllers, shared = controller_sources() if pid else ({}, {})
                 if controllers:
                     if layout is None:
                         root = Path("/proc") / str(pid) / "root"
                         layout = RuntimeKeylayout(pid, root)
                         layout.open()
                         nodes = InputNodes(root)
-                    nodes.sync(controllers)
+                    nodes.sync(controllers, shared)
                 else:
                     release()
                 last_error = None
