@@ -12,22 +12,25 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm run check
       - run: pnpm run build
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: 17
       - uses: android-actions/setup-android@v4
         with:
-          packages: 'build-tools;35.0.0 platforms;android-35'
+          accept-android-sdk-licenses: false
+          packages: ''
+      - name: Install Android build dependencies
+        run: android --sdk="$ANDROID_HOME" sdk install build-tools/35.0.0 platforms/android-35
       - name: Build Android verification helper
         run: python3 scripts/build_android.py
       - name: Check Wayland relay
@@ -39,7 +42,7 @@ jobs:
         run: |
           python3 scripts/package.py package
           python3 scripts/check_package.py package/waydroid-manager
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: waydroid-manager
           path: package

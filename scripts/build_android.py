@@ -20,7 +20,7 @@ def build() -> Path:
     output = ROOT / "out/android-build"
     dex = output / "dex"
     dex.mkdir(parents=True, exist_ok=True)
-    subprocess.run([javac, "--release", "8", "-d", str(output), str(ROOT / "android/InstallVerifier.java")], check=True)
+    subprocess.run([javac, "--release", "11", "-d", str(output), str(ROOT / "android/InstallVerifier.java")], check=True)
     subprocess.run([str(d8), "--min-api", "26", "--lib", str(library), "--output", str(dex),
                     str(output / "waydroid/manager/InstallVerifier.class")], check=True)
     target = ROOT / "bin/waydroid-verifier.dex"
