@@ -4,7 +4,7 @@
   "type": "module",
   "packageManager": "pnpm@9.15.0",
   "description": "Decky plugin for managing Waydroid on ArmadaOS",
-  "license": "MIT",
+  "license": "CC-BY-4.0",
   "scripts": {
     "build": "rollup -c",
     "check": "tsc --noEmit"
