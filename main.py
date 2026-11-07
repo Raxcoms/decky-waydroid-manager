@@ -24,7 +24,7 @@ from waydroid_manager.packages import apk_members, stage_apks, install_apks, che
 from waydroid_manager.verification import InstallCancelled, InstallVerification, commit_install
 from waydroid_manager.steam import read_shortcuts, shortcuts_path, shortcut_key, migrated_launch_options
 from waydroid_manager.container import CONFIG_DIR, SERVICE, container_pid
-from waydroid_manager.image import run_init
+from waydroid_manager.image import launcher_packages, run_init
 from waydroid_manager.control import ServiceControl, control_path
 from waydroid_manager.state import StateStore
 
@@ -266,6 +266,7 @@ class Plugin:
             session_available = False
         return {
             "initialized": self._initialized(),
+            "hasAppEntries": any((home / ".local/share/applications").glob("waydroid.*.desktop")),
             "serviceRunning": self._service_running(),
             "sessionAvailable": session_available,
             "autoAddApps": state["autoAddApps"],
@@ -480,38 +481,67 @@ class Plugin:
             raise RuntimeError(output or "Waydroid did not finish initializing its image")
 
     def _initialize_image(self, locale: str | None) -> bool:
-        _, _, home = self._user()
+        user, uid, home = self._user()
         data = home / ".local/share/waydroid/data"
-        has_user_data = data.exists()
-        self._install_gapps()
-        if has_user_data or not locale:
-            return True
+        initialized = self._initialized()
+        new_data = not initialized and not data.exists()
+        if not initialized:
+            self._install_gapps()
+        language_set = True
+        with self._package_session(lambda stage: self._set_image_progress(stage, None)):
+            if new_data and locale:
+                self._set_image_progress("language", None)
+                try:
+                    self._set_initial_locale(data, locale)
+                except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                    decky.logger.warning("Initial Android language setup failed: %s", error)
+                    language_set = False
+            self._set_image_progress("apps", None)
+            self._wait_for_app_entries(user, uid, home)
+        return language_set
 
+    def _set_initial_locale(self, data: Path, locale: str) -> None:
         tags = locale if locale.lower().split("-")[0] == "en" else f"{locale},en-US"
         helper = Path(decky.DECKY_PLUGIN_DIR) / "bin/waydroid-verifier.dex"
-        try:
-            with self._package_session(lambda stage: self._set_image_progress(stage, None)):
-                self._set_image_progress("language", None)
-                staging = data / "local/tmp"
-                with tempfile.TemporaryDirectory(prefix="waydroid-manager-", dir=staging) as temporary:
-                    directory = Path(temporary)
-                    directory.chmod(0o755)
-                    dex = directory / "locale.dex"
-                    shutil.copyfile(helper, dex)
-                    dex.chmod(0o644)
-                    self._run([
-                        "waydroid", "shell", "--", "env", f"CLASSPATH=/data/local/tmp/{directory.name}/{dex.name}",
-                        "/system/bin/app_process", "/system/bin", "waydroid.manager.SetupLocale", tags,
-                    ], timeout=15)
-                    for _ in range(10):
-                        saved = self._run(["waydroid", "shell", "--", "settings", "--user", "0", "get", "system", "system_locales"])
-                        if saved.casefold() == tags.casefold():
-                            return True
-                        time.sleep(0.5)
-                    raise RuntimeError("Android did not save the requested language list")
-        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
-            decky.logger.warning("Initial Android language setup failed: %s", error)
-            return False
+        with tempfile.TemporaryDirectory(prefix="waydroid-manager-", dir=data / "local/tmp") as temporary:
+            directory = Path(temporary)
+            directory.chmod(0o755)
+            dex = directory / "locale.dex"
+            shutil.copyfile(helper, dex)
+            dex.chmod(0o644)
+            self._run([
+                "waydroid", "shell", "--", "env", f"CLASSPATH=/data/local/tmp/{directory.name}/{dex.name}",
+                "/system/bin/app_process", "/system/bin", "waydroid.manager.SetupLocale", tags,
+            ], timeout=15)
+            for _ in range(10):
+                saved = self._run(["waydroid", "shell", "--", "settings", "--user", "0", "get", "system", "system_locales"])
+                if saved.casefold() == tags.casefold():
+                    return
+                time.sleep(0.5)
+            raise RuntimeError("Android did not save the requested language list")
+
+    @staticmethod
+    def _user_command(user: str, uid: int, home: Path) -> list[str]:
+        return [
+            "runuser", "-u", user, "--", "env",
+            f"HOME={home}", f"XDG_RUNTIME_DIR=/run/user/{uid}",
+            f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus",
+        ]
+
+    def _wait_for_app_entries(self, user: str, uid: int, home: Path) -> None:
+        command = [*self._user_command(user, uid, home), "waydroid", "app", "list"]
+        directory = home / ".local/share/applications"
+        deadline = time.monotonic() + 90
+        while time.monotonic() < deadline:
+            try:
+                expected = launcher_packages(self._run(command, timeout=5))
+            except (RuntimeError, subprocess.TimeoutExpired):
+                expected = set()
+            exported = {entry.stem.removeprefix("waydroid.") for entry in directory.glob("waydroid.*.desktop")}
+            if expected and expected <= exported:
+                return
+            time.sleep(1)
+        raise RuntimeError("IMAGE_APP_EXPORT_TIMEOUT")
 
     async def install_gapps(self, locale: str | None = None) -> bool:
         if locale is not None and (not isinstance(locale, str) or not re.fullmatch(r"[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,4}", locale)):
@@ -569,11 +599,7 @@ class Plugin:
         wayland = graphics.get("GAMESCOPE_WAYLAND_DISPLAY") or graphics.get("WAYLAND_DISPLAY")
         if not wayland:
             raise RuntimeError("WAYDROID_START_FAILED")
-        user_command = [
-            "runuser", "-u", user, "--", "env",
-            f"HOME={home}", f"XDG_RUNTIME_DIR=/run/user/{uid}",
-            f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus",
-        ]
+        user_command = self._user_command(user, uid, home)
         unit = f"waydroid-manager-package-{uuid.uuid4().hex}"
         service_was_active = self._service_running()
         try:

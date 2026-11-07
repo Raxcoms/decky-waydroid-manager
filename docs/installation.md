@@ -13,7 +13,7 @@
 3. Open **Waydroid Manager** from the Decky quick-access menu.
 4. Select **Install Waydroid with GAPPS**. Waydroid selects the image for the running architecture using its configured channels. If the Waydroid package ships without channels, the plugin supplies the [official OTA URLs](https://docs.waydro.id/usage/install-on-desktops) to the CLI for that install.
 
-New Android data starts with Steam's interface language and English as the fallback. The plugin sets this once during image setup. Changes in Android Settings apply to later launches.
+On the first boot, the plugin sets Steam's interface language with English as the fallback, then waits for the Android app list. If that step was interrupted, select **Finish Waydroid setup** to load the list. You can change the language order later in Android Settings.
 5. After the download completes, select **Add Waydroid to Steam**. The launch option appears once the shortcut exists; Android connects to Steam's Gamescope through a private Wayland socket.
 6. Use **Install APK or XAPK** in the Android apps section and choose a package from the user home folder. Installation starts with background Android startup when needed and phase progress. If Android blocks this install for a Play Protect decision, a second prompt offers **Install anyway** or **Cancel**. That choice applies only to this package operation; Android's saved verification settings stay unchanged.
 

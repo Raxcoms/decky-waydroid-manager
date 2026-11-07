@@ -4,7 +4,7 @@ import { t } from "./i18n";
 import { OperationDialog } from "./OperationDialog";
 
 type Props = {
-  operation: "install" | "remove";
+  operation: "install" | "setup" | "remove";
   perform: (showLibraryProgress: () => void) => Promise<void>;
   onError: (error: unknown) => string;
   closeModal?: () => void;
@@ -12,8 +12,14 @@ type Props = {
 
 const stageLabels = {
   preparing: "imagePreparing", downloading: "imageDownloading", finalizing: "imageFinalizing",
-  starting: "packageStarting", booting: "packageBooting", language: "imageLanguage", cleaning: "packageCleaning",
+  starting: "packageStarting", booting: "packageBooting", language: "imageLanguage", apps: "imageAppEntries", cleaning: "packageCleaning",
   stopping: "imageStopping", deleting: "imageDeleting",
+} as const;
+
+const dialogLabels = {
+  install: { title: "installGapps", description: "installGappsDescription", action: "install", busy: "installing" },
+  setup: { title: "finishImageSetup", description: "finishImageSetupDescription", action: "finishImageSetup", busy: "installing" },
+  remove: { title: "removeWaydroid", description: "removeWaydroidDescription", action: "removeWaydroid", busy: "imageRemoving" },
 } as const;
 
 export function ImageOperationModal({ operation, perform, onError, closeModal }: Props) {
@@ -61,16 +67,16 @@ export function ImageOperationModal({ operation, perform, onError, closeModal }:
     }
   };
 
-  const installing = operation === "install";
-  const stage = progress?.stage ?? (installing ? "preparing" : "stopping");
+  const labels = dialogLabels[operation];
+  const stage = progress?.stage ?? (operation === "remove" ? "stopping" : "preparing");
   const percent = progress?.percent ?? undefined;
   let label = t(stageLabels[stage]);
   if (stage === "downloading" && percent !== undefined) label = t("imageDownloadPercent", { percent });
   if (removingShortcuts) label = t("imageRemovingShortcuts");
   return <OperationDialog
-    title={t(installing ? "installGapps" : "removeWaydroid")}
-    description={t(installing ? "installGappsDescription" : "removeWaydroidDescription")}
-    action={installing ? t(busy ? "installing" : "install") : t(busy ? "imageRemoving" : "removeWaydroid")}
+    title={t(labels.title)}
+    description={t(labels.description)}
+    action={t(busy ? labels.busy : labels.action)}
     busy={busy}
     progress={{ label, percent }}
     error={error}

@@ -11,6 +11,19 @@ DOWNLOAD = re.compile(r"\[Downloading\]\s+([\d.]+)\s+MB/\s*([\d.]+)\s+MB")
 ImageProgress = Callable[[str, int | None], None]
 
 
+def launcher_packages(output: str) -> set[str]:
+    packages = set()
+    package = ""
+    for line in output.splitlines():
+        if line.startswith("Name:"):
+            package = ""
+        elif line.startswith("packageName: "):
+            package = line.removeprefix("packageName: ").strip()
+        elif line.strip() == "android.intent.category.LAUNCHER" and package:
+            packages.add(package)
+    return packages
+
+
 def run_init(command: list[str], report: ImageProgress, timeout: int = 1800) -> str:
     output: deque[str] = deque(maxlen=20)
     env = {**clean_env(), "PYTHONUNBUFFERED": "1"}

@@ -64,6 +64,7 @@ function reportError(error: unknown, setMessage?: (message: string | null) => vo
     APP_NOT_REMOVABLE: "appNotRemovable",
     WAYDROID_START_FAILED: "androidStartFailed",
     XAPK_TOO_MANY_APKS: "xapkTooManyApks", PACKAGE_NO_SPACE: "packageNoSpace",
+    IMAGE_APP_EXPORT_TIMEOUT: "imageAppExportTimeout",
   };
   if (messages[message]) message = t(messages[message]);
   setMessage?.(message);
@@ -291,6 +292,7 @@ function Content() {
   const sortedApps = [...apps].sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" }));
   const shownApps = sortedApps.slice(0, visibleApps);
   const hasMoreApps = visibleApps < sortedApps.length;
+  const setupPending = status?.initialized && status.hasAppEntries === false;
   const addWaydroid = async () => {
     const shortcut = await getWaydroidShortcut();
     const appId = await addToSteam(shortcut);
@@ -339,22 +341,22 @@ function Content() {
             <Field label={t("gamescopeUnavailable")} description={t("gamescopeUnavailableDescription")} />
           </PanelSectionRow>
         )}
-        {!status?.initialized && (
+        {(!status?.initialized || setupPending) && (
           <PanelSectionRow>
             <ButtonItem
               layout="below"
               bottomSeparator="none"
               onClick={() => openModal(<ImageOperationModal
-                operation="install"
+                operation={setupPending ? "setup" : "install"}
                 perform={initializeWaydroid}
                 onError={(error) => reportError(error, setMessage)}
               />)}
             >
-              {t("installWaydroid")}
+              {t(setupPending ? "finishImageSetup" : "installWaydroid")}
             </ButtonItem>
           </PanelSectionRow>
         )}
-        {status?.initialized && (
+        {status?.initialized && !setupPending && (
           <>
             {status.waydroidShortcutId && (
               <PanelSectionRow>
@@ -375,7 +377,7 @@ function Content() {
       </PanelSection>
       </Focusable>
 
-      {status?.initialized && (
+      {status?.initialized && !setupPending && (
         <PanelSection title={t("androidApps", { count: apps.length })}>
           <PanelSectionRow>
             <ButtonItem

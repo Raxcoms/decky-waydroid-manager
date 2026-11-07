@@ -2,6 +2,7 @@ import { callable } from "@decky/api";
 
 export type Status = {
   initialized: boolean;
+  hasAppEntries: boolean;
   serviceRunning: boolean;
   sessionAvailable: boolean;
   autoAddApps: boolean;
@@ -12,7 +13,7 @@ export type Status = {
 export type AndroidApp = { name: string; package: string; icon: string; iconPath: string; shortcutId?: number; removable: boolean };
 export type Shortcut = { name: string; exe: string; startDir: string; launchOptions: string; icon: string; key: string };
 export type ArtworkRole = "portrait" | "hero" | "logo" | "landscape";
-export type ImageProgress = { stage: "preparing" | "downloading" | "finalizing" | "starting" | "booting" | "language" | "cleaning" | "stopping" | "deleting"; percent: number | null };
+export type ImageProgress = { stage: "preparing" | "downloading" | "finalizing" | "starting" | "booting" | "language" | "apps" | "cleaning" | "stopping" | "deleting"; percent: number | null };
 export type Artwork = { roles: ArtworkRole[]; ready: boolean; name: string; icon: string; images: { name: string; data: string }[] };
 
 export const getStatus = callable<[], Status>("get_status");

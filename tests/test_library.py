@@ -69,10 +69,35 @@ class LibraryTests(unittest.TestCase):
 
     def test_image_setup_preserves_existing_android_language_preferences(self):
         (self.home / ".local/share/waydroid/data").mkdir(parents=True)
-        self.plugin._package_session = lambda progress: self.fail("Setup booted existing Android data")
+        self.plugin._initialized = lambda: True
+        self.plugin._package_session = lambda progress: nullcontext()
+        self.plugin._set_initial_locale = lambda *args: self.fail("Setup changed existing language preferences")
+        self.plugin._wait_for_app_entries = lambda *args: None
         with patch.object(self.plugin, "_install_gapps") as initialize:
             self.assertTrue(self.plugin._initialize_image("pt-BR"))
-            initialize.assert_called_once()
+            initialize.assert_not_called()
+
+    def test_image_setup_waits_for_all_launchable_apps_to_be_exported(self):
+        directory = self.home / ".local/share/applications"
+        directory.mkdir(parents=True)
+        (directory / "waydroid.example.first.desktop").touch()
+        commands = []
+
+        def run(command, *, timeout):
+            commands.append(command)
+            if len(commands) == 2:
+                (directory / "waydroid.example.second.desktop").touch()
+            return (
+                "Name: First\npackageName: example.first\ncategories:\n\tandroid.intent.category.LAUNCHER\n"
+                "Name: Service\npackageName: example.service\ncategories:\n\tandroid.intent.category.DEFAULT\n"
+                "Name: Second\npackageName: example.second\ncategories:\n\tandroid.intent.category.LAUNCHER"
+            )
+
+        self.plugin._run = run
+        with patch.object(backend.time, "sleep"):
+            self.plugin._wait_for_app_entries("user", 1000, self.home)
+        self.assertEqual(len(commands), 2)
+        self.assertEqual(commands[0][-3:], ["waydroid", "app", "list"])
 
     def test_install_confirmation_replies_require_current_target_token_and_one_boolean_decision(self):
         event, decision = threading.Event(), []
