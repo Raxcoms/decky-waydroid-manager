@@ -164,9 +164,6 @@ class Plugin:
             return ""
         return "data:image/png;base64," + base64.b64encode(icon.read_bytes()).decode("ascii")
 
-    def _state_path(self, home: Path) -> Path:
-        return StateStore(home).path
-
     def _load_state(self, home: Path) -> dict[str, Any]:
         return StateStore(home).load()
 
@@ -714,7 +711,8 @@ class Plugin:
             shutil.rmtree(user_data)
         for entry in (home / ".local/share/applications").glob("waydroid.*.desktop"):
             entry.unlink(missing_ok=True)
-        self._state_path(home).unlink(missing_ok=True)
+        with self._state_lock:
+            StateStore(home).clear()
         decky.logger.info("Removed Waydroid data for %s", user)
         return shortcuts
 

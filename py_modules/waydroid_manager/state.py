@@ -1,5 +1,6 @@
 import json
 import os
+from errno import ENOTEMPTY
 from pathlib import Path
 import tempfile
 
@@ -31,7 +32,7 @@ class StateStore:
 
     def save(self, state: dict) -> None:
         self._validate_path()
-        if self.path.is_file() and self.load() == state:
+        if self.load() == state:
             return
         owner = self.home.stat()
         missing = []
@@ -54,6 +55,17 @@ class StateStore:
         finally:
             if temporary_path:
                 temporary_path.unlink(missing_ok=True)
+
+    def clear(self) -> None:
+        self._validate_path()
+        self.path.unlink(missing_ok=True)
+        try:
+            self.path.parent.rmdir()
+        except FileNotFoundError:
+            pass
+        except OSError as error:
+            if error.errno != ENOTEMPTY:
+                raise
 
     def _validate_path(self) -> None:
         if not self.path.resolve().is_relative_to(self.home.resolve()):

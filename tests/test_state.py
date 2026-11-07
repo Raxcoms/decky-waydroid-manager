@@ -25,11 +25,26 @@ class StateStoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, patch("waydroid_manager.state.os.chown", create=True):
             store = StateStore(Path(directory))
             state = store.load()
+            state["autoAddApps"] = True
             store.save(state)
             inode = store.path.stat().st_ino
             with patch("waydroid_manager.state.tempfile.NamedTemporaryFile", side_effect=AssertionError("Unnecessary write")):
                 store.save(state)
             self.assertEqual(store.path.stat().st_ino, inode)
+
+    def test_default_state_stays_absent_after_full_removal(self):
+        with tempfile.TemporaryDirectory() as directory, patch("waydroid_manager.state.os.chown", create=True):
+            store = StateStore(Path(directory))
+            state = store.load()
+            store.save(state)
+            self.assertFalse(store.path.parent.exists())
+
+            state["autoAddApps"] = True
+            store.save(state)
+            self.assertTrue(store.path.exists())
+            store.clear()
+            store.save(store.load())
+            self.assertFalse(store.path.parent.exists())
 
     @unittest.skipIf(os.name == "nt", "Requires Unix symlinks")
     def test_state_directory_cannot_escape_the_user_home(self):
