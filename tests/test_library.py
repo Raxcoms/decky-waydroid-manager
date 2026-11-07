@@ -35,7 +35,7 @@ class LibraryTests(unittest.TestCase):
         self.state = {"shortcuts": {"example.app": 123}, "removedShortcuts": []}
         self.plugin._load_state = lambda home: self.state
         self.plugin._save_state = lambda home, state: setattr(self, "state", state)
-        self.plugin._service_state = lambda state: True
+        self.plugin._service_running = lambda: True
 
     def tearDown(self):
         self.directory.cleanup()
@@ -135,7 +135,7 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(self.plugin._removable_packages(), {"example.app", "another.app"})
 
     def test_offline_polling_never_activates_waydroid_dbus_service(self):
-        self.plugin._service_state = lambda state: False
+        self.plugin._service_running = lambda: False
         self.plugin._run = lambda *args, **kwargs: self.fail("Offline check contacted Waydroid")
         self.state["removableApps"] = ["example.app"]
         self.assertEqual(self.plugin._removable_packages(), {"example.app"})
@@ -289,7 +289,7 @@ class PackageSessionTests(unittest.TestCase):
         self.plugin._steam_graphics_environment = lambda uid: {
             "GAMESCOPE_WAYLAND_DISPLAY": "gamescope-primary", "WAYLAND_DISPLAY": "other-display",
         }
-        self.plugin._service_state = lambda state: self.service_active
+        self.plugin._service_running = lambda: self.service_active
         self.service_active = True
         self.session_running = False
         self.unit_state = "active"

@@ -82,9 +82,9 @@ class Plugin:
     def _initialized(self) -> bool:
         return (WAYDROID_DIR / "waydroid.cfg").is_file() and (WAYDROID_DIR / "rootfs").is_dir()
 
-    def _service_state(self, action: str) -> bool:
+    def _service_running(self) -> bool:
         return subprocess.run(
-            ["systemctl", "is-" + action, SERVICE],
+            ["systemctl", "is-active", SERVICE],
             env=clean_env(),
             timeout=10,
             stdout=subprocess.DEVNULL,
@@ -202,7 +202,7 @@ class Plugin:
 
     def _removable_packages(self, allow_cached: bool = True) -> set[str]:
         _, _, home = self._user()
-        if not self._service_state("active"):
+        if not self._service_running():
             if not allow_cached:
                 raise RuntimeError("WAYDROID_NOT_RUNNING")
             return set(self._load_state(home).get("removableApps", []))
@@ -266,7 +266,7 @@ class Plugin:
             session_available = False
         return {
             "initialized": self._initialized(),
-            "serviceRunning": self._service_state("active"),
+            "serviceRunning": self._service_running(),
             "sessionAvailable": session_available,
             "autoAddApps": state["autoAddApps"],
             "userHome": str(home),
@@ -437,7 +437,7 @@ class Plugin:
             return result
         try:
             apks = persistent_apks(home / ".local/share/waydroid/data", key)
-            if not apks and self._service_state("active"):
+            if not apks and self._service_running():
                 pid = container_pid()
                 if pid:
                     # Keep proc's root link intact for the container mount tree.
@@ -542,7 +542,7 @@ class Plugin:
 
     def _require_session(self) -> None:
         # Waydroid status contacts D-Bus and can activate a stopped service.
-        if not self._service_state("active"):
+        if not self._service_running():
             raise RuntimeError("WAYDROID_NOT_RUNNING")
         try:
             status = self._run(["waydroid", "status"])
@@ -575,7 +575,7 @@ class Plugin:
             f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus",
         ]
         unit = f"waydroid-manager-package-{uuid.uuid4().hex}"
-        service_was_active = self._service_state("active")
+        service_was_active = self._service_running()
         try:
             progress("starting")
             self._run(["systemctl", "start", SERVICE])
