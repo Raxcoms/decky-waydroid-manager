@@ -42,8 +42,10 @@ jobs:
           node --experimental-strip-types --test tests/*.test.mts
           bash -n bin/waydroid-launcher bin/waydroid-session
       - name: Package plugin
+        env:
+          BUILD_REVISION: ${{ steps.revision.outputs.sha }}
         run: |
-          python3 scripts/package.py package
+          python3 scripts/package.py package --revision "$BUILD_REVISION"
           python3 scripts/check_package.py package/waydroid-manager
       - uses: actions/upload-artifact@v7
         with:
