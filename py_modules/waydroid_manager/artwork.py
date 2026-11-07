@@ -32,7 +32,7 @@ def prune_artwork(home: Path, grid: Path, recorded: dict[str, str], live_ids: se
             before = path.lstat()
             if stat.S_ISREG(before.st_mode) and before.st_size <= MAX_TOTAL_BYTES:
                 with path.open("rb") as file:
-                    matches = hashlib.file_digest(file, "sha256").hexdigest() == digest
+                    matches = hashlib.sha256(file.read(MAX_TOTAL_BYTES + 1)).hexdigest() == digest
                 after = path.lstat()
                 if matches and (after.st_ino, after.st_ctime_ns) == (before.st_ino, before.st_ctime_ns):
                     path.unlink()
