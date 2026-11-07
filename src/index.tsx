@@ -1,5 +1,5 @@
 import { getStatus, listApps, installGapps, startService, stopService, restartService, uninstallApp, getWaydroidShortcut, getAppShortcut, removeShortcutRecord, setAutoAddApps, pendingAutoShortcuts, legacyShortcuts, removeWaydroidImage, installPackage, type Status, type AndroidApp } from "./backend";
-import { addToSteam, removeFromSteam, launchSteamShortcut, updateSteamShortcut } from "./steam";
+import { addToSteam, removeFromSteam, launchSteamShortcut, requireSteamAccount, updateSteamShortcut } from "./steam";
 import { definePlugin, FileSelectionType, openFilePicker, toaster, useQuickAccessVisible } from "@decky/api";
 import {
   ButtonItem,
@@ -20,7 +20,7 @@ import { t } from "./i18n";
 import { watchRuntime } from "./runtime";
 import { watchShortcutArtwork } from "./artwork";
 import { operationError } from "./errors";
-import { liveShortcutIds } from "./library";
+import { currentSteamAccount, liveShortcutIds } from "./library";
 import { PackageOperationModal } from "./PackageOperationModal";
 import { ImageOperationModal } from "./ImageOperationModal";
 import { AppListState } from "./panelState";
@@ -83,19 +83,29 @@ function revealPanelTop(event: Event) {
 function watchAutoShortcuts() {
   let busy = false;
   let disposed = false;
+  let lastAccount: number | null = null;
   const migrated = new Set<number>();
   const sync = async () => {
-    if (busy || disposed) return;
+    const accountId = currentSteamAccount();
+    if (busy || disposed || accountId === null) return;
+    if (accountId !== lastAccount) {
+      migrated.clear();
+      autoAddFailures.clear();
+      lastAccount = accountId;
+      libraryListeners.forEach((listener) => listener());
+    }
     busy = true;
     try {
       const live = liveShortcutIds();
-      for (const shortcut of await legacyShortcuts()) {
-        if (disposed || !live?.includes(shortcut.appId) || migrated.has(shortcut.appId)) continue;
-        await updateSteamShortcut(shortcut.appId, shortcut);
+      for (const shortcut of await legacyShortcuts(accountId)) {
+        if (disposed || currentSteamAccount() !== accountId) return;
+        if (!live?.includes(shortcut.appId) || migrated.has(shortcut.appId)) continue;
+        await updateSteamShortcut(shortcut.appId, shortcut, accountId);
         migrated.add(shortcut.appId);
       }
-      for (const shortcut of await pendingAutoShortcuts(live)) {
-        if (disposed) break;
+      if (disposed || currentSteamAccount() !== accountId) return;
+      for (const shortcut of await pendingAutoShortcuts(accountId, liveShortcutIds())) {
+        if (disposed || currentSteamAccount() !== accountId) break;
         try {
           await addToSteam(shortcut);
           toast(shortcut.name, t("addedToSteam"));
@@ -153,6 +163,7 @@ function AppMenu({ release, ...props }: MenuProps & { release: () => void }) {
 
 type AppRowProps = {
   app: AndroidApp;
+  accountId: number | null;
   isLast: boolean;
   rowRef?: Ref<HTMLDivElement>;
   setShortcutId: (id?: number) => void;
@@ -160,25 +171,27 @@ type AppRowProps = {
   setMessage: (message: string | null) => void;
 };
 
-function AppRow({ app, isLast, rowRef, setShortcutId, onUninstalled, setMessage }: AppRowProps) {
+function AppRow({ app, accountId, isLast, rowRef, setShortcutId, onUninstalled, setMessage }: AppRowProps) {
   const add = async () => {
-    const shortcut = await getAppShortcut(app.package);
+    const account = requireSteamAccount(accountId);
+    const shortcut = await getAppShortcut(account, app.package);
     const appId = await addToSteam(shortcut);
-    setShortcutId(appId);
+    if (currentSteamAccount() === account) setShortcutId(appId);
   };
   const remove = async () => {
     if (!app.shortcutId) {
       throw new Error(t("shortcutStateUnavailable"));
     }
-    await removeFromSteam(app.shortcutId);
-    await removeShortcutRecord(app.package);
-    setShortcutId();
+    const account = requireSteamAccount(accountId);
+    await removeFromSteam(app.shortcutId, account);
+    await removeShortcutRecord(account, app.package);
+    if (currentSteamAccount() === account) setShortcutId();
   };
   const launch = async () => {
     if (!app.shortcutId) {
       throw new Error(t("shortcutStateUnavailable"));
     }
-    launchSteamShortcut(app.shortcutId);
+    launchSteamShortcut(app.shortcutId, requireSteamAccount(accountId));
   };
   const openMenu = () => {
     const release = appListState.retainForOverlay();
@@ -194,8 +207,8 @@ function AppRow({ app, isLast, rowRef, setShortcutId, onUninstalled, setMessage 
           {app.removable && (
             <MenuItem onSelected={() => openModal(
               <PackageOperationModal name={app.name} operation="uninstall" target={app.package} onError={(error) => reportError(error, setMessage)} perform={async () => {
-                const shortcutId = (await uninstallApp(app.package)) ?? app.shortcutId;
-                if (shortcutId) await removeFromSteam(shortcutId);
+                const shortcutId = await uninstallApp(app.package, accountId);
+                if (shortcutId && accountId) await removeFromSteam(shortcutId, accountId);
                 onUninstalled();
                 setMessage(null);
                 toast(app.name, t("appUninstalled"));
@@ -260,9 +273,12 @@ function Content() {
   };
 
   const refresh = useCallback(async () => {
-    const nextStatus = await getStatus();
+    const accountId = currentSteamAccount();
+    const nextStatus = await getStatus(accountId);
+    const nextApps = nextStatus.initialized ? await listApps(accountId) : [];
+    if (currentSteamAccount() !== accountId) return;
     setStatus(nextStatus);
-    setApps(nextStatus.initialized ? await listApps() : []);
+    setApps(nextApps);
   }, []);
 
   useEffect(() => {
@@ -303,22 +319,25 @@ function Content() {
   };
   const setupPending = status?.initialized && status.hasAppEntries === false;
   const addWaydroid = async () => {
-    const shortcut = await getWaydroidShortcut();
+    const accountId = requireSteamAccount(status?.accountId);
+    const shortcut = await getWaydroidShortcut(accountId);
     const appId = await addToSteam(shortcut);
-    setStatus((current) => current ? { ...current, waydroidShortcutId: appId } : current);
+    setStatus((current) => current?.accountId === accountId ? { ...current, waydroidShortcutId: appId } : current);
   };
   const removeWaydroidShortcut = async () => {
     if (!status?.waydroidShortcutId) {
       throw new Error(t("shortcutStateUnavailable"));
     }
-    await removeFromSteam(status.waydroidShortcutId);
-    await removeShortcutRecord("waydroid");
-    setStatus((current) => current ? { ...current, waydroidShortcutId: undefined } : current);
+    const accountId = requireSteamAccount(status.accountId);
+    await removeFromSteam(status.waydroidShortcutId, accountId);
+    await removeShortcutRecord(accountId, "waydroid");
+    setStatus((current) => current?.accountId === accountId ? { ...current, waydroidShortcutId: undefined } : current);
   };
   const removeWaydroid = async (showLibraryProgress: () => void) => {
-    const shortcuts = await removeWaydroidImage();
+    const accountId = currentSteamAccount();
+    const shortcuts = await removeWaydroidImage(accountId);
     if (shortcuts.length) showLibraryProgress();
-    for (const id of shortcuts) await removeFromSteam(id);
+    if (accountId) for (const id of shortcuts) await removeFromSteam(id, accountId);
     await refresh();
     setMessage(null);
     toast(t("waydroid"), t("imageRemoved"));
@@ -334,7 +353,7 @@ function Content() {
     if (!status?.waydroidShortcutId) {
       throw new Error(t("shortcutStateUnavailable"));
     }
-    launchSteamShortcut(status.waydroidShortcutId);
+    launchSteamShortcut(status.waydroidShortcutId, requireSteamAccount(status.accountId));
   };
 
   return (
@@ -404,7 +423,7 @@ function Content() {
                       onError={(error) => reportError(error, setMessage)}
                       perform={async () => {
                         if (!await installPackage(path)) return;
-                        setApps(await listApps());
+                        await refresh();
                         setMessage(null);
                         toast(t("waydroid"), t("packageInstalled"));
                       }}
@@ -424,13 +443,14 @@ function Content() {
               label={t("autoAddApps")}
               description={t("autoAddAppsDescription")}
               checked={status.autoAddApps}
-              onChange={(enabled) => run(() => setAutoAddApps(enabled), refresh, setMessage)()}
+              onChange={(enabled) => run(() => setAutoAddApps(requireSteamAccount(status.accountId), enabled), refresh, setMessage)()}
             />
           </PanelSectionRow>
           {shownApps.map((app, index) => (
             <AppRow
               key={app.package}
               app={app}
+              accountId={status.accountId}
               isLast={!hasMoreApps && index === shownApps.length - 1}
               rowRef={app.package === appToFocus ? nextAppRow : undefined}
               setShortcutId={(id) => setApps((current) => current.map((item) => item.package === app.package ? { ...item, shortcutId: id } : item))}

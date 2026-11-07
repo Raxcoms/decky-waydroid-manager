@@ -16,7 +16,7 @@ class StateStoreTests(unittest.TestCase):
             store = StateStore(Path(directory))
             store.path.parent.mkdir(parents=True)
             store.path.write_text(json.dumps({"autoAddApps": "true", "observedApps": [{}, "example.app"], "shortcuts": {"bad": True, "app": 123}}))
-            state = store.load()
+            state = store.load()["legacy"]
             self.assertFalse(state["autoAddApps"])
             self.assertEqual(state["observedApps"], ["example.app"])
             self.assertEqual(state["shortcuts"], {"app": 123})
@@ -25,7 +25,7 @@ class StateStoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, patch("waydroid_manager.state.os.chown", create=True):
             store = StateStore(Path(directory))
             state = store.load()
-            state["autoAddApps"] = True
+            store.account(state, 1)["autoAddApps"] = True
             store.save(state)
             inode = store.path.stat().st_ino
             with patch("waydroid_manager.state.tempfile.NamedTemporaryFile", side_effect=AssertionError("Unnecessary write")):
@@ -39,7 +39,7 @@ class StateStoreTests(unittest.TestCase):
             store.save(state)
             self.assertFalse(store.path.parent.exists())
 
-            state["autoAddApps"] = True
+            store.account(state, 1)["autoAddApps"] = True
             store.save(state)
             self.assertTrue(store.path.exists())
             store.clear()

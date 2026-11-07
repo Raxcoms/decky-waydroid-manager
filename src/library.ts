@@ -5,6 +5,14 @@ function steamApps(): AppStore | undefined {
   return (globalThis as unknown as { appStore?: AppStore }).appStore;
 }
 
+export function currentSteamAccount(): number | null {
+  const app = globalThis.App;
+  if (app?.BHasCurrentUser?.() === false) return null;
+  const steamId = app?.GetCurrentUser?.()?.strSteamID;
+  if (typeof steamId !== "string" || !/^\d{17,20}$/.test(steamId)) return null;
+  return Number(BigInt.asUintN(32, BigInt(steamId))) || null;
+}
+
 export function liveShortcutIds(): number[] | null {
   const apps = steamApps()?.allApps;
   if (!apps?.length) return null;

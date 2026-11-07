@@ -22,7 +22,7 @@ from waydroid_manager.artwork import ARTWORK_TYPES, ARTWORK_VERSION, artwork_fil
 from waydroid_manager.metrics import GpuMetrics
 from waydroid_manager.packages import apk_members, stage_apks, install_apks, check_result
 from waydroid_manager.verification import InstallCancelled, InstallVerification, commit_install
-from waydroid_manager.steam import read_shortcuts, shortcuts_path, shortcut_key, migrated_launch_options
+from waydroid_manager.steam import known_accounts, read_shortcuts, shortcuts_path, shortcut_key, migrated_launch_options
 from waydroid_manager.container import CONFIG_DIR, SERVICE, container_pid
 from waydroid_manager.image import launcher_packages, require_unmounted, require_unredirected, run_init
 from waydroid_manager.control import ServiceControl, control_path
@@ -147,17 +147,30 @@ class Plugin:
     def _save_state(self, home: Path, state: dict[str, Any]) -> None:
         StateStore(home).save(state)
 
-    def _shortcut_ids(self, home: Path) -> dict[str, int]:
-        state = self._load_state(home)
-        shortcuts = state["shortcuts"]
-        if not isinstance(shortcuts, dict):
+    def _account_state(self, home: Path, state: dict, account_id: int) -> dict:
+        legacy = state.pop("legacy", None)
+        if legacy is not None and not state["accounts"]:
+            try:
+                if known_accounts(home) == {account_id}:
+                    state["accounts"][str(account_id)] = legacy
+            except (OSError, ValueError, RuntimeError):
+                pass
+        return StateStore.account(state, account_id)
+
+    def _shortcut_ids(self, home: Path, account_id: int | None, history: dict | None = None) -> dict[str, int]:
+        if account_id is None:
             return {}
-        recorded = {key: value for key, value in shortcuts.items() if isinstance(key, str) and isinstance(value, int)}
-        removed = set(state["removedShortcuts"])
         try:
-            saved_shortcuts = read_shortcuts(self._shortcuts_path(home))
+            path = self._shortcuts_path(home, account_id)
         except (OSError, RuntimeError, ValueError):
-            return recorded
+            return {}
+        if history is None:
+            history = self._account_state(home, self._load_state(home), account_id)
+        removed = set(history["removedShortcuts"])
+        try:
+            saved_shortcuts = read_shortcuts(path)
+        except (OSError, RuntimeError, ValueError):
+            return history["shortcuts"].copy()
 
         launcher = str(self._launcher())
         ids: dict[str, int] = {}
@@ -166,7 +179,7 @@ class Plugin:
             exe = str(shortcut.get("exe", (1, ""))[1]).strip('"')
             options = str(shortcut.get("launchoptions", (1, ""))[1])
             app_id = shortcut.get("appid", (2, 0))[1]
-            if not isinstance(app_id, int):
+            if not isinstance(app_id, int) or not app_id:
                 continue
             normalized_id = app_id & 0xFFFFFFFF
             key = shortcut_key(options) if Path(exe).resolve() == Path(launcher).resolve() else None
@@ -199,10 +212,10 @@ class Plugin:
             raise RuntimeError("WAYDROID_NOT_RUNNING")
         return set(self._load_state(home).get("removableApps", []))
 
-    def _desktop_entries(self, removable_packages: set[str] | None = None, *,
+    def _desktop_entries(self, removable_packages: set[str] | None = None, *, account_id: int | None = None,
                          package: str | None = None, include_icons: bool = False) -> list[dict[str, Any]]:
         _, _, home = self._user()
-        shortcut_ids = self._shortcut_ids(home)
+        shortcut_ids = self._shortcut_ids(home, account_id)
         removable = removable_packages or set()
         apps = [{
             "name": app.name,
@@ -214,37 +227,40 @@ class Plugin:
         } for app in app_exports(home, package)]
         return sorted(apps, key=lambda app: app["name"].casefold())
 
-    def _shortcuts_path(self, home: Path) -> Path:
-        return shortcuts_path(home)
+    def _shortcuts_path(self, home: Path, account_id: int) -> Path:
+        if type(account_id) is not int or not 0 < account_id <= 0xFFFFFFFF:
+            raise RuntimeError("Invalid Steam account ID")
+        return shortcuts_path(home, account_id)
 
-    def _status(self) -> dict[str, Any]:
+    def _status(self, account_id: int | None) -> dict[str, Any]:
         _, uid, home = self._user()
-        state = self._load_state(home)
-        shortcut_ids = self._shortcut_ids(home)
+        history = self._account_state(home, self._load_state(home), account_id) if account_id is not None else StateStore.shortcut_defaults()
+        shortcut_ids = self._shortcut_ids(home, account_id, history)
         return {
             "initialized": self._initialized(),
             "hasAppEntries": any((home / ".local/share/applications").glob("waydroid.*.desktop")),
             "serviceRunning": self._service_running(),
             "sessionAvailable": steam_wayland_socket(uid) is not None,
-            "autoAddApps": state["autoAddApps"],
+            "autoAddApps": history["autoAddApps"],
+            "accountId": account_id,
             "userHome": str(home),
             "waydroidShortcutId": shortcut_ids.get(WAYDROID_SHORTCUT_KEY),
         }
 
-    async def get_status(self) -> dict[str, Any]:
-        return await asyncio.to_thread(self._status)
+    async def get_status(self, account_id: int | None = None) -> dict[str, Any]:
+        return await asyncio.to_thread(self._status, account_id)
 
-    def _list_apps(self) -> list[dict[str, Any]]:
+    def _list_apps(self, account_id: int | None = None) -> list[dict[str, Any]]:
         if not self._initialized():
             return []
         _, _, home = self._user()
         removable = set(self._load_state(home).get("removableApps", []))
-        return self._desktop_entries(removable, include_icons=True)
+        return self._desktop_entries(removable, account_id=account_id, include_icons=True)
 
-    async def list_apps(self) -> list[dict[str, Any]]:
-        return await asyncio.to_thread(self._list_apps)
+    async def list_apps(self, account_id: int | None = None) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(self._list_apps, account_id)
 
-    def _shortcut_details(self, name: str, package: str | None = None, icon: str = "") -> dict[str, str]:
+    def _shortcut_details(self, account_id: int, name: str, package: str | None = None, icon: str = "") -> dict[str, Any]:
         _, _, home = self._user()
         return {
             "name": name,
@@ -253,6 +269,7 @@ class Plugin:
             "launchOptions": "full" if package is None else f"app {package}",
             "icon": icon,
             "key": WAYDROID_SHORTCUT_KEY if package is None else package,
+            "accountId": account_id,
         }
 
     def _validate_shortcut_key(self, key: str) -> None:
@@ -261,92 +278,95 @@ class Plugin:
         if not PACKAGE_RE.fullmatch(key):
             raise RuntimeError("Invalid Android package name")
 
-    async def record_shortcut(self, key: str, app_id: int) -> None:
+    async def record_shortcut(self, account_id: int, key: str, app_id: int) -> None:
         self._validate_shortcut_key(key)
-        if not isinstance(app_id, int) or app_id == 0:
+        if type(app_id) is not int or not 0 < app_id <= 0xFFFFFFFF:
             raise RuntimeError("Steam did not return a valid shortcut ID")
         _, _, home = self._user()
+        self._shortcuts_path(home, account_id)
         with self._edit_state(home) as state:
-            state["shortcuts"][key] = app_id
-            state["removedShortcuts"] = [item for item in state["removedShortcuts"] if item != key]
-            state["pendingApps"] = [item for item in state["pendingApps"] if item != key]
+            history = self._account_state(home, state, account_id)
+            history["shortcuts"][key] = app_id
+            history["removedShortcuts"] = [item for item in history["removedShortcuts"] if item != key]
+            history["pendingApps"] = [item for item in history["pendingApps"] if item != key]
 
-    async def remove_shortcut_record(self, key: str) -> None:
+    async def remove_shortcut_record(self, account_id: int, key: str) -> None:
         self._validate_shortcut_key(key)
         _, _, home = self._user()
+        self._shortcuts_path(home, account_id)
         with self._edit_state(home) as state:
-            state["shortcuts"].pop(key, None)
-            state["pendingApps"] = [item for item in state["pendingApps"] if item != key]
-            if key not in state["removedShortcuts"]:
-                state["removedShortcuts"].append(key)
+            history = self._account_state(home, state, account_id)
+            history["shortcuts"].pop(key, None)
+            history["pendingApps"] = [item for item in history["pendingApps"] if item != key]
+            if key not in history["removedShortcuts"]:
+                history["removedShortcuts"].append(key)
 
-    async def set_auto_add_apps(self, enabled: bool) -> None:
+    async def set_auto_add_apps(self, account_id: int, enabled: bool) -> None:
         _, _, home = self._user()
+        self._shortcuts_path(home, account_id)
         with self._edit_state(home) as state:
-            state["autoAddApps"] = enabled
+            history = self._account_state(home, state, account_id)
+            history["autoAddApps"] = enabled
             if enabled:
-                state["observedApps"] = sorted({*state["observedApps"], *(app["package"] for app in self._desktop_entries())})
+                history["observedApps"] = sorted({*history["observedApps"], *(app["package"] for app in self._desktop_entries())})
 
-    def _pending_auto_shortcuts(self, live_ids: list[int] | None = None) -> list[dict[str, str]]:
+    def _pending_auto_shortcuts(self, account_id: int, live_ids: list[int] | None = None) -> list[dict[str, Any]]:
         if self._initialized() and container_pid() is not None:
             self._removable_packages()
         _, _, home = self._user()
+        path = self._shortcuts_path(home, account_id)
         with self._state_lock:
-            return self._update_auto_shortcuts(home, live_ids)
+            return self._update_auto_shortcuts(home, account_id, path, live_ids)
 
-    def _update_auto_shortcuts(self, home: Path, live_ids: list[int] | None) -> list[dict[str, str]]:
+    def _update_auto_shortcuts(self, home: Path, account_id: int, path: Path, live_ids: list[int] | None) -> list[dict[str, Any]]:
         state = self._load_state(home)
+        history = self._account_state(home, state, account_id)
         if live_ids is not None:
             ids = set(live_ids)
             if state.get("artwork"):
-                try:
-                    grid = self._shortcuts_path(home).parent / "grid"
-                except RuntimeError:
-                    pass
-                else:
-                    prune_artwork(home, grid, state["artwork"], ids)
-            discovered = self._shortcut_ids(home)
-            for key, app_id in list(state["shortcuts"].items()):
+                prune_artwork(home, path.parent / "grid", state["artwork"], ids)
+            discovered = self._shortcut_ids(home, account_id, history)
+            for key, app_id in list(history["shortcuts"].items()):
                 if app_id in ids:
                     continue
                 replacement = discovered.get(key)
                 if replacement in ids:
-                    state["shortcuts"][key] = replacement
+                    history["shortcuts"][key] = replacement
                 else:
-                    state["shortcuts"].pop(key)
-                    if key not in state["removedShortcuts"]:
-                        state["removedShortcuts"].append(key)
-                    state["pendingApps"] = [item for item in state["pendingApps"] if item != key]
+                    history["shortcuts"].pop(key)
+                    if key not in history["removedShortcuts"]:
+                        history["removedShortcuts"].append(key)
+                    history["pendingApps"] = [item for item in history["pendingApps"] if item != key]
+        if not history["autoAddApps"]:
             self._save_state(home, state)
-        if not state["autoAddApps"]:
             return []
 
-        apps = self._desktop_entries()
+        apps = self._desktop_entries(account_id=account_id)
         installed = {app["package"]: app for app in apps}
-        observed = set(state["observedApps"])
-        removed = set(state["removedShortcuts"])
-        recorded = set(state["shortcuts"])
-        pending = set(state["pendingApps"])
+        observed = set(history["observedApps"])
+        removed = set(history["removedShortcuts"])
+        recorded = set(history["shortcuts"])
+        pending = set(history["pendingApps"])
         pending.update(package for package, app in installed.items() if package not in observed and package not in removed and package not in recorded and not app["shortcutId"])
         pending = {package for package in pending if package in installed and not installed[package]["shortcutId"]}
-        state["observedApps"] = sorted(observed | set(installed))
-        state["pendingApps"] = sorted(pending & set(installed))
+        history["observedApps"] = sorted(observed | set(installed))
+        history["pendingApps"] = sorted(pending & set(installed))
         self._save_state(home, state)
         return [
-            self._shortcut_details(app["name"], package, app["iconPath"])
+            self._shortcut_details(account_id, app["name"], package, app["iconPath"])
             for package, app in installed.items()
-            if package in state["pendingApps"]
+            if package in history["pendingApps"]
         ]
 
-    async def pending_auto_shortcuts(self, live_ids: list[int] | None = None) -> list[dict[str, str]]:
-        return await asyncio.to_thread(self._pending_auto_shortcuts, live_ids)
+    async def pending_auto_shortcuts(self, account_id: int, live_ids: list[int] | None = None) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(self._pending_auto_shortcuts, account_id, live_ids)
 
-    def _legacy_shortcuts(self) -> list[dict[str, Any]]:
+    def _legacy_shortcuts(self, account_id: int) -> list[dict[str, Any]]:
         _, _, home = self._user()
         result = []
         names = {app["package"]: app["name"] for app in self._desktop_entries()}
         names[WAYDROID_SHORTCUT_KEY] = "Waydroid"
-        for _, (_, entry) in read_shortcuts(self._shortcuts_path(home)).items():
+        for _, (_, entry) in read_shortcuts(self._shortcuts_path(home, account_id)).items():
             entry = {key.casefold(): value for key, value in entry.items()}
             exe = str(entry.get("exe", (1, ""))[1]).strip('"')
             existing_options = str(entry.get("launchoptions", (1, ""))[1])
@@ -364,59 +384,63 @@ class Plugin:
                 result.append(update)
         return result
 
-    async def legacy_shortcuts(self) -> list[dict[str, Any]]:
-        return await asyncio.to_thread(self._legacy_shortcuts)
+    async def legacy_shortcuts(self, account_id: int) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(self._legacy_shortcuts, account_id)
 
-    async def get_waydroid_shortcut(self) -> dict[str, str]:
-        return self._shortcut_details("Waydroid")
+    async def get_waydroid_shortcut(self, account_id: int) -> dict[str, Any]:
+        _, _, home = self._user()
+        self._shortcuts_path(home, account_id)
+        return self._shortcut_details(account_id, "Waydroid")
 
-    async def get_app_shortcut(self, package: str) -> dict[str, str]:
+    async def get_app_shortcut(self, account_id: int, package: str) -> dict[str, Any]:
         if not PACKAGE_RE.fullmatch(package):
             raise RuntimeError("Invalid Android package name")
         app = next(iter(self._desktop_entries(package=package)), None)
         if not app:
             raise RuntimeError("Android app is no longer installed")
-        return self._shortcut_details(app["name"], package, app["iconPath"])
+        _, _, home = self._user()
+        self._shortcuts_path(home, account_id)
+        return self._shortcut_details(account_id, app["name"], package, app["iconPath"])
 
-    def _pending_shortcut_artwork(self) -> list[dict[str, Any]]:
+    def _pending_shortcut_artwork(self, account_id: int) -> list[dict[str, Any]]:
         _, _, home = self._user()
         try:
-            grid = self._shortcuts_path(home).parent / "grid"
+            grid = self._shortcuts_path(home, account_id).parent / "grid"
         except RuntimeError:
             return []
         records = self._load_state(home)["artwork"]
-        return [{"key": key, "appId": app_id} for key, app_id in self._shortcut_ids(home).items()
+        return [{"key": key, "appId": app_id} for key, app_id in self._shortcut_ids(home, account_id).items()
                 if any(artwork_updates(home, grid, app_id, records))]
 
-    async def pending_shortcut_artwork(self) -> list[dict[str, Any]]:
-        return await asyncio.to_thread(self._pending_shortcut_artwork)
+    async def pending_shortcut_artwork(self, account_id: int) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(self._pending_shortcut_artwork, account_id)
 
-    def _shortcut_artwork(self, key: str, app_id: int) -> dict[str, Any]:
+    def _shortcut_artwork(self, account_id: int, key: str, app_id: int) -> dict[str, Any]:
         self._validate_shortcut_key(key)
         _, _, home = self._user()
-        if self._shortcut_ids(home).get(key) != app_id:
+        if self._shortcut_ids(home, account_id).get(key) != app_id:
             raise RuntimeError("The Steam shortcut no longer exists")
-        grid = self._shortcuts_path(home).parent / "grid"
+        grid = self._shortcuts_path(home, account_id).parent / "grid"
         roles, clear_logo = artwork_updates(home, grid, app_id, self._load_state(home)["artwork"])
         app = next(iter(self._desktop_entries(package=key, include_icons=True)), None) if key != WAYDROID_SHORTCUT_KEY else None
         if not app and key != WAYDROID_SHORTCUT_KEY:
             roles = []
         return {"roles": roles, "clearLogo": clear_logo, "name": app["name"] if app else "Waydroid", "icon": app["icon"] if app else ""}
 
-    async def get_shortcut_artwork(self, key: str, app_id: int) -> dict[str, Any]:
-        return await asyncio.to_thread(self._shortcut_artwork, key, app_id)
+    async def get_shortcut_artwork(self, account_id: int, key: str, app_id: int) -> dict[str, Any]:
+        return await asyncio.to_thread(self._shortcut_artwork, account_id, key, app_id)
 
-    async def record_shortcut_artwork(self, app_id: int, role: str, digest: str, version: int = 0) -> None:
+    async def record_shortcut_artwork(self, account_id: int, app_id: int, role: str, digest: str, version: int = 0) -> None:
         if (type(app_id) is not int or not 0 < app_id <= 0xFFFFFFFF
                 or role not in {*ARTWORK_TYPES, "logoPosition"} or not re.fullmatch(r"[0-9a-f]{64}", digest)
                 or type(version) is not int or not 0 <= version <= ARTWORK_VERSION):
             raise RuntimeError("Invalid Steam artwork record")
         _, _, home = self._user()
-        grid = (self._shortcuts_path(home).parent / "grid").resolve()
+        grid = (self._shortcuts_path(home, account_id).parent / "grid").resolve()
         if not grid.is_relative_to(home):
             raise RuntimeError("The Steam artwork directory is outside the user home")
         with self._edit_state(home) as state:
-            if app_id in self._shortcut_ids(home).values():
+            if app_id in self._shortcut_ids(home, account_id).values():
                 path = grid / artwork_filename(app_id, role)
                 state["artwork"][str(path.relative_to(home))] = f"{version}:{digest}" if version else digest
 
@@ -717,13 +741,13 @@ class Plugin:
             raise RuntimeError("WAYDROID_NOT_INSTALLED")
         await self.start_service()
 
-    def _uninstall_package(self, package: str) -> int | None:
+    def _uninstall_package(self, package: str, account_id: int | None = None) -> int | None:
         if not PACKAGE_RE.fullmatch(package):
             raise RuntimeError("Invalid Android package name")
         self._set_package_progress("uninstall", package, "preparing")
         try:
             with self._package_session(lambda stage: self._set_package_progress("uninstall", package, stage)):
-                shortcut_id = self._remove_installed_package(package)
+                shortcut_id = self._remove_installed_package(package, account_id)
             self._set_package_progress("uninstall", package, "library")
             return shortcut_id
         except Exception:
@@ -743,34 +767,39 @@ class Plugin:
             return result
         return {"stage": "preparing"}
 
-    def _remove_installed_package(self, package: str) -> int | None:
+    def _remove_installed_package(self, package: str, account_id: int | None = None) -> int | None:
         self._set_package_progress("uninstall", package, "checking")
         if package not in self._removable_packages(allow_cached=False):
             raise RuntimeError("APP_NOT_REMOVABLE")
         _, _, home = self._user()
-        shortcut_id = self._shortcut_ids(home).get(package)
+        shortcut_id = self._shortcut_ids(home, account_id).get(package)
         self._set_package_progress("uninstall", package, "removing")
         output = self._run(["waydroid", "shell", "--", "pm", "uninstall", package], timeout=60)
         self._check_package_result(output)
         (home / ".local/share/applications" / f"waydroid.{package}.desktop").unlink(missing_ok=True)
         with self._edit_state(home) as state:
-            state["shortcuts"].pop(package, None)
-            for key in ("observedApps", "pendingApps", "removedShortcuts", "removableApps"):
-                state[key] = [item for item in state.get(key, []) if item != package]
+            state["removableApps"] = [item for item in state["removableApps"] if item != package]
+            histories = list(state["accounts"].values())
+            if "legacy" in state:
+                histories.append(state["legacy"])
+            for history in histories:
+                history["shortcuts"].pop(package, None)
+                for key in ("observedApps", "pendingApps", "removedShortcuts"):
+                    history[key] = [item for item in history[key] if item != package]
         return shortcut_id
 
-    async def uninstall_app(self, package: str) -> int | None:
+    async def uninstall_app(self, package: str, account_id: int | None = None) -> int | None:
         async with self._package_lock:
-            return await asyncio.to_thread(self._uninstall_package, package)
+            return await asyncio.to_thread(self._uninstall_package, package, account_id)
 
-    def _remove_image(self) -> list[int]:
+    def _remove_image(self, account_id: int | None) -> list[int]:
         user, _, home = self._user()
         user_data = home / ".local/share/waydroid"
         applications = home / ".local/share/applications"
         data_paths = (WAYDROID_DIR, user_data)
         for path in (*data_paths, applications):
             require_unredirected(path)
-        shortcuts = sorted(set(self._shortcut_ids(home).values()))
+        shortcuts = sorted(set(self._shortcut_ids(home, account_id).values()))
         self._run(["systemctl", "stop", SERVICE])
         require_unmounted(data_paths)
         self._set_image_progress("deleting", None)
@@ -787,11 +816,11 @@ class Plugin:
         decky.logger.info("Removed Waydroid data for %s", user)
         return shortcuts
 
-    async def remove_waydroid(self) -> list[int]:
+    async def remove_waydroid(self, account_id: int | None = None) -> list[int]:
         async with self._package_lock:
             self._set_image_progress("stopping", None)
             try:
-                return await asyncio.to_thread(self._remove_image)
+                return await asyncio.to_thread(self._remove_image, account_id)
             finally:
                 self._image_progress = None
 

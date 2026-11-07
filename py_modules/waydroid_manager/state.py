@@ -14,8 +14,30 @@ class StateStore:
 
     @staticmethod
     def defaults() -> dict:
-        return {"autoAddApps": False, "observedApps": [], "pendingApps": [], "shortcuts": {},
-                "removedShortcuts": [], "removableApps": [], "artwork": {}}
+        return {"accounts": {}, "removableApps": [], "artwork": {}}
+
+    @staticmethod
+    def shortcut_defaults() -> dict:
+        return {"autoAddApps": False, "observedApps": [], "pendingApps": [], "shortcuts": {}, "removedShortcuts": []}
+
+    @staticmethod
+    def account(state: dict, account_id: int) -> dict:
+        return state["accounts"].setdefault(str(account_id), StateStore.shortcut_defaults())
+
+    @staticmethod
+    def _strings(values) -> list[str]:
+        return sorted({value for value in values if isinstance(value, str)}) if isinstance(values, list) else []
+
+    @staticmethod
+    def _shortcut_state(saved: dict) -> dict:
+        state = StateStore.shortcut_defaults()
+        state["autoAddApps"] = saved.get("autoAddApps") is True
+        for key in ("observedApps", "pendingApps", "removedShortcuts"):
+            state[key] = StateStore._strings(saved.get(key))
+        if isinstance(saved.get("shortcuts"), dict):
+            state["shortcuts"] = {key: value for key, value in saved["shortcuts"].items()
+                                  if isinstance(key, str) and type(value) is int and 0 < value <= 0xFFFFFFFF}
+        return state
 
     def load(self) -> dict:
         self._validate_path()
@@ -28,13 +50,17 @@ class StateStore:
             return state
         if not isinstance(saved, dict):
             return state
-        state["autoAddApps"] = saved.get("autoAddApps") is True
-        for key in ("observedApps", "pendingApps", "removedShortcuts", "removableApps"):
-            if isinstance(saved.get(key), list):
-                state[key] = sorted({item for item in saved[key] if isinstance(item, str)})
-        if isinstance(saved.get("shortcuts"), dict):
-            state["shortcuts"] = {key: value for key, value in saved["shortcuts"].items()
-                                  if isinstance(key, str) and type(value) is int and 0 < value <= 0xFFFFFFFF}
+        state["removableApps"] = self._strings(saved.get("removableApps"))
+        accounts = saved.get("accounts")
+        if isinstance(accounts, dict):
+            state["accounts"] = {key: self._shortcut_state(value) for key, value in accounts.items()
+                                 if key.isascii() and key.isdecimal() and 0 < len(key) <= 10
+                                 and 0 < int(key) <= 0xFFFFFFFF and str(int(key)) == key and isinstance(value, dict)}
+        legacy = saved.get("legacy", saved if accounts is None else {})
+        if isinstance(legacy, dict):
+            history = self._shortcut_state(legacy)
+            if history != self.shortcut_defaults():
+                state["legacy"] = history
         if isinstance(saved.get("artwork"), dict):
             state["artwork"] = {key: value for key, value in saved["artwork"].items()
                                 if isinstance(key, str) and isinstance(value, str) and ARTWORK_RECORD.fullmatch(value)}
@@ -42,6 +68,8 @@ class StateStore:
 
     def save(self, state: dict) -> None:
         self._validate_path()
+        state = {**state, "accounts": {key: history for key, history in state["accounts"].items()
+                                       if history != self.shortcut_defaults()}}
         if state == self.defaults():
             self.clear()
             return

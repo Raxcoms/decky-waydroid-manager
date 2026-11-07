@@ -32,6 +32,7 @@ class SteamFilesTests(unittest.TestCase):
             (root / "config").mkdir()
             (root / "config/loginusers.vdf").write_text('"users" { "76561197960265729" { "MostRecent" "0" } "76561197960265730" { "PersonaName" "A {name}" "MostRecent" "1" } }')
             self.assertEqual(shortcuts_path(home), root / "userdata/2/config/shortcuts.vdf")
+            self.assertEqual(shortcuts_path(home, 1), root / "userdata/1/config/shortcuts.vdf")
 
     def test_ambiguous_accounts_fail_instead_of_editing_someone_elses_library(self):
         with tempfile.TemporaryDirectory() as directory:

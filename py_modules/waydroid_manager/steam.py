@@ -79,8 +79,22 @@ def migrated_launch_options(options: str) -> str | None:
     return None
 
 
-def shortcuts_path(home: Path) -> Path:
-    roots = (home / ".local/share/Steam", home / ".steam/steam", home / ".var/app/com.valvesoftware.Steam/data/Steam")
+def steam_roots(home: Path) -> tuple[Path, ...]:
+    return home / ".local/share/Steam", home / ".steam/steam", home / ".var/app/com.valvesoftware.Steam/data/Steam"
+
+
+def known_accounts(home: Path) -> set[int]:
+    accounts = set()
+    for root in steam_roots(home):
+        accounts.update(int(path.name) for path in (root / "userdata").glob("*") if path.is_dir() and path.name.isdecimal())
+        login = root / "config/loginusers.vdf"
+        if login.is_file():
+            accounts.update(int(steam_id) & 0xFFFFFFFF for steam_id in read_login_users(login))
+    return accounts
+
+
+def shortcuts_path(home: Path, account_id: int | None = None) -> Path:
+    roots = steam_roots(home)
     installed = {root.resolve(): root for root in roots if (root / "userdata").is_dir()}
     if len(installed) > 1:
         active = set()
@@ -97,6 +111,10 @@ def shortcuts_path(home: Path) -> Path:
         installed = {root: installed[root] for root in active}
     for root in installed.values():
         accounts = {path.name: path / "config/shortcuts.vdf" for path in (root / "userdata").glob("*") if path.name.isdecimal() and path.is_dir()}
+        if account_id is not None:
+            if str(account_id) in accounts:
+                return accounts[str(account_id)]
+            raise RuntimeError("The active Steam account has no userdata directory")
         if not accounts:
             continue
         login = root / "config/loginusers.vdf"

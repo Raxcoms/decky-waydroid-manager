@@ -8,6 +8,8 @@
 
 Use **Show more** to reveal ten more apps at a time. Enable **Add new apps to Steam** to create shortcuts for apps installed after you turn it on. If you remove a shortcut, use **Add to Steam** to bring it back. Uninstalling the app clears that removal history, so a later reinstall can be picked up automatically.
 
+Steam shortcuts and automatic-add preferences follow the signed-in Steam account. If you used an older build with several Steam accounts, turn on automatic addition again for each account where you want it.
+
 The plugin generates matching portrait, landscape, and header artwork from the Android app icon. You can also set custom artwork in Steam.
 
 ## Install or uninstall an Android app

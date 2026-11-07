@@ -1,6 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { liveShortcutIds, waitForShortcut } from "../src/library.ts";
+import { currentSteamAccount, liveShortcutIds, waitForShortcut } from "../src/library.ts";
+
+test("Steam account IDs come from the logged-in client without rounding the SteamID", (t) => {
+  const original = globalThis.App;
+  t.after(() => { globalThis.App = original; });
+  globalThis.App = {
+    BHasCurrentUser: () => true,
+    GetCurrentUser: () => ({ strSteamID: "76561197960265729" }),
+  } as typeof globalThis.App;
+  assert.equal(currentSteamAccount(), 1);
+  globalThis.App.BHasCurrentUser = () => false;
+  assert.equal(currentSteamAccount(), null);
+});
 
 const runtime = globalThis as unknown as { appStore?: { allApps: { appid: number }[]; GetAppOverviewByAppID?: (id: number) => unknown } };
 
