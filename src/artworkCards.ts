@@ -44,18 +44,11 @@ export function iconBackground(icon: HTMLImageElement): [string, string] {
 }
 
 function drawIcon(context: CanvasRenderingContext2D, icon: HTMLImageElement, x: number, y: number, size: number) {
-  context.save();
-  context.beginPath();
-  context.roundRect(x, y, size, size, size * 0.22);
-  context.fillStyle = "#00000026";
-  context.fill();
-  context.clip();
   const padding = size * 0.08;
   const ratio = (size - padding * 2) / Math.max(icon.naturalWidth, icon.naturalHeight);
   const w = icon.naturalWidth * ratio;
   const h = icon.naturalHeight * ratio;
   context.drawImage(icon, x + (size - w) / 2, y + (size - h) / 2, w, h);
-  context.restore();
 }
 
 function titleLines(context: CanvasRenderingContext2D, name: string, width: number) {
