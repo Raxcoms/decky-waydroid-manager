@@ -375,13 +375,24 @@ class Plugin:
     def _legacy_shortcuts(self) -> list[dict[str, Any]]:
         _, _, home = self._user()
         result = []
+        names = {app["package"]: app["name"] for app in self._desktop_entries()}
+        names[WAYDROID_SHORTCUT_KEY] = "Waydroid"
         for _, (_, entry) in read_shortcuts(self._shortcuts_path(home)).items():
             entry = {key.casefold(): value for key, value in entry.items()}
             exe = str(entry.get("exe", (1, ""))[1]).strip('"')
-            options = migrated_launch_options(str(entry.get("launchoptions", (1, ""))[1]))
+            existing_options = str(entry.get("launchoptions", (1, ""))[1])
+            options = migrated_launch_options(existing_options)
             app_id = entry.get("appid", (2, 0))[1]
-            if Path(exe).resolve() == self._launcher().resolve() and options and isinstance(app_id, int) and app_id:
-                result.append({"appId": app_id & 0xFFFFFFFF, "launchOptions": options})
+            key = shortcut_key(existing_options)
+            if Path(exe).resolve() != self._launcher().resolve() or not key or not isinstance(app_id, int) or not app_id:
+                continue
+            update: dict[str, Any] = {"appId": app_id & 0xFFFFFFFF}
+            if options:
+                update["launchOptions"] = options
+            if entry.get("appname", (1, ""))[1] == self._launcher().name and key in names:
+                update["name"] = names[key]
+            if len(update) > 1:
+                result.append(update)
         return result
 
     async def legacy_shortcuts(self) -> list[dict[str, Any]]:

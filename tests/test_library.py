@@ -78,6 +78,20 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(shortcut["exe"], str(self.plugin._launcher()))
         self.assertEqual(shortcut["launchOptions"], "app example.app")
 
+    def test_shortcut_repairs_replace_only_default_names_and_exact_old_wrappers(self):
+        self.plugin._desktop_entries = lambda: [{"package": "example.app", "name": "Example"}]
+        write_shortcuts(self.path, {
+            "0": (0, {"Exe": (1, str(self.plugin._launcher())), "appid": (2, 123),
+                      "AppName": (1, "waydroid-launcher"), "LaunchOptions": (1, "app example.app")}),
+            "1": (0, {"Exe": (1, str(self.plugin._launcher())), "appid": (2, 456),
+                      "AppName": (1, "Custom name"), "LaunchOptions": (1, "/usr/libexec/armada/armada-game-launch %command% full")}),
+            "2": (0, {"Exe": (1, "/usr/bin/unrelated"), "appid": (2, 789),
+                      "AppName": (1, "waydroid-launcher"), "LaunchOptions": (1, "app example.app")}),
+        })
+        self.assertEqual(self.plugin._legacy_shortcuts(), [
+            {"appId": 123, "name": "Example"}, {"appId": 456, "launchOptions": "full"},
+        ])
+
     def test_third_party_packages_are_queried_with_waydroid_argument_separator(self):
         def run(args, **kwargs):
             if args[2:3] != ["--"]:
