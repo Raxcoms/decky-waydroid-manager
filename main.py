@@ -577,6 +577,8 @@ class Plugin:
                     report("installing")
                     install_apks(self._run, host_dir, guest_dir, installed,
                                  commit=lambda session: self._commit_package_install(session, value, host_dir, guest_dir))
+                    # Keep uninstall availability when the temporary session closes.
+                    self._removable_packages()
         except zipfile.BadZipFile as error:
             raise RuntimeError("INVALID_PACKAGE_ARCHIVE") from error
         finally:

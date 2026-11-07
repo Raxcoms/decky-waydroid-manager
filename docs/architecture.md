@@ -71,6 +71,8 @@ The launcher requests an inactive container service through `control.py` and the
 
 Offline checks read systemd state before contacting Waydroid. Its `status` CLI requests the container D-Bus service and can activate it, so using it first would wake a stopped service and lose package-operation cleanup ownership. Package polling returns cached removal metadata while the service is inactive.
 
+After a successful APK commit, the installer refreshes third-party package metadata before closing its temporary session. Newly installed apps can therefore offer Uninstall while Android is stopped, without waiting for a later background poll to catch the brief installation window.
+
 Single and split APKs share a native PackageInstaller session: install-create, one install-write per APK, then install-commit. There is no Android shell install-multiple command. Failed or timed-out writes/commits abandon the owned session before closing Android or deleting staged files.
 
 Installation starts immediately after file selection. `verification.py` watches Android's activity lifecycle metadata for the GAPPS Play Protect decision activity. A routine verification broadcast does not trigger a prompt. When the decision activity is resumed, broadcast metadata must identify the sole pending request as the exact owned session, root installer, system sender, and configured verifier. Completed verification broadcasts exclude previous requests; another pending install prevents guessing. The plugin then opens a second native confirmation dialog. Replies carry a unique token so a stale dialog cannot approve a later attempt. Cancel rejects only this verification and abandons the install session.

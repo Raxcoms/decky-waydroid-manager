@@ -373,13 +373,17 @@ class PackageSessionTests(unittest.TestCase):
                     if command[:4] == ["waydroid", "shell", "--", "pm"]:
                         self.commands.append(command)
                         self.assertEqual(len(list(temp.glob("waydroid-manager-*"))), 1)
+                        if command[4] == "list":
+                            return "package:example.app"
                         return {"install-create": "Success: created install session [42]", "install-write": "Success: streamed 100 bytes", "install-commit": result, "install-abandon": "Success"}[command[4]]
                     return self.run_command(command, **kwargs)
                 self.plugin._run = run
                 self.plugin._commit_package_install = lambda session, *args: run(["waydroid", "shell", "--", "pm", "install-commit", session])
                 if result == "Success":
-                    self.plugin._install_package(str(apk))
+                    with patch("waydroid_manager.state.os.chown", create=True):
+                        self.plugin._install_package(str(apk))
                     self.assertEqual(self.plugin._package_progress["stage"], "complete")
+                    self.assertEqual(self.plugin._load_state(home)["removableApps"], ["example.app"])
                 else:
                     with self.assertRaisesRegex(RuntimeError, "INSTALL_FAILED_INVALID_APK"):
                         self.plugin._install_package(str(apk))
