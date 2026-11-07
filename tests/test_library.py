@@ -4,6 +4,7 @@ import copy
 from contextlib import nullcontext
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import threading
@@ -377,6 +378,31 @@ class PackageSessionTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "DELETE_FAILED"):
             self.plugin._uninstall_package("example.app")
         self.assertIn(["systemctl", "stop", backend.SERVICE], self.commands)
+        self.assertTrue(any("stop" in command and "--user" in command for command in self.commands))
+
+    def test_cleanup_timeout_preserves_the_original_operation_error(self):
+        def run(command, **kwargs):
+            if "stop" in command and "--user" in command:
+                raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+            return self.run_command(command, **kwargs)
+
+        self.plugin._run = run
+        with patch.object(backend.decky, "logger", create=True) as logger:
+            with self.assertRaisesRegex(RuntimeError, "INSTALL_FAILED"):
+                with self.plugin._package_session():
+                    raise RuntimeError("INSTALL_FAILED")
+            logger.warning.assert_called_once()
+
+    def test_slow_unit_status_still_allows_owned_session_cleanup(self):
+        def run(command, **kwargs):
+            if "show" in command:
+                raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+            if "stop" in command and "--user" in command and kwargs["timeout"] <= 45:
+                raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+            return self.run_command(command, **kwargs)
+
+        self.plugin._run = run
+        self.assertEqual(self.plugin._uninstall_package("example.app"), 123)
         self.assertTrue(any("stop" in command and "--user" in command for command in self.commands))
 
     def test_failed_boot_does_not_attempt_removal(self):

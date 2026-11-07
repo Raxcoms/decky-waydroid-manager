@@ -601,29 +601,40 @@ class Plugin:
             raise RuntimeError("WAYDROID_START_FAILED")
         user_command = self._user_command(user, uid, home)
         unit = f"waydroid-manager-package-{uuid.uuid4().hex}"
+        unit_status = [*user_command, "systemctl", "--user", "show", unit, "--property=ActiveState", "--value"]
         service_was_active = self._service_running()
+        completed = False
         try:
             progress("starting")
             self._run(["systemctl", "start", SERVICE])
             # Session start keeps Android hidden until an app or the full UI is requested.
             self._run([
                 *user_command, "systemd-run", "--user", "--collect", "--quiet",
-                f"--unit={unit}", "--property=KillMode=control-group",
+                f"--unit={unit}", "--property=KillMode=control-group", "--property=TimeoutStopSec=45s",
                 "env", f"WAYLAND_DISPLAY={wayland}", "waydroid", "session", "start",
             ])
-            self._wait_for_android(progress, [*user_command, "systemctl", "--user", "show", unit, "--property=ActiveState", "--value"])
+            self._wait_for_android(progress, unit_status)
             yield
+            completed = True
         finally:
             progress("cleaning")
-            # Stop only our temporary unit, never a replacement session started by Steam.
-            state = self._run([*user_command, "systemctl", "--user", "show", unit, "--property=ActiveState", "--value"])
-            if state in {"active", "activating"}:
-                self._run([*user_command, "systemctl", "--user", "stop", unit])
-            if not service_was_active:
+            try:
                 try:
-                    self._require_session()
-                except RuntimeError:
-                    self._run(["systemctl", "stop", SERVICE])
+                    state = self._run(unit_status, timeout=5)
+                except subprocess.TimeoutExpired:
+                    state = None
+                if state is None or state in {"active", "activating", "deactivating", "reloading"}:
+                    # Let systemd finish stopping the owned unit before checking the container.
+                    self._run([*user_command, "systemctl", "--user", "stop", unit], timeout=60)
+                if not service_was_active:
+                    try:
+                        self._require_session()
+                    except RuntimeError:
+                        self._run(["systemctl", "stop", SERVICE])
+            except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                decky.logger.warning("Could not close the temporary Android session: %s", error)
+                if completed:
+                    raise RuntimeError("WAYDROID_CLEANUP_FAILED") from error
 
     def _wait_for_android(self, progress: Callable[[str], None], unit_status: list[str] | None = None) -> None:
         progress("booting")
@@ -635,7 +646,11 @@ class Plugin:
             except (RuntimeError, subprocess.TimeoutExpired):
                 pass
             if unit_status:
-                if self._run(unit_status) not in {"active", "activating"}:
+                try:
+                    state = self._run(unit_status, timeout=5)
+                except subprocess.TimeoutExpired:
+                    state = None
+                if state is not None and state not in {"active", "activating"}:
                     raise RuntimeError("WAYDROID_START_FAILED")
             else:
                 self._require_session()

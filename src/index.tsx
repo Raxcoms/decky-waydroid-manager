@@ -63,6 +63,7 @@ function reportError(error: unknown, setMessage?: (message: string | null) => vo
     WAYDROID_NOT_INSTALLED: "installWaydroidFirst", PACKAGE_OPERATION_FAILED: "packageOperationFailed",
     APP_NOT_REMOVABLE: "appNotRemovable",
     WAYDROID_START_FAILED: "androidStartFailed",
+    WAYDROID_CLEANUP_FAILED: "packageCleanupFailed",
     XAPK_TOO_MANY_APKS: "xapkTooManyApks", PACKAGE_NO_SPACE: "packageNoSpace",
     IMAGE_APP_EXPORT_TIMEOUT: "imageAppExportTimeout",
   };
