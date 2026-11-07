@@ -2,41 +2,97 @@ name: Build Decky plugin
 
 on:
   push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      release_version:
+        type: string
+        default: ''
 
 permissions:
   contents: read
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
+      - name: Select package version
+        id: version
+        env:
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          revision=$(git rev-parse --short=7 HEAD)
+          if [[ -n "$RELEASE_VERSION" ]]; then
+            if [[ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]]; then
+              echo 'Publish releases from the default branch.' >&2
+              exit 1
+            fi
+            if [[ ! "$RELEASE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] ||
+               [[ "$RELEASE_VERSION" != "$(node -p 'require("./package.json").version')" ]]; then
+              echo 'Enter the major.minor.patch version from package.json.' >&2
+              exit 1
+            fi
+            revision=''
+          fi
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
       - run: pnpm install --frozen-lockfile
       - run: pnpm run check
       - run: pnpm run build
-      - name: Check Wayland relay
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v4
+        with:
+          accept-android-sdk-licenses: false
+          packages: ''
+      - name: Install Android build dependencies
+        run: android --sdk="$ANDROID_HOME" sdk install build-tools/35.0.0 platforms/android-35
+      - name: Build Android verification helper
+        run: python3 scripts/build_android.py
+      - name: Run tests
         run: |
           python3 -m unittest discover -s tests -v
           node --experimental-strip-types --test tests/*.test.mts
-          bash -n bin/waydroid-launcher bin/waydroid-session
+          for script in bin/waydroid-launcher bin/waydroid-game-session bin/waydroid-session; do
+            bash -n "$script"
+          done
       - name: Package plugin
+        env:
+          BUILD_REVISION: ${{ steps.version.outputs.revision }}
         run: |
-          mkdir -p package/waydroid-manager/bin package/waydroid-manager/dist
-          cp plugin.json package.json README.md LICENSE main.py package/waydroid-manager/
-          cp -r docs package/waydroid-manager/
-          cp -r py_modules package/waydroid-manager/
-          cp bin/waydroid-launcher bin/waydroid-session bin/waydroid-input-sync bin/waydroid-display-info bin/waydroid-wayland-relay package/waydroid-manager/bin/
-          cp -r dist/. package/waydroid-manager/dist/
-          chmod +x package/waydroid-manager/bin/*
-      - uses: actions/upload-artifact@v4
+          args=(package)
+          if [[ -n "$BUILD_REVISION" ]]; then
+            args+=(--revision "$BUILD_REVISION")
+          fi
+          python3 scripts/package.py "${args[@]}"
+          python3 scripts/check_package.py package/waydroid-manager
+      - uses: actions/upload-artifact@v7
+        if: inputs.release_version == ''
         with:
-          name: waydroid-manager
+          name: waydroid-manager-${{ steps.version.outputs.revision }}
           path: package
+          if-no-files-found: error
+      - name: Create release ZIP
+        if: inputs.release_version != ''
+        working-directory: package
+        env:
+          RELEASE_VERSION: ${{ inputs.release_version }}
+        run: |
+          archive="../waydroid-manager-$RELEASE_VERSION.zip"
+          zip -qr "$archive" waydroid-manager
+          unzip -tq "$archive"
+      - uses: actions/upload-artifact@v7
+        if: inputs.release_version != ''
+        with:
+          path: waydroid-manager-${{ inputs.release_version }}.zip
+          archive: false
+          if-no-files-found: error

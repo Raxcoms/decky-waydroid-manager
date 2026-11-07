@@ -1,58 +1,39 @@
-# Architecture
+# How Waydroid Manager works
 
-```text
-Decky UI
-  -> root Decky backend
-     -> Waydroid CLI and systemd service
-     -> launcher and Waydroid icon metadata
-  -> Steam client shortcut API
-  -> bundled launcher started as the ArmadaOS user
-     -> private Wayland socket relay
-        -> Steam's existing Gamescope compositor
-        -> Waydroid session
-           -> Android full UI or selected package
+```mermaid
+flowchart LR
+    Panel["Decky panel"] -->|Plugin RPC| Backend["Decky Python backend"]
+    Panel -->|Shortcuts and artwork| Steam["Steam client"]
+    Backend -->|Container and package commands| Android["Waydroid and Android"]
+    Steam -->|Launch| Launcher["Bundled launcher"]
+    Launcher -->|Start request| Backend
+    Launcher -->|Session and app selection| Android
+    Android <-->|Wayland messages and buffer handles| Relay["Private Wayland relay"]
+    Relay <-->|Native window and input| Gamescope["Steam's Gamescope"]
 ```
 
-The backend owns system-wide operations because the Waydroid image and container service are root-owned. The frontend does not compose shell commands: it calls narrow backend methods with validated package names. It creates shortcuts through Steam's live shortcut API, so new entries appear in the library immediately instead of waiting for Steam to reread `shortcuts.vdf`.
+## Find the relevant code
 
-The launcher runs as the logged-in ArmadaOS user. The backend reads graphics variables from Steam's process environment, preferring Steam over its web helpers. The shortcut inherits Steam's own target compositor socket, avoiding a separate companion-screen compositor. The launcher drops Vulkan-layer and compatibility overrides and retains Steam identity. Steam's launch process owns its lifetime, and a transient user service owns the Waydroid session. Readiness is checked before opening the full UI or requested app. Session logs are under `~/.local/state/waydroid-manager`.
+| Area | Responsibilities | Where to look |
+| --- | --- | --- |
+| Decky panel | App list, actions, progress, and notifications | [`src/`](../src), [RPC types](../src/backend.ts) |
+| Steam integration | Live shortcut actions, artwork, and Steam settings | [Steam actions](../src/steam.ts), [artwork](../src/artwork.ts), [library lookup](../py_modules/waydroid_manager/steam.py) |
+| Android management | Image setup, package operations, and service control | [`main.py`](../main.py), [backend modules](../py_modules/waydroid_manager) |
+| Game Mode runtime | Launch lifetime, Wayland transport, controller, and metrics | [`bin/`](../bin), [runtime modules](../py_modules/waydroid_manager) |
 
-Android's SurfaceFlinger runs outside Steam's launch process tree. Connecting it directly does not give its native window the shortcut identity. The relay opens the upstream connection from a process descended from Steam's launch reaper. Gamescope sees that process as the Wayland client and associates the Android window with the existing shortcut. This allows Steam to select the window and apply Steam Input without an X11 host window.
+## Follow a launch
 
-`waydroid-wayland-relay` uses Python's standard Unix socket APIs. It forwards protocol bytes and `SCM_RIGHTS` file descriptors in both directions. DMA-BUF and shared-memory buffers remain shared file descriptors; the relay does not map, copy, render, or composite their pixels. Partial writes transfer each descriptor once, queues apply backpressure, and disconnects close queued descriptors. Each launch creates a private directory under the user's runtime directory and a socket with mode `0600`. The socket and owned child processes are removed on exit.
+1. Steam starts the bundled launcher with the shortcut's session environment. If needed, the launcher asks Decky's backend to start Waydroid through a private, authenticated socket.
+2. The launcher creates a private Wayland connection and starts an Android session. The relay's process belongs to the Steam shortcut, so Gamescope can associate the Android window with it.
+3. The relay forwards shared buffer handles directly to Gamescope. The plugin applies available Steam resolution and frame-limit settings and cleans up its runtime resources when the launch ends.
 
-Armada's existing Gamescope support reports native Wayland windows to Steam and passes direct touch to them, as used by Lepton. The plugin does not extend system files or replace Gamescope. A second Gamescope's native backend requires `wl_subcompositor` and `wp_viewporter`, which the tested primary compositor does not advertise. Its automatic SDL fallback always composites, so the plugin uses the socket relay instead. Background Android startup remains in use; the launcher does not open the Android desktop before launching the requested package. Relay diagnostics are saved to `~/.local/state/waydroid-manager/wayland.log`.
+## Know what the plugin owns
 
-The relay creates no compositor telemetry stream. Android gets its output dimensions and refresh rate from the existing compositor's Wayland output. Per-game resolution overrides still require live validation. The display helper remains available for diagnosing the primary compositor's control display and refresh; it does not copy the potentially stale `GAMESCOPE_FPS_LIMIT` property.
+| Resource | Lifetime |
+| --- | --- |
+| Android image, apps, and data | Kept until you remove them in the plugin |
+| Shortcut preferences and generated artwork | Saved per user. Steam owns the shortcuts, and the plugin tracks generated artwork by its digest. |
+| Session units, control and relay sockets, and controller bridge | Created for the plugin or launch and cleaned up when it ends |
+| Android frame overrides | Applied during the launch, then restored |
 
-MangoHud's GPU fdinfo backend follows Gamescope's focused PID. That PID belongs to the relay, while Android renders in a different process tree. Runtime synchronization discovers DRM clients only in the active LXC container's PID namespace. It uses `pidfd_getfd` to duplicate their actual file descriptions, verifies DRM device and client identities after duplication, and sends one handle per unique client to a private relay socket. Merely opening a render-node path would create an empty GPU client and would not provide the renderer's counters.
-
-The metrics socket uses Unix sequenced packets and `SCM_RIGHTS`, with mode `0600`. The relay accepts only the root backend, and the backend checks the receiving process's PID and UID against the active Steam launch. The relay retains a bounded handle snapshot, closes replaced handles and pending connections, and releases all handles on exit. The backend rescans every two seconds and clears the snapshot on plugin unload. MangoHud continues using Gamescope's original frame messages; no second queue producer or compositor is added. GPU access errors are logged without interrupting frame-limit synchronization.
-
-The bridge exposes kernel GPU counters for the Android environment; it does not make the relay's CPU or resident-memory accounting represent Android processes. Counters absent from the driver or unsupported by MangoHud remain absent.
-
-Waydroid's hardware composer uses a timed VSync loop rather than waiting for Wayland frame callbacks, so direct presentation alone does not enforce QAM's limit. The frontend reads the same `settingsStore` fields as the modern QAM slider, with the legacy performance store as a fallback for older clients. A background RPC follows changes even when the plugin panel is closed. The root backend finds the current relay process, identifies Android's foreground package and UID, and applies SurfaceFlinger's temporary per-UID frame-rate override. Existing overrides are preserved and restored when limiting is disabled, the launch ends, or the plugin unloads. This API is currently verified for Android 13, SDK 33; other versions fail explicitly instead of assuming the same Binder transaction.
-
-Waydroid follows a buffer commit with a second commit containing presentation feedback and often the same input region. The relay suppresses these trailing commits only when they contain no new surface state. Buffer changes, damage, frame callbacks, changed regions, configuration acknowledgements, and unknown extension state still commit. Presentation feedback stays queued for the next buffer. Server delete-ID events clear object types before IDs are reused. If tracking encounters an unsupported object lifetime, filtering is disabled for that connection and transparent forwarding continues.
-
-Live limiting produced 24.01 FPS in MHOutlanders and 29.99 FPS in Warframe's SurfaceFlinger timestamps. In a five-second Warframe sample, the relay forwarded 150 of 300 commits, removing the redundant half. The user confirmed the overlay reports the correct rate and follows QAM slider changes. The same foreground-package discovery handles the full UI and other apps; there are no app-specific IDs or overrides. Processes already limited during the launch also follow target changes, so Android UI processes do not retain the startup cap after Steam loads the game's profile. These measurements do not establish final display pacing or the absence of graphical artifacts.
-
-Steam mouse-mode pointer visibility remains limited by the installed Gamescope's native XDG cursor path. The running Thor compositor logs `NO CURSOR IMPL XDG`, matching its unimplemented native cursor selection. Pointer visibility must not be confused with direct touch or controller delivery. The plugin does not disable direct touch, switch to X11, force composition, or replace system Gamescope to hide this limitation.
-
-System commands use Armada's existing subprocess environment cleanup pattern. Decky's PyInstaller library paths must not reach `/usr/bin/python3` or the Waydroid CLI; otherwise Python loads Decky's bundled runtime without its standard library.
-
-Each launch reconnects Android to a fresh private socket. A fixed transient user service owns the plugin's session. Shutdown stops that service before terminating the relay and its command process group. The launcher clears stale readiness markers before starting a session and allows up to three minutes for Android readiness.
-
-The root backend also starts a transient input synchronizer while the plugin is loaded. It mirrors Steam Input's virtual X-Box controller node into the active Android container with Android's expected ownership and permissions. Steam's virtual identity uses Android's stock Xbox 360 keylayout, including its D-pad hat axes and stick metadata. Physical handheld layouts are not copied onto it: Armada's physical-driver face-button correction uses different codes. Armada's built-in Waydroid input service continues to own physical controller sharing. Live Android device enumeration must be checked when investigating duplicate input; pointer events from Steam mouse mappings are a separate input source.
-
-Steam writes its own `shortcuts.vdf` data after the frontend calls `SteamClient.Apps.AddShortcut`. The backend provides the trusted launcher, working directory, arguments, and Waydroid-provided app icon path. Shortcut launch options use Armada's `armada-game-launch %command%` wrapper so Steam Input and per-game performance settings remain attached. It records returned shortcut IDs in `~/.config/waydroid-manager/state.json`, and also recognizes Armada-rewritten shortcut records by their app name. A plugin-lifetime watcher checks for new apps every five seconds, including when the panel is closed. The backend keeps a durable observed and removed set so the feature only queues genuinely new installed apps.
-
-Artwork discovery first finds the package's base and split APKs under the user's persistent Waydroid `data/app` directory, supporting both flat and tokenized Android layouts. If multiple package directories remain, it selects the newest complete one. Resolved package and split paths must remain inside that data tree. This works while Android is stopped. For packages available only inside the container, discovery falls back to Android's package manager and opens paths beneath the active `/proc/PID/root` link, preserving the container mount tree. It inspects APK ZIP entries without extracting them. Individual images, total bytes, and candidate counts are bounded. The frontend decodes the candidates, selects images by dimensions and role, and renders Steam's four artwork formats on a canvas. Missing roles use the exported app icon and name, including when APK assets cannot be read. Shortcut creation requests an immediate update, and a background watcher retries missing artwork every fifteen seconds through `SetCustomArtworkForApp`; one app's failure does not block the others. It also initializes Steam's shortcut logo position when absent. Existing image files are left alone. No external artwork service or image-processing package is required.
-
-The shortcut watcher passes Steam's live non-Steam app IDs to the backend. Recorded IDs are reconciled with this list, including changed IDs found in native VDF entries whose field names use different capitalization. Library deletions remain suppressed until uninstall clears the package's history. Shortcut creation is recorded only after Steam publishes its live app overview. State read-modify-write operations share a lock, so package polling cannot restore history cleared by a concurrent uninstall worker.
-
-The uninstall worker publishes its current phase through a lightweight progress RPC. The native confirmation polls it while busy, disables duplicate submissions and dismissal, and closes only after Android cleanup and Steam shortcut removal finish. The progress bar assigns milestones to phases; it does not estimate elapsed time. A failure leaves the dialog open for retry or cancellation. App-list expansion is retained only while a native menu, modal, or picker owns the transition away from the panel. Decky's QAM visibility hook and panel unmount reset ordinary exits to the first ten apps.
-
-Steam implements a shortcut's selected resolution on the launch's inherited Xwayland `DISPLAY`, which can differ from the Steam UI display and the native Wayland output. The relay reads `xrandr --current` on that exact display once at startup. It substitutes the selected pixel size in `wl_output.mode`, XDG logical-output size, and XDG toplevel configure events, with output scale one. Refresh values, window states, input coordinates, buffer descriptors, and presentation feedback remain intact. Server messages are buffered through complete protocol boundaries so fragmented events and their descriptors stay together. Missing mode discovery preserves the compositor's original hints. No Android width/height property is persisted, and the next launch resolves its own mode again.
-
-Package operations stage files in the user's Waydroid data directory and call Android's package manager through `waydroid shell --`. An exit code alone is insufficient: the supported Waydroid app CLI can log an installation or removal failure and exit successfully. Completion requires the package manager's explicit `Success` response. The last live third-party package list is retained for offline menu visibility, but uninstall always checks the live list again. When Android is stopped, uninstall starts a uniquely named transient user unit running `waydroid session start` on Steam's discovered Wayland socket. Waydroid's background-start mode keeps the desktop hidden. The backend waits up to 180 seconds for `sys.boot_completed`, performs removal in a worker thread, then stops only its own unit in a finally block. A previously active service or session is preserved; a service started for this operation is stopped unless another session has taken over. Uninstall calls are serialized without blocking runtime telemetry. Successful uninstall clears that package's shortcut record, observation, pending-addition, and manual-removal history. The backend returns its current shortcut ID for removal through Steam's live API. A later reinstall is eligible for automatic addition again. Error notifications extract Decky's serialized Python exception when its JavaScript message is empty, while file-picker cancellation remains silent.
+The plugin uses the platform's existing Waydroid service, Gamescope, and drivers. Native Wayland window selection and direct touch depend on the compositor. Android 13 frame limiting and Play Protect approval depend on Android interfaces specific to that release. Native Steam is the tested configuration. See the [frame cap limitation](features.md#known-issue-with-frame-cap-precision) for the remaining Waydroid driver work.

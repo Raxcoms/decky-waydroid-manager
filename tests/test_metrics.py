@@ -12,7 +12,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
-from waydroid_manager.metrics import GpuMetrics, MAX_CLIENTS, MetricsSocket, android_clients, drm_identity
+from waydroid_manager.metrics import GpuMetrics, MAX_CLIENTS, MetricsSocket, android_clients, drm_identity, is_render_node
 
 
 @unittest.skipUnless(hasattr(socket, "SCM_RIGHTS") and hasattr(socket, "SO_PEERCRED"), "Requires Linux descriptor passing and peer credentials")
@@ -119,6 +119,12 @@ class MetricsSocketTests(unittest.TestCase):
 
 
 class MetricsIdentityTests(unittest.TestCase):
+    @unittest.skipUnless(hasattr(os, "makedev"), "Requires Unix device identifiers")
+    def test_only_render_nodes_are_allowed(self):
+        for minor in (0, 64, 127, 192):
+            self.assertFalse(is_render_node(types.SimpleNamespace(st_mode=stat.S_IFCHR, st_rdev=os.makedev(226, minor))))
+        self.assertTrue(is_render_node(types.SimpleNamespace(st_mode=stat.S_IFCHR, st_rdev=os.makedev(226, 128))))
+
     def test_regular_files_are_not_gpu_handles(self):
         with tempfile.TemporaryFile() as file:
             self.assertIsNone(drm_identity(file.fileno()))

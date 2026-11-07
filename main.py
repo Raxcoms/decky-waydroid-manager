@@ -1,12 +1,9 @@
 import base64
 import asyncio
-import configparser
-import json
 import os
 import pwd
 import re
 import shutil
-import struct
 import subprocess
 import tempfile
 import threading
@@ -18,18 +15,23 @@ from pathlib import Path
 from typing import Any, Callable
 
 import decky
-from waydroid_manager.frame_limit import FrameLimiter, active_launch
-from waydroid_manager.proc import clean_env
-from waydroid_manager.artwork import apk_images, missing_artwork, package_apks, persistent_apks
+from waydroid_manager.apps import PACKAGE_RE, app_exports
+from waydroid_manager.frame_limit import FrameLimiter
+from waydroid_manager.proc import active_launch, clean_env, steam_wayland_socket
+from waydroid_manager.artwork import ARTWORK_TYPES, ARTWORK_VERSION, artwork_attached, artwork_filename, artwork_updates, prune_artwork
 from waydroid_manager.metrics import GpuMetrics
+from waydroid_manager.packages import apk_members, stage_apks, install_apks, check_result
+from waydroid_manager.verification import InstallCancelled, InstallVerification, commit_install
+from waydroid_manager.steam import known_accounts, read_shortcuts, shortcuts_path, shortcut_key, shortcut_owners, migrated_launch_options
+from waydroid_manager.container import CONFIG_DIR, SERVICE, container_pid
+from waydroid_manager.image import launcher_packages, require_unmounted, require_unredirected, run_init
+from waydroid_manager.control import ServiceControl, control_path
+from waydroid_manager.state import StateStore
 
 
-PACKAGE_RE = re.compile(r"^[A-Za-z0-9._-]+$")
-WAYDROID_DIR = Path("/var/lib/waydroid")
-SERVICE = "waydroid-container.service"
+WAYDROID_DIR = CONFIG_DIR
 MAX_ICON_BYTES = 2 * 1024 * 1024
 WAYDROID_SHORTCUT_KEY = "waydroid"
-LAUNCH_WRAPPER = "/usr/libexec/armada/armada-game-launch"
 
 
 class Plugin:
@@ -37,7 +39,9 @@ class Plugin:
 
     def __init__(self):
         self._state_lock = threading.RLock()
-        self._uninstall_progress: dict[str, str] = {}
+        self._package_progress: dict[str, str] = {}
+        self._image_progress: dict[str, str | int | None] | None = None
+        self._install_confirmation = None
 
     @contextmanager
     def _edit_state(self, home: Path):
@@ -63,44 +67,29 @@ class Plugin:
     def _user(self) -> tuple[str, int, Path]:
         user_home = getattr(decky, "DECKY_USER_HOME", None)
         if user_home:
-            home = Path(user_home)
+            home = Path(user_home).resolve()
             if home.is_dir():
                 account = pwd.getpwuid(home.stat().st_uid)
                 return account.pw_name, account.pw_uid, home
 
-        for account in pwd.getpwall():
-            if account.pw_uid >= 1000 and Path(account.pw_dir).is_dir():
-                return account.pw_name, account.pw_uid, Path(account.pw_dir)
-        raise RuntimeError("Could not find the ArmadaOS user")
+        accounts = [account for account in pwd.getpwall() if account.pw_uid >= 1000 and Path(account.pw_dir).is_dir()]
+        if len(accounts) == 1:
+            account = accounts[0]
+            return account.pw_name, account.pw_uid, Path(account.pw_dir).resolve()
+        raise RuntimeError("Could not find the Decky user")
 
     def _initialized(self) -> bool:
-        return (WAYDROID_DIR / "waydroid.cfg").is_file()
+        return (WAYDROID_DIR / "waydroid.cfg").is_file() and (WAYDROID_DIR / "rootfs").is_dir()
 
-    def _service_state(self, action: str) -> bool:
+    def _service_running(self) -> bool:
         return subprocess.run(
-            ["systemctl", "is-" + action, SERVICE],
+            ["systemctl", "is-active", SERVICE],
             env=clean_env(),
+            timeout=10,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,
         ).returncode == 0
-
-    def _panel_resolution(self) -> dict[str, int] | None:
-        resolutions: set[tuple[int, int]] = set()
-        for modes in Path("/sys/class/drm").glob("*/modes"):
-            try:
-                for mode in modes.read_text().splitlines():
-                    match = re.fullmatch(r"(\d+)x(\d+)", mode.strip())
-                    if match:
-                        resolutions.add((int(match.group(1)), int(match.group(2))))
-            except OSError:
-                continue
-        if not resolutions:
-            return None
-        width, height = max(resolutions, key=lambda mode: mode[0] * mode[1])
-        if self._gamescope_orientation() in {"left", "right"}:
-            width, height = height, width
-        return {"width": width, "height": height}
 
     def _launcher(self) -> Path:
         path = Path(decky.DECKY_PLUGIN_DIR) / "bin" / "waydroid-launcher"
@@ -117,212 +106,79 @@ class Plugin:
     def _start_input_sync(self) -> None:
         subprocess.run(
             ["systemctl", "stop", self.INPUT_SYNC_UNIT],
+            env=clean_env(), timeout=10,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,
         )
+        _, uid, _ = self._user()
         self._run([
             "systemd-run", "--quiet", "--no-block", "--collect",
             "--unit=waydroid-manager-input-sync",
-            str(self._input_sync()),
+            str(self._input_sync()), str(uid),
         ])
 
     def _stop_input_sync(self) -> None:
         subprocess.run(
             ["systemctl", "stop", self.INPUT_SYNC_UNIT],
+            env=clean_env(), timeout=10,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,
         )
 
-    def _steam_gamescope_processes(self) -> dict[str, list[bytes]]:
-        processes: dict[str, list[bytes]] = {}
-        for process in Path("/proc").glob("[0-9]*"):
-            try:
-                arguments = (process / "cmdline").read_bytes().split(b"\0")
-                if b"--steam" in arguments and any(b"gamescope" in argument for argument in arguments):
-                    processes[process.name] = arguments
-            except OSError:
-                continue
-        return processes
-
-    def _gamescope_orientation(self) -> str:
-        for arguments in self._steam_gamescope_processes().values():
-            for index, argument in enumerate(arguments):
-                if argument == b"--force-orientation" and index + 1 < len(arguments):
-                    return arguments[index + 1].decode("ascii", errors="ignore")
-                if argument.startswith(b"--force-orientation="):
-                    return argument.partition(b"=")[2].decode("ascii", errors="ignore")
-        return ""
-
-    def _steam_graphics_environment(self, uid: int) -> dict[str, str]:
-        candidates: list[tuple[bool, dict[str, str]]] = []
-        for process in Path("/proc").glob("[0-9]*"):
-            try:
-                if process.stat().st_uid != uid:
-                    continue
-                arguments = (process / "cmdline").read_bytes().split(b"\0")
-                names = {argument.rsplit(b"/", 1)[-1] for argument in arguments}
-                if not names.intersection({b"steam", b"steamwebhelper"}):
-                    continue
-
-                environment = {}
-                for value in (process / "environ").read_bytes().split(b"\0"):
-                    key, separator, content = value.partition(b"=")
-                    if separator and key in {b"DISPLAY", b"XAUTHORITY", b"WAYLAND_DISPLAY", b"GAMESCOPE_WAYLAND_DISPLAY"}:
-                        environment[key.decode()] = content.decode(errors="ignore")
-                if "DISPLAY" in environment:
-                    candidates.append((b"steam" in names, environment))
-            except OSError:
-                continue
-
-        if candidates:
-            candidates.sort(key=lambda candidate: not candidate[0])
-            return candidates[0][1]
-        raise RuntimeError("Could not identify Steam's active Game Mode display")
-
     def _icon_data_uri(self, value: str, home: Path) -> str:
         try:
             icon = Path(value).resolve(strict=True)
             icon.relative_to(home / ".local/share/waydroid/data/icons")
+            if icon.suffix.lower() != ".png" or not icon.is_file():
+                return ""
+            with icon.open("rb") as file:
+                content = file.read(MAX_ICON_BYTES + 1)
         except (OSError, ValueError):
             return ""
-
-        if icon.suffix.lower() != ".png" or icon.stat().st_size > MAX_ICON_BYTES:
+        if len(content) > MAX_ICON_BYTES:
             return ""
-        return "data:image/png;base64," + base64.b64encode(icon.read_bytes()).decode("ascii")
-
-    def _start_launcher(self, mode: str, package: str | None = None) -> None:
-        if not self._initialized():
-            raise RuntimeError("Install the GAPPS image before starting Waydroid")
-        if not shutil.which("gamescope"):
-            raise RuntimeError("Gamescope is unavailable in this ArmadaOS deployment. Update or repair the deployment before launching Waydroid.")
-        self._run(["systemctl", "start", SERVICE])
-        user, uid, home = self._user()
-        graphics_environment = self._steam_graphics_environment(uid)
-        log_path = home / ".local/state/waydroid-manager/launcher.log"
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        os.chown(log_path.parent, uid, pwd.getpwnam(user).pw_gid)
-        log_path.touch(exist_ok=True)
-        os.chown(log_path, uid, pwd.getpwnam(user).pw_gid)
-        environment = [
-            f"HOME={home}",
-            f"XDG_RUNTIME_DIR=/run/user/{uid}",
-            f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus",
-            f"DISPLAY={graphics_environment['DISPLAY']}",
-        ]
-        if graphics_environment.get("XAUTHORITY"):
-            environment.append(f"XAUTHORITY={graphics_environment['XAUTHORITY']}")
-        wayland_display = graphics_environment.get("GAMESCOPE_WAYLAND_DISPLAY") or graphics_environment.get("WAYLAND_DISPLAY")
-        if wayland_display:
-            environment.append(f"GAMESCOPE_WAYLAND_DISPLAY={wayland_display}")
-            environment.append(f"WAYLAND_DISPLAY={wayland_display}")
-        command = [
-            "runuser", "-u", user, "--", "env",
-            *environment,
-            str(self._launcher()), mode,
-        ]
-        if package:
-            command.append(package)
-        with log_path.open("a", encoding="utf-8") as log:
-            subprocess.Popen(command, env=clean_env(), start_new_session=True, stdout=log, stderr=subprocess.STDOUT)
-
-    def _state_path(self, home: Path) -> Path:
-        return home / ".config/waydroid-manager/state.json"
+        return "data:image/png;base64," + base64.b64encode(content).decode("ascii")
 
     def _load_state(self, home: Path) -> dict[str, Any]:
-        state: dict[str, Any] = {
-            "autoAddApps": False,
-            "observedApps": [],
-            "pendingApps": [],
-            "shortcuts": {},
-            "removedShortcuts": [],
-            "removableApps": [],
-        }
-        try:
-            saved = json.loads(self._state_path(home).read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return state
-        if not isinstance(saved, dict):
-            return state
-        for key in state:
-            if isinstance(saved.get(key), type(state[key])):
-                state[key] = saved[key]
-        return state
+        return StateStore(home).load()
 
     def _save_state(self, home: Path, state: dict[str, Any]) -> None:
-        path = self._state_path(home)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        owner = home.stat()
-        os.chown(path.parent, owner.st_uid, owner.st_gid)
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as temporary:
-            json.dump(state, temporary, sort_keys=True)
-            temporary_path = Path(temporary.name)
-        os.chown(temporary_path, owner.st_uid, owner.st_gid)
-        temporary_path.replace(path)
+        StateStore(home).save(state)
 
-    def _shortcut_ids(self, home: Path) -> dict[str, int]:
-        state = self._load_state(home)
-        shortcuts = state["shortcuts"]
-        if not isinstance(shortcuts, dict):
-            return {}
-        recorded = {key: value for key, value in shortcuts.items() if isinstance(key, str) and isinstance(value, int)}
-        removed = set(state["removedShortcuts"])
-        try:
-            saved_shortcuts = self._load_shortcuts(self._shortcuts_path(home))
-        except (OSError, RuntimeError, ValueError):
-            return recorded
-
-        launcher = str(self._launcher())
-        names = {"waydroid": WAYDROID_SHORTCUT_KEY}
-        directory = home / ".local/share/applications"
-        for entry in directory.glob("waydroid.*.desktop"):
-            package = entry.stem.removeprefix("waydroid.")
-            if not PACKAGE_RE.fullmatch(package):
-                continue
+    def _account_state(self, home: Path, state: dict, account_id: int) -> dict:
+        legacy = state.pop("legacy", None)
+        if legacy is not None and not state["accounts"]:
             try:
-                parser = configparser.ConfigParser(interpolation=None)
-                parser.read(entry, encoding="utf-8")
-                name = parser.get("Desktop Entry", "Name", fallback="").strip()
-            except (OSError, configparser.Error):
-                continue
-            if name:
-                names.setdefault(name.casefold(), package)
+                if known_accounts(home) == {account_id}:
+                    state["accounts"][str(account_id)] = legacy
+            except (OSError, ValueError, RuntimeError):
+                pass
+        return StateStore.account(state, account_id)
 
-        def shortcut_key(options: str) -> str | None:
-            if options == "full" or options.endswith(" full"):
-                return WAYDROID_SHORTCUT_KEY
-            match = re.search(r"(?:^|\s)app\s+([A-Za-z0-9._-]+)$", options)
-            return match.group(1) if match and PACKAGE_RE.fullmatch(match.group(1)) else None
-
-        ids: dict[str, int] = {}
-        saved_by_id: dict[int, dict[str, tuple[int, Any]]] = {}
-        for _, (_, shortcut) in saved_shortcuts.items():
-            shortcut = {key.casefold(): value for key, value in shortcut.items()}
-            exe = str(shortcut.get("exe", (1, ""))[1]).strip('"')
-            options = str(shortcut.get("launchoptions", (1, ""))[1])
-            name = str(shortcut.get("appname", (1, ""))[1]).strip().casefold()
-            app_id = shortcut.get("appid", (2, 0))[1]
-            if not isinstance(app_id, int):
-                continue
-            normalized_id = app_id & 0xFFFFFFFF
-            saved_by_id[normalized_id] = shortcut
-            key = shortcut_key(options) if exe == launcher else names.get(name)
-            if key is None:
-                continue
-            if key not in removed:
-                ids[key] = normalized_id
-        for key, app_id in recorded.items():
-            shortcut = saved_by_id.get(app_id & 0xFFFFFFFF)
-            if shortcut is None or key in removed:
-                continue
-            options = str(shortcut.get("launchoptions", (1, ""))[1])
-            if shortcut_key(options) == key:
-                ids[key] = app_id & 0xFFFFFFFF
-        return ids
+    def _shortcut_ids(self, home: Path, account_id: int | None, history: dict | None = None) -> dict[str, int]:
+        if account_id is None:
+            return {}
+        try:
+            path = self._shortcuts_path(home, account_id)
+        except (OSError, RuntimeError, ValueError):
+            return {}
+        if history is None:
+            history = self._account_state(home, self._load_state(home), account_id)
+        removed = set(history["removedShortcuts"])
+        try:
+            owners = shortcut_owners(path, self._launcher())
+        except (OSError, RuntimeError, ValueError):
+            return history["shortcuts"].copy()
+        return {key: app_id for app_id, key in owners.items() if key is not None and key not in removed}
 
     def _removable_packages(self, allow_cached: bool = True) -> set[str]:
         _, _, home = self._user()
+        if not self._service_running():
+            if not allow_cached:
+                raise RuntimeError("WAYDROID_NOT_RUNNING")
+            return set(self._load_state(home).get("removableApps", []))
         try:
             output = self._run(["waydroid", "shell", "--", "pm", "list", "packages", "-3"], timeout=10)
         except (RuntimeError, subprocess.TimeoutExpired):
@@ -340,148 +196,64 @@ class Plugin:
             raise RuntimeError("WAYDROID_NOT_RUNNING")
         return set(self._load_state(home).get("removableApps", []))
 
-    def _desktop_entries(self, removable_packages: set[str] | None = None) -> list[dict[str, Any]]:
+    def _desktop_entries(self, removable_packages: set[str] | None = None, *, account_id: int | None = None,
+                         package: str | None = None, include_icons: bool = False) -> list[dict[str, Any]]:
         _, _, home = self._user()
-        directory = home / ".local/share/applications"
-        shortcut_ids = self._shortcut_ids(home)
-        apps: list[dict[str, Any]] = []
-        for entry in sorted(directory.glob("waydroid.*.desktop")):
-            package = entry.stem.removeprefix("waydroid.")
-            if not PACKAGE_RE.fullmatch(package):
-                continue
-            parser = configparser.ConfigParser(interpolation=None)
-            try:
-                parser.read(entry, encoding="utf-8")
-                data = parser["Desktop Entry"]
-                if data.get("Exec") != f"waydroid app launch {package}":
-                    continue
-                icon_path = data.get("Icon", "")
-                apps.append({
-                    "name": data.get("Name", package),
-                    "package": package,
-                    "icon": self._icon_data_uri(icon_path, home),
-                    "iconPath": icon_path,
-                    "shortcutId": shortcut_ids.get(package),
-                    "removable": package in removable_packages if removable_packages is not None else False,
-                })
-            except (OSError, KeyError, configparser.Error):
-                continue
+        shortcut_ids = self._shortcut_ids(home, account_id)
+        removable = removable_packages or set()
+        apps = [{
+            "name": app.name,
+            "package": app.package,
+            "icon": self._icon_data_uri(app.icon, home) if include_icons else "",
+            "iconPath": app.icon,
+            "shortcutId": shortcut_ids.get(app.package),
+            "removable": app.package in removable,
+        } for app in app_exports(home, package)]
         return sorted(apps, key=lambda app: app["name"].casefold())
 
-    def _shortcuts_path(self, home: Path) -> Path:
-        roots = [
-            home / ".local/share/Steam/userdata",
-            home / ".steam/steam/userdata",
-            home / ".var/app/com.valvesoftware.Steam/data/Steam/userdata",
-        ]
-        for root in roots:
-            paths = sorted(root.glob("*/config/shortcuts.vdf"))
-            if paths:
-                return paths[0]
-        raise RuntimeError("Steam has not created shortcuts.vdf for this user yet")
+    def _shortcuts_path(self, home: Path, account_id: int) -> Path:
+        if type(account_id) is not int or not 0 < account_id <= 0xFFFFFFFF:
+            raise RuntimeError("Invalid Steam account ID")
+        return shortcuts_path(home, account_id)
 
-    def _read_cstring(self, data: bytes, offset: int) -> tuple[str, int]:
-        end = data.index(b"\0", offset)
-        return data[offset:end].decode("utf-8", errors="replace"), end + 1
-
-    def _read_vdf(self, data: bytes, offset: int = 0) -> tuple[dict[str, Any], int]:
-        result: dict[str, Any] = {}
-        while offset < len(data):
-            value_type = data[offset]
-            offset += 1
-            if value_type == 8:
-                return result, offset
-            key, offset = self._read_cstring(data, offset)
-            if value_type == 0:
-                value, offset = self._read_vdf(data, offset)
-            elif value_type == 1:
-                value, offset = self._read_cstring(data, offset)
-            elif value_type == 2:
-                value = struct.unpack_from("<i", data, offset)[0]
-                offset += 4
-            elif value_type == 7:
-                value = struct.unpack_from("<Q", data, offset)[0]
-                offset += 8
-            else:
-                raise RuntimeError(f"Unsupported Steam shortcut field type {value_type}")
-            result[key] = (value_type, value)
-        raise RuntimeError("Steam shortcuts.vdf ended unexpectedly")
-
-    def _write_vdf(self, items: dict[str, tuple[int, Any]]) -> bytes:
-        output = bytearray()
-        for key, (value_type, value) in items.items():
-            output.append(value_type)
-            output.extend(key.encode("utf-8"))
-            output.append(0)
-            if value_type == 0:
-                output.extend(self._write_vdf(value))
-            elif value_type == 1:
-                output.extend(str(value).encode("utf-8"))
-                output.append(0)
-            elif value_type == 2:
-                output.extend(struct.pack("<i", value))
-            elif value_type == 7:
-                output.extend(struct.pack("<Q", value))
-            else:
-                raise RuntimeError(f"Unsupported Steam shortcut field type {value_type}")
-        output.append(8)
-        return bytes(output)
-
-    def _load_shortcuts(self, path: Path) -> dict[str, Any]:
-        if not path.exists():
-            return {}
-        root, _ = self._read_vdf(path.read_bytes())
-        if "shortcuts" not in root or root["shortcuts"][0] != 0:
-            raise RuntimeError("Steam shortcuts.vdf has an unexpected format")
-        return root["shortcuts"][1]
-
-    def _save_shortcuts(self, path: Path, shortcuts: dict[str, Any]) -> None:
-        payload = self._write_vdf({"shortcuts": (0, shortcuts)})
-        with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as temporary:
-            temporary.write(payload)
-            temporary_path = Path(temporary.name)
-        temporary_path.replace(path)
-
-    def _remove_shortcuts(self, home: Path) -> None:
-        try:
-            path = self._shortcuts_path(home)
-        except RuntimeError:
-            return
-        shortcuts = self._load_shortcuts(path)
-        launcher = f'"{self._launcher()}"'
-        removed = [key for key, (_, item) in shortcuts.items() if item.get("exe", (1, ""))[1] == launcher]
-        for key in removed:
-            del shortcuts[key]
-        if removed:
-            self._save_shortcuts(path, shortcuts)
-            owner = home.stat()
-            os.chown(path, owner.st_uid, owner.st_gid)
-
-    async def get_status(self) -> dict[str, Any]:
-        _, _, home = self._user()
-        state = self._load_state(home)
-        shortcut_ids = self._shortcut_ids(home)
+    def _status(self, account_id: int | None) -> dict[str, Any]:
+        _, uid, home = self._user()
+        history = self._account_state(home, self._load_state(home), account_id) if account_id is not None else StateStore.shortcut_defaults()
+        shortcut_ids = self._shortcut_ids(home, account_id, history)
         return {
             "initialized": self._initialized(),
-            "serviceRunning": self._service_state("active"),
-            "gamescopeInstalled": shutil.which("gamescope") is not None,
-            "resolution": self._panel_resolution(),
-            "autoAddApps": state["autoAddApps"],
+            "hasAppEntries": any((home / ".local/share/applications").glob("waydroid.*.desktop")),
+            "serviceRunning": self._service_running(),
+            "sessionAvailable": steam_wayland_socket(uid) is not None,
+            "autoAddApps": history["autoAddApps"],
+            "accountId": account_id,
+            "userHome": str(home),
             "waydroidShortcutId": shortcut_ids.get(WAYDROID_SHORTCUT_KEY),
         }
 
-    async def list_apps(self) -> list[dict[str, Any]]:
-        return self._desktop_entries(self._removable_packages()) if self._initialized() else []
+    async def get_status(self, account_id: int | None = None) -> dict[str, Any]:
+        return await asyncio.to_thread(self._status, account_id)
 
-    def _shortcut_details(self, name: str, package: str | None = None, icon: str = "") -> dict[str, str]:
+    def _list_apps(self, account_id: int | None = None) -> list[dict[str, Any]]:
+        if not self._initialized():
+            return []
+        _, _, home = self._user()
+        removable = set(self._load_state(home).get("removableApps", []))
+        return self._desktop_entries(removable, account_id=account_id, include_icons=True)
+
+    async def list_apps(self, account_id: int | None = None) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(self._list_apps, account_id)
+
+    def _shortcut_details(self, account_id: int, name: str, package: str | None = None, icon: str = "") -> dict[str, Any]:
         _, _, home = self._user()
         return {
             "name": name,
             "exe": str(self._launcher()),
             "startDir": str(home),
-            "launchOptions": f"{LAUNCH_WRAPPER} %command% " + ("full" if package is None else f"app {package}"),
+            "launchOptions": "full" if package is None else f"app {package}",
             "icon": icon,
             "key": WAYDROID_SHORTCUT_KEY if package is None else package,
+            "accountId": account_id,
         }
 
     def _validate_shortcut_key(self, key: str) -> None:
@@ -490,128 +262,311 @@ class Plugin:
         if not PACKAGE_RE.fullmatch(key):
             raise RuntimeError("Invalid Android package name")
 
-    async def record_shortcut(self, key: str, app_id: int) -> None:
+    async def record_shortcut(self, account_id: int, key: str, app_id: int) -> None:
         self._validate_shortcut_key(key)
-        if not isinstance(app_id, int) or app_id == 0:
+        if type(app_id) is not int or not 0 < app_id <= 0xFFFFFFFF:
             raise RuntimeError("Steam did not return a valid shortcut ID")
         _, _, home = self._user()
+        self._shortcuts_path(home, account_id)
         with self._edit_state(home) as state:
-            state["shortcuts"][key] = app_id
-            state["removedShortcuts"] = [item for item in state["removedShortcuts"] if item != key]
-            state["pendingApps"] = [item for item in state["pendingApps"] if item != key]
+            history = self._account_state(home, state, account_id)
+            if key in history["pendingRemovals"].values():
+                raise RuntimeError("STEAM_SHORTCUT_CLEANUP_PENDING")
+            if key != WAYDROID_SHORTCUT_KEY and next(app_exports(home, key), None) is None:
+                raise RuntimeError("Android app is no longer installed")
+            history["shortcuts"][key] = app_id
+            history["removedShortcuts"] = [item for item in history["removedShortcuts"] if item != key]
+            history["pendingApps"] = [item for item in history["pendingApps"] if item != key]
 
-    async def remove_shortcut_record(self, key: str) -> None:
+    async def remove_shortcut_record(self, account_id: int, key: str) -> None:
         self._validate_shortcut_key(key)
         _, _, home = self._user()
+        self._shortcuts_path(home, account_id)
         with self._edit_state(home) as state:
-            state["shortcuts"].pop(key, None)
-            state["pendingApps"] = [item for item in state["pendingApps"] if item != key]
-            if key not in state["removedShortcuts"]:
-                state["removedShortcuts"].append(key)
+            history = self._account_state(home, state, account_id)
+            history["shortcuts"].pop(key, None)
+            history["pendingApps"] = [item for item in history["pendingApps"] if item != key]
+            if key not in history["removedShortcuts"]:
+                history["removedShortcuts"].append(key)
 
-    async def set_auto_add_apps(self, enabled: bool) -> None:
+    async def set_auto_add_apps(self, account_id: int, enabled: bool) -> None:
         _, _, home = self._user()
+        self._shortcuts_path(home, account_id)
         with self._edit_state(home) as state:
-            state["autoAddApps"] = enabled
+            history = self._account_state(home, state, account_id)
+            history["autoAddApps"] = enabled
             if enabled:
-                state["observedApps"] = sorted({*state["observedApps"], *(app["package"] for app in self._desktop_entries())})
+                history["observedApps"] = sorted({*history["observedApps"], *(app["package"] for app in self._desktop_entries())})
 
-    def _pending_auto_shortcuts(self, live_ids: list[int] | None = None) -> list[dict[str, str]]:
-        if self._initialized():
+    def _pending_auto_shortcuts(self, account_id: int, live_ids: list[int] | None = None) -> list[dict[str, Any]]:
+        if self._initialized() and container_pid() is not None:
             self._removable_packages()
         _, _, home = self._user()
+        path = self._shortcuts_path(home, account_id)
         with self._state_lock:
-            return self._update_auto_shortcuts(home, live_ids)
+            return self._update_auto_shortcuts(home, account_id, path, live_ids)
 
-    def _update_auto_shortcuts(self, home: Path, live_ids: list[int] | None) -> list[dict[str, str]]:
+    def _update_auto_shortcuts(self, home: Path, account_id: int, path: Path, live_ids: list[int] | None) -> list[dict[str, Any]]:
         state = self._load_state(home)
+        history = self._account_state(home, state, account_id)
         if live_ids is not None:
             ids = set(live_ids)
-            discovered = self._shortcut_ids(home)
-            for key, app_id in list(state["shortcuts"].items()):
+            if state.get("artwork"):
+                prune_artwork(home, path.parent / "grid", state["artwork"], ids)
+            discovered = self._shortcut_ids(home, account_id, history)
+            for key, app_id in list(history["shortcuts"].items()):
                 if app_id in ids:
                     continue
                 replacement = discovered.get(key)
                 if replacement in ids:
-                    state["shortcuts"][key] = replacement
+                    history["shortcuts"][key] = replacement
                 else:
-                    state["shortcuts"].pop(key)
-                    if key not in state["removedShortcuts"]:
-                        state["removedShortcuts"].append(key)
-                    state["pendingApps"] = [item for item in state["pendingApps"] if item != key]
+                    history["shortcuts"].pop(key)
+                    if key not in history["removedShortcuts"]:
+                        history["removedShortcuts"].append(key)
+                    history["pendingApps"] = [item for item in history["pendingApps"] if item != key]
+        if not history["autoAddApps"]:
             self._save_state(home, state)
-        if not state["autoAddApps"]:
             return []
 
-        apps = self._desktop_entries()
+        apps = self._desktop_entries(account_id=account_id)
         installed = {app["package"]: app for app in apps}
-        observed = set(state["observedApps"])
-        removed = set(state["removedShortcuts"])
-        recorded = set(state["shortcuts"])
-        pending = set(state["pendingApps"])
-        pending.update(package for package, app in installed.items() if package not in observed and package not in removed and package not in recorded and not app["shortcutId"])
-        pending = {package for package in pending if package in installed and not installed[package]["shortcutId"]}
-        state["observedApps"] = sorted(observed | set(installed))
-        state["pendingApps"] = sorted(pending & set(installed))
+        observed = set(history["observedApps"])
+        removed = set(history["removedShortcuts"])
+        recorded = set(history["shortcuts"])
+        pending = set(history["pendingApps"])
+        removing = set(history["pendingRemovals"].values())
+        missing = {package for package, app in installed.items() if not app["shortcutId"] or package in removing}
+        pending.update(missing - observed - removed - recorded)
+        pending &= missing
+        history["observedApps"] = sorted(observed | set(installed))
+        history["pendingApps"] = sorted(pending)
         self._save_state(home, state)
         return [
-            self._shortcut_details(app["name"], package, app["iconPath"])
+            self._shortcut_details(account_id, app["name"], package, app["iconPath"])
             for package, app in installed.items()
-            if package in state["pendingApps"]
+            if package in pending - removing
         ]
 
-    async def pending_auto_shortcuts(self, live_ids: list[int] | None = None) -> list[dict[str, str]]:
-        return self._pending_auto_shortcuts(live_ids)
+    async def pending_auto_shortcuts(self, account_id: int, live_ids: list[int] | None = None) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(self._pending_auto_shortcuts, account_id, live_ids)
 
-    async def get_waydroid_shortcut(self) -> dict[str, str]:
-        return self._shortcut_details("Waydroid")
-
-    async def get_app_shortcut(self, package: str) -> dict[str, str]:
-        if not PACKAGE_RE.fullmatch(package):
-            raise RuntimeError("Invalid Android package name")
-        app = next((item for item in self._desktop_entries() if item["package"] == package), None)
-        if not app:
-            raise RuntimeError("Android app is no longer installed")
-        return self._shortcut_details(app["name"], package, app["iconPath"])
-
-    async def pending_shortcut_artwork(self) -> list[dict[str, Any]]:
+    def _pending_shortcut_removals(self, account_id: int, live_ids: list[int] | None) -> dict[str, Any]:
         _, _, home = self._user()
-        try:
-            grid = self._shortcuts_path(home).parent / "grid"
-        except RuntimeError:
-            return []
-        return [{"key": key, "appId": app_id} for key, app_id in self._shortcut_ids(home).items()
-                if missing_artwork(grid, app_id)]
+        path = self._shortcuts_path(home, account_id)
+        with self._edit_state(home) as state:
+            history = self._account_state(home, state, account_id)
+            queued = history["pendingRemovals"]
+            if live_ids is None or not queued:
+                return {"ids": [], "waiting": bool(queued)}
+            owners = shortcut_owners(path, self._launcher())
+            live = set(live_ids)
+            ready = []
+            for value, key in list(queued.items()):
+                app_id = int(value)
+                if app_id in owners and owners[app_id] != key:
+                    queued.pop(value)
+                elif app_id not in owners and app_id not in live:
+                    queued.pop(value)
+                elif owners.get(app_id) == key and app_id in live:
+                    ready.append(app_id)
+            return {"ids": ready, "waiting": len(queued) > len(ready)}
 
-    async def get_shortcut_artwork(self, key: str, app_id: int) -> dict[str, Any]:
-        self._validate_shortcut_key(key)
+    async def pending_shortcut_removals(self, account_id: int, live_ids: list[int] | None = None) -> dict[str, Any]:
+        return await asyncio.to_thread(self._pending_shortcut_removals, account_id, live_ids)
+
+    def _legacy_shortcuts(self, account_id: int) -> list[dict[str, Any]]:
         _, _, home = self._user()
-        if self._shortcut_ids(home).get(key) != app_id:
-            raise RuntimeError("The Steam shortcut no longer exists")
-        roles = missing_artwork(self._shortcuts_path(home).parent / "grid", app_id)
-        app = next((item for item in self._desktop_entries() if item["package"] == key), None)
-        result = {"roles": roles, "ready": True, "name": app["name"] if app else "Waydroid", "icon": app["icon"] if app else "", "images": []}
-        if not roles or not app:
-            return result
-        try:
-            apks = persistent_apks(home / ".local/share/waydroid/data", key)
-            if not apks and self._service_state("active"):
-                pid = self._run(["lxc-info", "-P", "/var/lib/waydroid/lxc", "-n", "waydroid", "-pH"])
-                if pid.isdecimal():
-                    # Keep proc's root link intact for the container mount tree.
-                    root = Path("/proc") / pid / "root"
-                    apks = package_apks(root, self._run(["waydroid", "shell", "--", "pm", "path", key]))
-            result["images"] = await asyncio.to_thread(apk_images, apks)
-        except (OSError, ValueError, RuntimeError, zipfile.BadZipFile, subprocess.SubprocessError):
-            pass
+        result = []
+        names = {app["package"]: app["name"] for app in self._desktop_entries()}
+        names[WAYDROID_SHORTCUT_KEY] = "Waydroid"
+        for _, (_, entry) in read_shortcuts(self._shortcuts_path(home, account_id)).items():
+            entry = {key.casefold(): value for key, value in entry.items()}
+            exe = str(entry.get("exe", (1, ""))[1]).strip('"')
+            existing_options = str(entry.get("launchoptions", (1, ""))[1])
+            options = migrated_launch_options(existing_options)
+            app_id = entry.get("appid", (2, 0))[1]
+            key = shortcut_key(existing_options)
+            if Path(exe).resolve() != self._launcher().resolve() or not key or not isinstance(app_id, int) or not app_id:
+                continue
+            update: dict[str, Any] = {"appId": app_id & 0xFFFFFFFF}
+            if options:
+                update["launchOptions"] = options
+            if entry.get("appname", (1, ""))[1] == self._launcher().name and key in names:
+                update["name"] = names[key]
+            if len(update) > 1:
+                result.append(update)
         return result
 
-    async def install_gapps(self) -> None:
+    async def legacy_shortcuts(self, account_id: int) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(self._legacy_shortcuts, account_id)
+
+    def _require_shortcut_available(self, account_id: int, key: str) -> None:
+        _, _, home = self._user()
+        self._shortcuts_path(home, account_id)
+        history = self._account_state(home, self._load_state(home), account_id)
+        if key in history["pendingRemovals"].values():
+            raise RuntimeError("STEAM_SHORTCUT_CLEANUP_PENDING")
+
+    async def get_waydroid_shortcut(self, account_id: int) -> dict[str, Any]:
+        self._require_shortcut_available(account_id, WAYDROID_SHORTCUT_KEY)
+        return self._shortcut_details(account_id, "Waydroid")
+
+    async def get_app_shortcut(self, account_id: int, package: str) -> dict[str, Any]:
+        if not PACKAGE_RE.fullmatch(package):
+            raise RuntimeError("Invalid Android package name")
+        app = next(iter(self._desktop_entries(package=package)), None)
+        if not app:
+            raise RuntimeError("Android app is no longer installed")
+        self._require_shortcut_available(account_id, package)
+        return self._shortcut_details(account_id, app["name"], package, app["iconPath"])
+
+    def _pending_shortcut_artwork(self, account_id: int) -> list[dict[str, Any]]:
+        _, _, home = self._user()
+        try:
+            grid = self._shortcuts_path(home, account_id).parent / "grid"
+        except RuntimeError:
+            return []
+        records = self._load_state(home)["artwork"]
+        return [{"key": key, "appId": app_id} for key, app_id in self._shortcut_ids(home, account_id).items()
+                if any(artwork_updates(home, grid, app_id, records))]
+
+    async def pending_shortcut_artwork(self, account_id: int) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(self._pending_shortcut_artwork, account_id)
+
+    def _shortcut_artwork(self, account_id: int, key: str, app_id: int) -> dict[str, Any]:
+        self._validate_shortcut_key(key)
+        _, _, home = self._user()
+        if self._shortcut_ids(home, account_id).get(key) != app_id:
+            raise RuntimeError("The Steam shortcut no longer exists")
+        grid = (self._shortcuts_path(home, account_id).parent / "grid").resolve()
+        if not grid.is_relative_to(home):
+            raise RuntimeError("The Steam artwork directory is outside the user home")
+        roles, clear_logo = artwork_updates(home, grid, app_id, self._load_state(home)["artwork"])
+        app = next(iter(self._desktop_entries(package=key, include_icons=True)), None) if key != WAYDROID_SHORTCUT_KEY else None
+        available = app is not None or key == WAYDROID_SHORTCUT_KEY
+        return {
+            "roles": roles if available else [], "clearLogo": clear_logo,
+            "ready": available and not roles and artwork_attached(grid, app_id),
+            "name": app["name"] if app else "Waydroid", "icon": app["icon"] if app else "",
+        }
+
+    async def get_shortcut_artwork(self, account_id: int, key: str, app_id: int) -> dict[str, Any]:
+        return await asyncio.to_thread(self._shortcut_artwork, account_id, key, app_id)
+
+    async def record_shortcut_artwork(self, account_id: int, app_id: int, role: str, digest: str, version: int = 0) -> None:
+        if (type(app_id) is not int or not 0 < app_id <= 0xFFFFFFFF
+                or role not in {*ARTWORK_TYPES, "logoPosition"} or not re.fullmatch(r"[0-9a-f]{64}", digest)
+                or type(version) is not int or not 0 <= version <= ARTWORK_VERSION):
+            raise RuntimeError("Invalid Steam artwork record")
+        _, _, home = self._user()
+        grid = (self._shortcuts_path(home, account_id).parent / "grid").resolve()
+        if not grid.is_relative_to(home):
+            raise RuntimeError("The Steam artwork directory is outside the user home")
+        with self._edit_state(home) as state:
+            if app_id in self._shortcut_ids(home, account_id).values():
+                path = grid / artwork_filename(app_id, role)
+                state["artwork"][str(path.relative_to(home))] = f"{version}:{digest}" if version else digest
+
+    def _install_gapps(self) -> None:
         if self._initialized():
             raise RuntimeError("Waydroid is already initialized. Remove it before installing a new image.")
-        self._run(["waydroid", "init", "--system_type", "GAPPS"], timeout=1800)
+        command = ["waydroid", "init", "--system_type", "GAPPS"]
+        missing_channels = "You must provide 'System OTA' and 'Vendor OTA' URLs"
+        try:
+            output = run_init(command, self._set_image_progress)
+        except RuntimeError as error:
+            if self._initialized() or missing_channels not in str(error):
+                raise
+            output = str(error)
+        # Some distributions ship without default OTA channels.
+        if not self._initialized() and missing_channels in output:
+            output = run_init([
+                *command,
+                "--system_channel", "https://ota.waydro.id/system",
+                "--vendor_channel", "https://ota.waydro.id/vendor",
+            ], self._set_image_progress)
         if not self._initialized():
-            raise RuntimeError("Waydroid did not finish initializing its image")
+            raise RuntimeError(output or "Waydroid did not finish initializing its image")
+
+    def _initialize_image(self, locale: str | None) -> bool:
+        user, uid, home = self._user()
+        data = home / ".local/share/waydroid/data"
+        initialized = self._initialized()
+        new_data = not initialized and not data.exists()
+        if not initialized:
+            self._install_gapps()
+        language_set = True
+        with self._package_session(lambda stage: self._set_image_progress(stage, None)):
+            if new_data and locale:
+                self._set_image_progress("language", None)
+                try:
+                    self._set_initial_locale(data, locale)
+                except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                    decky.logger.warning("Initial Android language setup failed: %s", error)
+                    language_set = False
+            self._set_image_progress("apps", None)
+            self._wait_for_app_entries(user, uid, home)
+        return language_set
+
+    def _set_initial_locale(self, data: Path, locale: str) -> None:
+        tags = locale if locale.lower().split("-")[0] == "en" else f"{locale},en-US"
+        helper = Path(decky.DECKY_PLUGIN_DIR) / "bin/waydroid-verifier.dex"
+        with tempfile.TemporaryDirectory(prefix="waydroid-manager-", dir=data / "local/tmp") as temporary:
+            directory = Path(temporary)
+            directory.chmod(0o755)
+            dex = directory / "locale.dex"
+            shutil.copyfile(helper, dex)
+            dex.chmod(0o644)
+            self._run([
+                "waydroid", "shell", "--", "env", f"CLASSPATH=/data/local/tmp/{directory.name}/{dex.name}",
+                "/system/bin/app_process", "/system/bin", "waydroid.manager.SetupLocale", tags,
+            ], timeout=15)
+            for _ in range(10):
+                saved = self._run(["waydroid", "shell", "--", "settings", "--user", "0", "get", "system", "system_locales"])
+                if saved.casefold() == tags.casefold():
+                    return
+                time.sleep(0.5)
+            raise RuntimeError("Android did not save the requested language list")
+
+    @staticmethod
+    def _user_command(user: str, uid: int, home: Path) -> list[str]:
+        return [
+            "runuser", "-u", user, "--", "env",
+            f"HOME={home}", f"XDG_RUNTIME_DIR=/run/user/{uid}",
+            f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus",
+        ]
+
+    def _wait_for_app_entries(self, user: str, uid: int, home: Path) -> None:
+        command = [*self._user_command(user, uid, home), "waydroid", "app", "list"]
+        directory = home / ".local/share/applications"
+        deadline = time.monotonic() + 90
+        while time.monotonic() < deadline:
+            try:
+                expected = launcher_packages(self._run(command, timeout=5))
+            except (RuntimeError, subprocess.TimeoutExpired):
+                expected = set()
+            exported = {entry.stem.removeprefix("waydroid.") for entry in directory.glob("waydroid.*.desktop")}
+            if expected and expected <= exported:
+                return
+            time.sleep(1)
+        raise RuntimeError("IMAGE_APP_EXPORT_TIMEOUT")
+
+    async def install_gapps(self, locale: str | None = None) -> bool:
+        if locale is not None and (not isinstance(locale, str) or not re.fullmatch(r"[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,4}", locale)):
+            locale = "en-US"
+        async with self._package_lock:
+            self._set_image_progress("preparing", None)
+            try:
+                return await asyncio.to_thread(self._initialize_image, locale)
+            finally:
+                self._image_progress = None
+
+    def _set_image_progress(self, stage: str, percent: int | None) -> None:
+        self._image_progress = {"stage": stage, "percent": percent}
+
+    async def get_image_progress(self) -> dict[str, str | int | None] | None:
+        return self._image_progress
 
     def _install_file(self, value: str) -> Path:
         _, _, home = self._user()
@@ -625,6 +580,9 @@ class Plugin:
         return path
 
     def _require_session(self) -> None:
+        # Waydroid status contacts D-Bus and can activate a stopped service.
+        if not self._service_running():
+            raise RuntimeError("WAYDROID_NOT_RUNNING")
         try:
             status = self._run(["waydroid", "status"])
         except RuntimeError as error:
@@ -641,170 +599,290 @@ class Plugin:
         except RuntimeError:
             pass
         else:
+            self._wait_for_android(progress)
             yield
             return
 
         user, uid, home = self._user()
-        graphics = self._steam_graphics_environment(uid)
-        wayland = graphics.get("GAMESCOPE_WAYLAND_DISPLAY") or graphics.get("WAYLAND_DISPLAY")
+        wayland = steam_wayland_socket(uid)
         if not wayland:
             raise RuntimeError("WAYDROID_START_FAILED")
-        user_command = [
-            "runuser", "-u", user, "--", "env",
-            f"HOME={home}", f"XDG_RUNTIME_DIR=/run/user/{uid}",
-            f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus",
-        ]
+        user_command = self._user_command(user, uid, home)
         unit = f"waydroid-manager-package-{uuid.uuid4().hex}"
-        service_was_active = self._service_state("active")
+        unit_status = [*user_command, "systemctl", "--user", "show", unit, "--property=ActiveState", "--value"]
+        service_was_active = self._service_running()
+        completed = False
         try:
             progress("starting")
             self._run(["systemctl", "start", SERVICE])
             # Session start keeps Android hidden until an app or the full UI is requested.
             self._run([
                 *user_command, "systemd-run", "--user", "--collect", "--quiet",
-                f"--unit={unit}", "--property=KillMode=control-group",
+                f"--unit={unit}", "--property=KillMode=control-group", "--property=TimeoutStopSec=45s",
                 "env", f"WAYLAND_DISPLAY={wayland}", "waydroid", "session", "start",
             ])
-            progress("booting")
-            deadline = time.monotonic() + 180
-            while time.monotonic() < deadline:
-                try:
-                    ready = self._run(["waydroid", "shell", "--", "getprop", "sys.boot_completed"], timeout=10)
-                    if ready == "1":
-                        break
-                except (RuntimeError, subprocess.TimeoutExpired):
-                    pass
-                if self._run([*user_command, "systemctl", "--user", "show", unit, "--property=ActiveState", "--value"]) not in {"active", "activating"}:
-                    raise RuntimeError("WAYDROID_START_FAILED")
-                time.sleep(1)
-            else:
-                raise RuntimeError("WAYDROID_START_FAILED")
+            self._wait_for_android(progress, unit_status)
             yield
+            completed = True
         finally:
             progress("cleaning")
-            # Stop only our temporary unit, never a replacement session started by Steam.
-            state = self._run([*user_command, "systemctl", "--user", "show", unit, "--property=ActiveState", "--value"])
-            if state in {"active", "activating"}:
-                self._run([*user_command, "systemctl", "--user", "stop", unit])
-            if not service_was_active:
+            try:
+                self._cleanup_package_session(user_command, unit, unit_status, service_was_active)
+            except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                decky.logger.warning("Could not close the temporary Android session: %s", error)
+                if completed:
+                    raise RuntimeError("WAYDROID_CLEANUP_FAILED") from error
+
+    def _cleanup_package_session(self, user_command: list[str], unit: str,
+                                 unit_status: list[str], service_was_active: bool) -> None:
+        try:
+            try:
+                state = self._run(unit_status, timeout=5)
+            except subprocess.TimeoutExpired:
+                state = None
+            if state is None or state in {"active", "activating", "deactivating", "reloading"}:
+                self._run([*user_command, "systemctl", "--user", "stop", unit], timeout=60)
+        finally:
+            if not service_was_active and self._service_running():
                 try:
                     self._require_session()
                 except RuntimeError:
                     self._run(["systemctl", "stop", SERVICE])
 
-    def _check_package_result(self, output: str) -> None:
-        if "Success" not in output.splitlines():
-            raise RuntimeError(output or "PACKAGE_OPERATION_FAILED")
+    def _wait_for_android(self, progress: Callable[[str], None], unit_status: list[str] | None = None) -> None:
+        progress("booting")
+        deadline = time.monotonic() + 180
+        while time.monotonic() < deadline:
+            try:
+                if self._run(["waydroid", "shell", "--", "getprop", "sys.boot_completed"], timeout=10) == "1":
+                    return
+            except (RuntimeError, subprocess.TimeoutExpired):
+                pass
+            if unit_status:
+                try:
+                    state = self._run(unit_status, timeout=5)
+                except subprocess.TimeoutExpired:
+                    state = None
+                if state is not None and state not in {"active", "activating"}:
+                    raise RuntimeError("WAYDROID_START_FAILED")
+            else:
+                self._require_session()
+            time.sleep(1)
+        raise RuntimeError("WAYDROID_START_FAILED")
 
-    def _install_package(self, value: str) -> None:
+    def _check_package_result(self, output: str) -> None:
+        check_result(output)
+
+    def _install_package(self, value: str) -> bool:
+        self._set_package_progress("install", value, "preparing")
+        try:
+            self._install_archive(value)
+            self._set_package_progress("install", value, "complete")
+            return True
+        except InstallCancelled:
+            self._set_package_progress("install", value, "cancelled")
+            return False
+        except Exception:
+            self._set_package_progress("install", value, "failed")
+            raise
+
+    def _install_archive(self, value: str) -> None:
         if not self._initialized():
             raise RuntimeError("WAYDROID_NOT_INSTALLED")
         path = self._install_file(value)
-        self._require_session()
         _, _, home = self._user()
-        host_dir = home / ".local/share/waydroid/data/waydroid_tmp" / f"decky-{uuid.uuid4().hex}"
+        host_dir = home / ".local/share/waydroid/data/local/tmp" / f"waydroid-manager-{uuid.uuid4().hex}"
+        report = lambda stage: self._set_package_progress("install", value, stage)
         try:
             with zipfile.ZipFile(path) as archive:
-                host_dir.mkdir(parents=True)
-                installed: list[str] = []
-                if path.suffix.lower() == ".apk":
-                    if "AndroidManifest.xml" not in archive.namelist():
-                        raise RuntimeError("INVALID_APK_MANIFEST")
-                    shutil.copyfile(path, host_dir / "base.apk")
-                    installed.append("base.apk")
-                else:
-                    packages = [item for item in archive.infolist() if not item.is_dir() and item.filename.lower().endswith(".apk")]
-                    if not packages:
-                        raise RuntimeError("XAPK_NO_APKS")
-                    for item in packages:
-                        name = Path(item.filename).name
-                        if not name or name in installed:
-                            raise RuntimeError("XAPK_INVALID_NAMES")
-                        with archive.open(item) as source, (host_dir / name).open("wb") as destination:
-                            shutil.copyfileobj(source, destination)
-                        installed.append(name)
-            guest_dir = f"/data/waydroid_tmp/{host_dir.name}"
-            action = "install" if path.suffix.lower() == ".apk" else "install-multiple"
-            output = self._run(["waydroid", "shell", "--", "pm", action, "-r", *[f"{guest_dir}/{name}" for name in installed]], timeout=300)
-            self._check_package_result(output)
+                members = apk_members(archive, path.suffix.lower())
+                with self._package_session(report):
+                    report("checking")
+                    if not host_dir.parent.resolve().is_relative_to(home.resolve()):
+                        raise RuntimeError("INVALID_PACKAGE_FILE")
+                    installed = stage_apks(archive, members, host_dir)
+                    guest_dir = f"/data/local/tmp/{host_dir.name}"
+                    report("installing")
+                    install_apks(self._run, host_dir, guest_dir, installed,
+                                 commit=lambda session: self._commit_package_install(session, value, host_dir, guest_dir))
+                    # Keep uninstall availability when the temporary session closes.
+                    self._removable_packages()
         except zipfile.BadZipFile as error:
             raise RuntimeError("INVALID_PACKAGE_ARCHIVE") from error
         finally:
             shutil.rmtree(host_dir, ignore_errors=True)
 
-    async def install_package(self, value: str) -> None:
-        self._install_package(value)
+    async def install_package(self, value: str) -> bool:
+        async with self._package_lock:
+            return await asyncio.to_thread(self._install_package, value)
+
+    def _commit_package_install(self, session: str, target: str, directory: Path, guest: str) -> str:
+        helper = Path(decky.DECKY_PLUGIN_DIR) / "bin/waydroid-verifier.dex"
+        return commit_install(
+            ["waydroid", "shell", "--", "pm", "install-commit", session],
+            InstallVerification(self._run, session, directory, guest, helper),
+            lambda active: self._confirm_package_install(target, active),
+        )
+
+    def _confirm_package_install(self, target: str, active: Callable[[], bool]) -> bool | None:
+        token, event, decision = uuid.uuid4().hex, threading.Event(), []
+        self._install_confirmation = (target, token, event, decision)
+        self._set_package_progress("install", target, "confirmation")
+        deadline = time.monotonic() + 180
+        try:
+            while active():
+                if event.wait(0.5):
+                    return decision[0]
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("PACKAGE_INSTALL_TIMEOUT")
+            return None
+        finally:
+            self._install_confirmation = None
+            self._set_package_progress("install", target, "installing")
+
+    async def confirm_package_install(self, target: str, token: str, approved: bool) -> None:
+        pending = self._install_confirmation
+        if not pending or pending[:2] != (target, token) or type(approved) is not bool or pending[2].is_set():
+            raise RuntimeError("ANDROID_VERIFICATION_UNAVAILABLE")
+        pending[3].append(approved)
+        pending[2].set()
+
+    async def _change_service(self, action: str) -> None:
+        async with self._package_lock:
+            await asyncio.to_thread(self._run, ["systemctl", action, SERVICE])
 
     async def start_service(self) -> None:
-        self._run(["systemctl", "start", SERVICE])
+        await self._change_service("start")
 
     async def stop_service(self) -> None:
-        self._run(["systemctl", "stop", SERVICE])
+        await self._change_service("stop")
 
     async def restart_service(self) -> None:
-        self._run(["systemctl", "restart", SERVICE])
+        await self._change_service("restart")
 
-    async def launch_waydroid(self) -> None:
-        self._start_launcher("full")
+    async def _ensure_service(self) -> None:
+        if not self._initialized():
+            raise RuntimeError("WAYDROID_NOT_INSTALLED")
+        await self.start_service()
 
-    async def launch_app(self, package: str) -> None:
+    def _uninstall_package(self, package: str, account_id: int | None = None) -> int | None:
         if not PACKAGE_RE.fullmatch(package):
             raise RuntimeError("Invalid Android package name")
-        self._start_launcher("app", package)
-
-    def _uninstall_package(self, package: str) -> int | None:
-        if not PACKAGE_RE.fullmatch(package):
-            raise RuntimeError("Invalid Android package name")
-        self._set_uninstall_progress(package, "preparing")
+        self._set_package_progress("uninstall", package, "preparing")
         try:
-            with self._package_session(lambda stage: self._set_uninstall_progress(package, stage)):
-                shortcut_id = self._remove_installed_package(package)
-            self._set_uninstall_progress(package, "library")
+            with self._package_session(lambda stage: self._set_package_progress("uninstall", package, stage)):
+                shortcut_id = self._remove_installed_package(package, account_id)
+            self._set_package_progress("uninstall", package, "library")
             return shortcut_id
         except Exception:
-            self._set_uninstall_progress(package, "failed")
+            self._set_package_progress("uninstall", package, "failed")
             raise
 
-    def _set_uninstall_progress(self, package: str, stage: str) -> None:
-        self._uninstall_progress = {"package": package, "stage": stage}
+    def _set_package_progress(self, operation: str, target: str, stage: str) -> None:
+        self._package_progress = {"operation": operation, "target": target, "stage": stage}
 
-    async def get_uninstall_progress(self, package: str) -> str:
-        progress = self._uninstall_progress
-        return progress.get("stage", "preparing") if progress.get("package") == package else "preparing"
+    async def get_package_progress(self, operation: str, target: str) -> dict[str, str]:
+        progress = self._package_progress
+        if (progress.get("operation"), progress.get("target")) == (operation, target):
+            result = {"stage": progress["stage"]}
+            pending = self._install_confirmation
+            if operation == "install" and pending and pending[0] == target:
+                result["confirmation"] = pending[1]
+            return result
+        return {"stage": "preparing"}
 
-    def _remove_installed_package(self, package: str) -> int | None:
-        self._set_uninstall_progress(package, "checking")
+    def _queue_shortcut_removals(self, home: Path, state: dict, active_account: int | None,
+                                 package: str | None = None) -> list[int]:
+        accounts = {int(key) for key in state["accounts"]}
+        if active_account is not None:
+            accounts.add(active_account)
+        try:
+            accounts.update(known_accounts(home))
+        except (OSError, RuntimeError, ValueError):
+            pass
+        active_ids = []
+        for account_id in sorted(accounts):
+            history = self._account_state(home, state, account_id)
+            owners = {app_id: key for key, app_id in history["shortcuts"].items() if key not in history["removedShortcuts"]}
+            try:
+                path = self._shortcuts_path(home, account_id)
+                owners.update(shortcut_owners(path, self._launcher()))
+            except (OSError, RuntimeError, ValueError):
+                pass
+            queued = {str(app_id): key for app_id, key in owners.items() if key is not None
+                      and key not in history["removedShortcuts"] and (package is None or key == package)}
+            history["pendingRemovals"].update(queued)
+            if account_id == active_account:
+                active_ids = sorted(map(int, queued))
+            if package is None:
+                state["accounts"][str(account_id)] = {**StateStore.shortcut_defaults(),
+                                                       "pendingRemovals": history["pendingRemovals"]}
+            else:
+                self._forget_app_history(history, package)
+        if "legacy" in state:
+            if package is None:
+                state.pop("legacy")
+            else:
+                self._forget_app_history(state["legacy"], package)
+        return active_ids
+
+    @staticmethod
+    def _forget_app_history(history: dict, package: str) -> None:
+        history["shortcuts"].pop(package, None)
+        for key in ("observedApps", "pendingApps", "removedShortcuts"):
+            history[key] = [item for item in history[key] if item != package]
+
+    def _remove_installed_package(self, package: str, account_id: int | None = None) -> int | None:
+        self._set_package_progress("uninstall", package, "checking")
         if package not in self._removable_packages(allow_cached=False):
             raise RuntimeError("APP_NOT_REMOVABLE")
         _, _, home = self._user()
-        shortcut_id = self._shortcut_ids(home).get(package)
-        self._set_uninstall_progress(package, "removing")
+        self._set_package_progress("uninstall", package, "removing")
         output = self._run(["waydroid", "shell", "--", "pm", "uninstall", package], timeout=60)
         self._check_package_result(output)
-        (home / ".local/share/applications" / f"waydroid.{package}.desktop").unlink(missing_ok=True)
-        with self._edit_state(home) as state:
-            state["shortcuts"].pop(package, None)
-            for key in ("observedApps", "pendingApps", "removedShortcuts", "removableApps"):
-                state[key] = [item for item in state.get(key, []) if item != package]
-        return shortcut_id
+        with self._state_lock:
+            try:
+                (home / ".local/share/applications" / f"waydroid.{package}.desktop").unlink(missing_ok=True)
+            finally:
+                with self._edit_state(home) as state:
+                    state["removableApps"] = [item for item in state["removableApps"] if item != package]
+                    queued = self._queue_shortcut_removals(home, state, account_id, package)
+        return next(iter(queued), None)
 
-    async def uninstall_app(self, package: str) -> int | None:
+    async def uninstall_app(self, package: str, account_id: int | None = None) -> int | None:
         async with self._package_lock:
-            return await asyncio.to_thread(self._uninstall_package, package)
+            return await asyncio.to_thread(self._uninstall_package, package, account_id)
 
-    async def remove_waydroid(self) -> None:
+    def _remove_image(self, account_id: int | None) -> list[int]:
         user, _, home = self._user()
-        self._run(["systemctl", "disable", "--now", SERVICE])
-        if WAYDROID_DIR.exists():
-            shutil.rmtree(WAYDROID_DIR)
         user_data = home / ".local/share/waydroid"
-        if user_data.exists():
-            shutil.rmtree(user_data)
-        for entry in (home / ".local/share/applications").glob("waydroid.*.desktop"):
+        applications = home / ".local/share/applications"
+        data_paths = (WAYDROID_DIR, user_data)
+        for path in (*data_paths, applications):
+            require_unredirected(path)
+        self._run(["systemctl", "stop", SERVICE])
+        require_unmounted(data_paths)
+        self._set_image_progress("deleting", None)
+        for path in data_paths:
+            require_unredirected(path)
+            if path.exists():
+                shutil.rmtree(path)
+        with self._edit_state(home) as state:
+            state["removableApps"] = []
+            shortcuts = self._queue_shortcut_removals(home, state, account_id)
+        require_unredirected(applications)
+        for entry in applications.glob("waydroid.*.desktop"):
             entry.unlink(missing_ok=True)
-        self._remove_shortcuts(home)
-        self._state_path(home).unlink(missing_ok=True)
         decky.logger.info("Removed Waydroid data for %s", user)
+        return shortcuts
+
+    async def remove_waydroid(self, account_id: int | None = None) -> list[int]:
+        async with self._package_lock:
+            self._set_image_progress("stopping", None)
+            try:
+                return await asyncio.to_thread(self._remove_image, account_id)
+            finally:
+                self._image_progress = None
 
     async def _main(self):
         self._frame_limiter = FrameLimiter(self._run)
@@ -812,10 +890,18 @@ class Plugin:
         self._metrics_error = None
         self._runtime_lock = asyncio.Lock()
         self._package_lock = asyncio.Lock()
-        await asyncio.to_thread(self._start_input_sync)
+        _, uid, _ = self._user()
+        self._control = ServiceControl(control_path(uid), uid, self._ensure_service)
+        await self._control.open()
+        try:
+            await asyncio.to_thread(self._start_input_sync)
+        except Exception:
+            await self._control.close()
+            raise
         decky.logger.info("Waydroid Manager loaded")
 
     async def _unload(self):
+        await self._control.close()
         try:
             async with self._runtime_lock:
                 _, uid, _ = self._user()
@@ -823,9 +909,6 @@ class Plugin:
                 await asyncio.to_thread(self._frame_limiter.restore)
         finally:
             await asyncio.to_thread(self._stop_input_sync)
-
-    async def sync_frame_limit(self, fps: int) -> None:
-        await self.sync_runtime(fps)
 
     async def sync_runtime(self, fps: int | None) -> None:
         if fps is not None and (type(fps) is not int or not 0 <= fps <= 1000):
@@ -841,4 +924,4 @@ class Plugin:
                 if str(error) != self._metrics_error:
                     decky.logger.warning("GPU metrics unavailable: %s", error)
                 self._metrics_error = str(error)
-            await asyncio.to_thread(self._frame_limiter.sync, fps or 0, launch)
+            await asyncio.to_thread(self._frame_limiter.sync, fps, launch)

@@ -1,8 +1,8 @@
-import { callable, definePlugin, FileSelectionType, openFilePicker, toaster, useQuickAccessVisible } from "@decky/api";
+import { getStatus, listApps, installGapps, startService, stopService, restartService, uninstallApp, getWaydroidShortcut, getAppShortcut, removeShortcutRecord, setAutoAddApps, pendingAutoShortcuts, legacyShortcuts, removeWaydroidImage, installPackage, type Status, type AndroidApp } from "./backend";
+import { addToSteam, removeFromSteam, launchSteamShortcut, requireSteamAccount, retrySteamShortcutRemovals, updateSteamShortcut } from "./steam";
+import { definePlugin, FileSelectionType, openFilePicker, toaster, useQuickAccessVisible } from "@decky/api";
 import {
   ButtonItem,
-  ConfirmModal,
-  DialogButton,
   Field,
   Focusable,
   Menu,
@@ -10,31 +10,20 @@ import {
   PanelSection,
   PanelSectionRow,
   ToggleField,
-  gamepadDialogClasses,
   showContextMenu,
   showModal,
   staticClasses,
   type MenuProps,
 } from "@decky/ui";
-import { useCallback, useEffect, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactElement, type Ref } from "react";
 import { t } from "./i18n";
 import { watchRuntime } from "./runtime";
-import { requestArtworkUpdate, watchShortcutArtwork } from "./artwork";
+import { watchShortcutArtwork } from "./artwork";
 import { operationError } from "./errors";
-import { liveShortcutIds, waitForShortcut } from "./library";
-import { UninstallModal } from "./UninstallModal";
+import { currentSteamAccount, liveShortcutIds } from "./library";
+import { PackageOperationModal } from "./PackageOperationModal";
+import { ImageOperationModal } from "./ImageOperationModal";
 import { AppListState } from "./panelState";
-
-type Status = {
-  initialized: boolean;
-  serviceRunning: boolean;
-  gamescopeInstalled: boolean;
-  autoAddApps: boolean;
-  waydroidShortcutId?: number;
-};
-
-type AndroidApp = { name: string; package: string; icon: string; iconPath: string; shortcutId?: number; removable: boolean };
-type Shortcut = { name: string; exe: string; startDir: string; launchOptions: string; icon: string; key: string };
 
 function AndroidRobotIcon() {
   return (
@@ -47,33 +36,11 @@ function AndroidRobotIcon() {
   );
 }
 
-const getStatus = callable<[], Status>("get_status");
-const listApps = callable<[], AndroidApp[]>("list_apps");
-const installGapps = callable<[], void>("install_gapps");
-const startService = callable<[], void>("start_service");
-const stopService = callable<[], void>("stop_service");
-const restartService = callable<[], void>("restart_service");
-const uninstallApp = callable<[string], number | null>("uninstall_app");
-const getWaydroidShortcut = callable<[], Shortcut>("get_waydroid_shortcut");
-const getAppShortcut = callable<[string], Shortcut>("get_app_shortcut");
-const saveShortcutRecord = callable<[string, number], void>("record_shortcut");
-const removeShortcutRecord = callable<[string], void>("remove_shortcut_record");
-const setAutoAddApps = callable<[boolean], void>("set_auto_add_apps");
-const pendingAutoShortcuts = callable<[number[] | null], Shortcut[]>("pending_auto_shortcuts");
-const removeWaydroid = callable<[], void>("remove_waydroid");
-const installPackage = callable<[string], void>("install_package");
-
-const autoAddAttempted = new Set<string>();
 const autoAddFailures = new Set<string>();
 const libraryListeners = new Set<() => void>();
 let cachedStatus: Status | null = null;
 let cachedApps: AndroidApp[] = [];
 const appListState = new AppListState();
-
-async function recordShortcut(key: string, appId: number) {
-  await saveShortcutRecord(key, appId);
-  requestArtworkUpdate();
-}
 
 function toast(title: string, body: string) {
   toaster.toast({ title, body });
@@ -83,15 +50,31 @@ function reportError(error: unknown, setMessage?: (message: string | null) => vo
   let message = operationError(error) || t("operationFailed");
   const messages: Record<string, Parameters<typeof t>[0]> = {
     WAYDROID_NOT_RUNNING: "androidMustBeRunning", INVALID_PACKAGE_FILE: "invalidPackageFile",
+    ANDROID_VERIFICATION_UNAVAILABLE: "androidVerificationUnavailable", ANDROID_VERIFICATION_AMBIGUOUS: "androidVerificationUnavailable",
+    PACKAGE_INSTALL_TIMEOUT: "packageInstallTimeout",
     INVALID_PACKAGE_ARCHIVE: "invalidPackageArchive", INVALID_APK_MANIFEST: "invalidApkManifest",
     XAPK_NO_APKS: "xapkNoApks", XAPK_INVALID_NAMES: "xapkInvalidNames",
     WAYDROID_NOT_INSTALLED: "installWaydroidFirst", PACKAGE_OPERATION_FAILED: "packageOperationFailed",
     APP_NOT_REMOVABLE: "appNotRemovable",
     WAYDROID_START_FAILED: "androidStartFailed",
+    WAYDROID_CLEANUP_FAILED: "packageCleanupFailed",
+    XAPK_TOO_MANY_APKS: "xapkTooManyApks", PACKAGE_NO_SPACE: "packageNoSpace",
+    IMAGE_APP_EXPORT_TIMEOUT: "imageAppExportTimeout",
+    STEAM_SHORTCUT_CLEANUP_PENDING: "steamCleanupPending",
   };
   if (messages[message]) message = t(messages[message]);
   setMessage?.(message);
   toast(t("operationFailed"), message);
+  return message;
+}
+
+async function finishSteamCleanup(accountId: number) {
+  try {
+    if (await retrySteamShortcutRemovals(accountId)) return;
+  } catch (error) {
+    console.warn("Waydroid Steam shortcut cleanup unavailable", error);
+  }
+  toast(t("waydroid"), t("steamCleanupPending"));
 }
 
 function revealPanelTop(event: Event) {
@@ -110,23 +93,42 @@ function revealPanelTop(event: Event) {
 function watchAutoShortcuts() {
   let busy = false;
   let disposed = false;
+  let lastAccount: number | null = null;
+  const migrated = new Set<number>();
   const sync = async () => {
-    if (busy || disposed) return;
+    const accountId = currentSteamAccount();
+    if (busy || disposed || accountId === null) return;
+    if (accountId !== lastAccount) {
+      migrated.clear();
+      autoAddFailures.clear();
+      lastAccount = accountId;
+      libraryListeners.forEach((listener) => listener());
+    }
     busy = true;
     try {
-      for (const shortcut of await pendingAutoShortcuts(liveShortcutIds())) {
-        if (disposed || autoAddAttempted.has(shortcut.key)) continue;
-        autoAddAttempted.add(shortcut.key);
+      try {
+        await retrySteamShortcutRemovals(accountId);
+      } catch (error) {
+        console.warn("Waydroid Steam shortcut cleanup unavailable", error);
+      }
+      if (disposed || currentSteamAccount() !== accountId) return;
+      const live = liveShortcutIds();
+      for (const shortcut of await legacyShortcuts(accountId)) {
+        if (disposed || currentSteamAccount() !== accountId) return;
+        if (!live?.includes(shortcut.appId) || migrated.has(shortcut.appId)) continue;
+        await updateSteamShortcut(shortcut.appId, shortcut, accountId);
+        migrated.add(shortcut.appId);
+      }
+      if (disposed || currentSteamAccount() !== accountId) return;
+      for (const shortcut of await pendingAutoShortcuts(accountId, liveShortcutIds())) {
+        if (disposed || currentSteamAccount() !== accountId) break;
         try {
-          await recordShortcut(shortcut.key, await addToSteam(shortcut));
-          toast(shortcut.name, t("addedToSteam"));
+          await addToSteam(shortcut);
           autoAddFailures.delete(shortcut.key);
           libraryListeners.forEach((listener) => listener());
         } catch (error) {
           if (!autoAddFailures.has(shortcut.key)) reportError(error);
           autoAddFailures.add(shortcut.key);
-        } finally {
-          autoAddAttempted.delete(shortcut.key);
         }
       }
     } catch (error) {
@@ -141,67 +143,6 @@ function watchAutoShortcuts() {
     disposed = true;
     window.clearInterval(timer);
   };
-}
-
-async function addToSteam(shortcut: Shortcut) {
-  const apps = window.SteamClient?.Apps;
-  if (!apps?.AddShortcut) {
-    throw new Error(t("shortcutApiUnavailable"));
-  }
-
-  const appId = Number(await apps.AddShortcut(shortcut.name, shortcut.exe, shortcut.startDir, shortcut.launchOptions));
-  if (!appId) {
-    throw new Error(t("shortcutNotCreated"));
-  }
-  try {
-    await configureSteamShortcut(appId, shortcut);
-    if (!await waitForShortcut(appId)) throw new Error(t("shortcutNotCreated"));
-  } catch (error) {
-    await apps.RemoveShortcut?.(appId);
-    throw error;
-  }
-  return appId;
-}
-
-async function configureSteamShortcut(appId: number, shortcut: Shortcut) {
-  const apps = window.SteamClient?.Apps;
-  if (!apps?.SetShortcutLaunchOptions) {
-    throw new Error(t("shortcutApiUnavailable"));
-  }
-  try {
-    await apps.SetShortcutName?.(appId, shortcut.name);
-  } catch {
-  }
-  await apps.SetShortcutLaunchOptions(appId, shortcut.launchOptions);
-  if (shortcut.icon) {
-    try {
-      await apps.SetShortcutIcon?.(appId, shortcut.icon);
-    } catch {
-    }
-  }
-}
-
-async function removeFromSteam(appId: number) {
-  const apps = window.SteamClient?.Apps;
-  if (!apps?.RemoveShortcut) {
-    throw new Error(t("shortcutApiUnavailable"));
-  }
-  await apps.RemoveShortcut(appId);
-}
-
-function launchSteamShortcut(appId: number) {
-  const gameId = ((BigInt(appId >>> 0) << 32n) | 0x02000000n).toString();
-  const apps = window.SteamClient?.Apps;
-  if (apps?.RunGame) {
-    apps.RunGame(gameId, "", -1, 100);
-    return;
-  }
-  const url = (window.SteamClient as unknown as { URL?: { ExecuteSteamURL?: (url: string) => void } } | undefined)?.URL;
-  if (url?.ExecuteSteamURL) {
-    url.ExecuteSteamURL(`steam://rungameid/${gameId}`);
-    return;
-  }
-  throw new Error(t("shortcutApiUnavailable"));
 }
 
 function run(action: () => Promise<unknown>, refresh: () => Promise<void>, setMessage: (message: string | null) => void, success?: [string, string]) {
@@ -230,12 +171,6 @@ function openModal(modal: ReactElement) {
   }
 }
 
-function confirm(title: string, description: string, onConfirm: () => Promise<void>) {
-  openModal(
-    <ConfirmModal strTitle={title} strDescription={description} onOK={onConfirm} />,
-  );
-}
-
 function AppMenu({ release, ...props }: MenuProps & { release: () => void }) {
   useEffect(() => release, [release]);
   return <Menu {...props} />;
@@ -243,52 +178,53 @@ function AppMenu({ release, ...props }: MenuProps & { release: () => void }) {
 
 type AppRowProps = {
   app: AndroidApp;
+  accountId: number | null;
   isLast: boolean;
+  rowRef?: Ref<HTMLDivElement>;
   setShortcutId: (id?: number) => void;
   onUninstalled: () => void;
   setMessage: (message: string | null) => void;
 };
 
-function AppRow({ app, isLast, setShortcutId, onUninstalled, setMessage }: AppRowProps) {
+function AppRow({ app, accountId, isLast, rowRef, setShortcutId, onUninstalled, setMessage }: AppRowProps) {
   const add = async () => {
-    const shortcut = await getAppShortcut(app.package);
+    const account = requireSteamAccount(accountId);
+    const shortcut = await getAppShortcut(account, app.package);
     const appId = await addToSteam(shortcut);
-    await recordShortcut(shortcut.key, appId);
-    setShortcutId(appId);
+    if (currentSteamAccount() === account) setShortcutId(appId);
   };
   const remove = async () => {
     if (!app.shortcutId) {
       throw new Error(t("shortcutStateUnavailable"));
     }
-    await removeFromSteam(app.shortcutId);
-    await removeShortcutRecord(app.package);
-    setShortcutId();
+    const account = requireSteamAccount(accountId);
+    await removeFromSteam(app.shortcutId, account);
+    await removeShortcutRecord(account, app.package);
+    if (currentSteamAccount() === account) setShortcutId();
   };
   const launch = async () => {
     if (!app.shortcutId) {
       throw new Error(t("shortcutStateUnavailable"));
     }
-    const shortcut = await getAppShortcut(app.package);
-    await configureSteamShortcut(app.shortcutId, shortcut);
-    launchSteamShortcut(app.shortcutId);
+    launchSteamShortcut(app.shortcutId, requireSteamAccount(accountId));
   };
   const openMenu = () => {
     const release = appListState.retainForOverlay();
     try {
       showContextMenu(
         <AppMenu label={app.name} release={release}>
-          {app.shortcutId && <MenuItem onSelected={run(launch, async () => {}, setMessage, [app.name, t("launching")])}>{t("launch")}</MenuItem>}
+          {app.shortcutId && <MenuItem onSelected={run(launch, async () => {}, setMessage)}>{t("launch")}</MenuItem>}
           {app.shortcutId ? (
             <MenuItem onSelected={run(remove, async () => {}, setMessage, [app.name, t("removedFromSteam")])}>{t("removeFromSteam")}</MenuItem>
           ) : (
-            <MenuItem onSelected={run(add, async () => {}, setMessage, [app.name, t("addedToSteam")])}>{t("addToSteam")}</MenuItem>
+            <MenuItem onSelected={run(add, async () => {}, setMessage)}>{t("addToSteam")}</MenuItem>
           )}
           {app.removable && (
             <MenuItem onSelected={() => openModal(
-              <UninstallModal name={app.name} packageName={app.package} onError={(error) => reportError(error, setMessage)} uninstall={async () => {
-                const shortcutId = (await uninstallApp(app.package)) ?? app.shortcutId;
-                if (shortcutId) await removeFromSteam(shortcutId);
+              <PackageOperationModal name={app.name} operation="uninstall" target={app.package} onError={(error) => reportError(error, setMessage)} perform={async () => {
+                const shortcutId = await uninstallApp(app.package, accountId);
                 onUninstalled();
+                if (shortcutId && accountId) await finishSteamCleanup(accountId);
                 setMessage(null);
                 toast(app.name, t("appUninstalled"));
               }} />,
@@ -302,23 +238,13 @@ function AppRow({ app, isLast, setShortcutId, onUninstalled, setMessage }: AppRo
     }
   };
 
+  const icon = app.icon
+    ? <img src={app.icon} alt="" width={24} height={24} />
+    : <AndroidRobotIcon />;
   return (
     <PanelSectionRow>
-      <ButtonItem layout="below" bottomSeparator={isLast ? "none" : "standard"} onClick={openMenu}>
-        <div style={{ display: "flex", alignItems: "center", gap: "14px", width: "100%", minWidth: 0, minHeight: "32px", padding: 0, transform: "translateX(-10px)" }}>
-          {app.icon ? (
-            <img src={app.icon} alt="" style={{ width: "28px", height: "28px", borderRadius: "6px", objectFit: "cover", flex: "0 0 auto" }} />
-          ) : (
-            <div style={{ width: "28px", height: "28px", borderRadius: "6px", display: "grid", placeItems: "center", background: "rgba(255, 255, 255, 0.1)", flex: "0 0 auto" }}>
-              {app.name.slice(0, 1).toUpperCase()}
-            </div>
-          )}
-          <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
-            <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", lineHeight: "20px" }}>{app.name}</div>
-            <div style={{ opacity: 0.65, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", lineHeight: "16px" }}>{app.package}</div>
-          </div>
-        </div>
-      </ButtonItem>
+      <Field ref={rowRef} label={app.name} description={app.package} icon={icon} padding="standard"
+        bottomSeparator={isLast ? "none" : "standard"} focusable highlightOnFocus onActivate={openMenu} />
     </PanelSectionRow>
   );
 }
@@ -329,6 +255,8 @@ function Content() {
   const [apps, setAppsState] = useState<AndroidApp[]>(cachedApps);
   const [message, setMessage] = useState<string | null>(null);
   const [visibleApps, setVisibleAppsState] = useState(appListState.visible);
+  const [appToFocus, setAppToFocus] = useState<string>();
+  const nextAppRow = useRef<HTMLDivElement>(null);
   const setVisibleApps = (next: number | ((current: number) => number)) => {
     setVisibleAppsState((current) => {
       const value = typeof next === "function" ? next(current) : next;
@@ -360,9 +288,12 @@ function Content() {
   };
 
   const refresh = useCallback(async () => {
-    const nextStatus = await getStatus();
+    const accountId = currentSteamAccount();
+    const nextStatus = await getStatus(accountId);
+    const nextApps = nextStatus.initialized ? await listApps(accountId) : [];
+    if (currentSteamAccount() !== accountId) return;
     setStatus(nextStatus);
-    setApps(nextStatus.initialized ? await listApps() : []);
+    setApps(nextApps);
   }, []);
 
   useEffect(() => {
@@ -372,6 +303,15 @@ function Content() {
   useEffect(() => {
     setVisibleApps((current) => Math.min(Math.max(current, 10), apps.length));
   }, [apps.length]);
+
+  useEffect(() => {
+    if (!appToFocus) return;
+    const frame = requestAnimationFrame(() => {
+      nextAppRow.current?.focus();
+      setAppToFocus(undefined);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [appToFocus]);
 
   useEffect(() => {
     const sync = () => void refresh().catch((error) => setMessage(String(error)));
@@ -386,27 +326,49 @@ function Content() {
   const sortedApps = [...apps].sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" }));
   const shownApps = sortedApps.slice(0, visibleApps);
   const hasMoreApps = visibleApps < sortedApps.length;
+  const showMoreApps = () => {
+    const nextApp = sortedApps[visibleApps];
+    if (!nextApp) return;
+    setAppToFocus(nextApp.package);
+    setVisibleApps((count) => Math.min(count + 10, sortedApps.length));
+  };
+  const setupPending = status?.initialized && status.hasAppEntries === false;
   const addWaydroid = async () => {
-    const shortcut = await getWaydroidShortcut();
+    const accountId = requireSteamAccount(status?.accountId);
+    const shortcut = await getWaydroidShortcut(accountId);
     const appId = await addToSteam(shortcut);
-    await recordShortcut(shortcut.key, appId);
-    setStatus((current) => current ? { ...current, waydroidShortcutId: appId } : current);
+    setStatus((current) => current?.accountId === accountId ? { ...current, waydroidShortcutId: appId } : current);
   };
   const removeWaydroidShortcut = async () => {
     if (!status?.waydroidShortcutId) {
       throw new Error(t("shortcutStateUnavailable"));
     }
-    await removeFromSteam(status.waydroidShortcutId);
-    await removeShortcutRecord("waydroid");
-    setStatus((current) => current ? { ...current, waydroidShortcutId: undefined } : current);
+    const accountId = requireSteamAccount(status.accountId);
+    await removeFromSteam(status.waydroidShortcutId, accountId);
+    await removeShortcutRecord(accountId, "waydroid");
+    setStatus((current) => current?.accountId === accountId ? { ...current, waydroidShortcutId: undefined } : current);
+  };
+  const removeWaydroid = async (showLibraryProgress: () => void) => {
+    const accountId = currentSteamAccount();
+    const shortcuts = await removeWaydroidImage(accountId);
+    if (shortcuts.length) showLibraryProgress();
+    if (accountId && shortcuts.length) await finishSteamCleanup(accountId);
+    await refresh();
+    setMessage(null);
+    toast(t("waydroid"), t("imageRemoved"));
+  };
+  const initializeWaydroid = async () => {
+    const languageSet = await installGapps(navigator.language);
+    await refresh();
+    setMessage(null);
+    toast(t("waydroid"), t("gappsInstalled"));
+    if (!languageSet) toast(t("waydroid"), t("imageLanguageUnavailable"));
   };
   const launchFullWaydroid = async () => {
     if (!status?.waydroidShortcutId) {
       throw new Error(t("shortcutStateUnavailable"));
     }
-    const shortcut = await getWaydroidShortcut();
-    await configureSteamShortcut(status.waydroidShortcutId, shortcut);
-    launchSteamShortcut(status.waydroidShortcutId);
+    launchSteamShortcut(status.waydroidShortcutId, requireSteamAccount(status.accountId));
   };
 
   return (
@@ -416,34 +378,38 @@ function Content() {
         <PanelSectionRow>
           <Field label={status?.initialized ? t("installed") : t("notInstalled")} />
         </PanelSectionRow>
-        {status && !status.gamescopeInstalled && (
+        {status && !status.sessionAvailable && (
           <PanelSectionRow>
             <Field label={t("gamescopeUnavailable")} description={t("gamescopeUnavailableDescription")} />
           </PanelSectionRow>
         )}
-        {!status?.initialized && (
+        {(!status?.initialized || setupPending) && (
           <PanelSectionRow>
             <ButtonItem
               layout="below"
               bottomSeparator="none"
-              onClick={() => confirm(t("installGapps"), t("installGappsDescription"), run(installGapps, refresh, setMessage, [t("waydroid"), t("gappsInstalled")]))}
+              onClick={() => openModal(<ImageOperationModal
+                operation={setupPending ? "setup" : "install"}
+                perform={initializeWaydroid}
+                onError={(error) => reportError(error, setMessage)}
+              />)}
             >
-              {t("installWaydroid")}
+              {t(setupPending ? "finishImageSetup" : "installWaydroid")}
             </ButtonItem>
           </PanelSectionRow>
         )}
-        {status?.initialized && (
+        {status?.initialized && !setupPending && (
           <>
             {status.waydroidShortcutId && (
               <PanelSectionRow>
-                <ButtonItem layout="below" onClick={run(launchFullWaydroid, async () => {}, setMessage, [t("waydroid"), t("launching")])}>{t("launchWaydroid")}</ButtonItem>
+                <ButtonItem layout="below" onClick={run(launchFullWaydroid, async () => {}, setMessage)}>{t("launchWaydroid")}</ButtonItem>
               </PanelSectionRow>
             )}
             <PanelSectionRow>
               <ButtonItem
                 layout="below"
                 bottomSeparator="none"
-                onClick={status.waydroidShortcutId ? run(removeWaydroidShortcut, async () => {}, setMessage, [t("waydroid"), t("removedFromSteam")]) : run(addWaydroid, async () => {}, setMessage, [t("waydroid"), t("addedToSteam")])}
+                onClick={status.waydroidShortcutId ? run(removeWaydroidShortcut, async () => {}, setMessage, [t("waydroid"), t("removedFromSteam")]) : run(addWaydroid, async () => {}, setMessage)}
               >
                 {status.waydroidShortcutId ? t("removeWaydroidShortcut") : t("addWaydroid")}
               </ButtonItem>
@@ -453,7 +419,7 @@ function Content() {
       </PanelSection>
       </Focusable>
 
-      {status?.initialized && (
+      {status?.initialized && !setupPending && (
         <PanelSection title={t("androidApps", { count: apps.length })}>
           <PanelSectionRow>
             <ButtonItem
@@ -461,14 +427,22 @@ function Content() {
               bottomSeparator="none"
               onClick={() => {
                 const release = appListState.retainForOverlay();
-                openFilePicker(FileSelectionType.FILE, "/var/home", true, true)
+                openFilePicker(FileSelectionType.FILE, status.userHome, true, true)
                   .then(async (result) => {
                     release();
                     const path = result.realpath || result.path;
                     if (!path) return;
-                    await installPackage(path);
-                    setApps(await listApps());
-                    toast(t("waydroid"), t("packageInstalled"));
+                    openModal(<PackageOperationModal
+                      name={path.split("/").pop() || path}
+                      operation="install" target={path} autoStart
+                      onError={(error) => reportError(error, setMessage)}
+                      perform={async () => {
+                        if (!await installPackage(path)) return;
+                        await refresh();
+                        setMessage(null);
+                        toast(t("waydroid"), t("packageInstalled"));
+                      }}
+                    />);
                   })
                   .catch((error) => { release(); if (error !== "User canceled") reportError(error, setMessage); });
               }}
@@ -484,14 +458,16 @@ function Content() {
               label={t("autoAddApps")}
               description={t("autoAddAppsDescription")}
               checked={status.autoAddApps}
-              onChange={(enabled) => run(() => setAutoAddApps(enabled), refresh, setMessage)()}
+              onChange={(enabled) => run(() => setAutoAddApps(requireSteamAccount(status.accountId), enabled), refresh, setMessage)()}
             />
           </PanelSectionRow>
           {shownApps.map((app, index) => (
             <AppRow
               key={app.package}
               app={app}
+              accountId={status.accountId}
               isLast={!hasMoreApps && index === shownApps.length - 1}
+              rowRef={app.package === appToFocus ? nextAppRow : undefined}
               setShortcutId={(id) => setApps((current) => current.map((item) => item.package === app.package ? { ...item, shortcutId: id } : item))}
               onUninstalled={() => setApps((current) => current.filter((item) => item.package !== app.package))}
               setMessage={setMessage}
@@ -500,7 +476,7 @@ function Content() {
           {!apps.length && <PanelSectionRow><Field description={t("noApps")} bottomSeparator="none" /></PanelSectionRow>}
           {hasMoreApps && (
             <PanelSectionRow>
-              <ButtonItem layout="below" bottomSeparator="none" onClick={() => setVisibleApps((count) => Math.min(count + 10, sortedApps.length))}>
+              <ButtonItem layout="below" bottomSeparator="none" onClick={showMoreApps}>
                 {t("showMore", { count: Math.min(10, sortedApps.length - visibleApps) })}
               </ButtonItem>
             </PanelSectionRow>
@@ -514,20 +490,23 @@ function Content() {
             <Field label={t("service", { state: status.serviceRunning ? t("running") : t("stopped") })} />
           </PanelSectionRow>
           <PanelSectionRow>
-            <Focusable style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
-              <DialogButton style={{ flex: "1 1 max-content", maxWidth: "100%" }} onClick={run(startService, refresh, setMessage)}>{t("start")}</DialogButton>
-              <DialogButton style={{ flex: "1 1 max-content", maxWidth: "100%" }} onClick={run(restartService, refresh, setMessage)}>{t("restart")}</DialogButton>
-              <DialogButton style={{ flex: "1 1 max-content", maxWidth: "100%" }} onClick={run(stopService, refresh, setMessage)}>{t("stop")}</DialogButton>
-            </Focusable>
+            <ButtonItem layout="below" onClick={run(startService, refresh, setMessage)}>{t("start")}</ButtonItem>
           </PanelSectionRow>
           <PanelSectionRow>
-            <div role="separator" className={gamepadDialogClasses.StandaloneFieldSeparator} style={{ marginTop: "12px", marginBottom: "12px" }} />
+            <ButtonItem layout="below" onClick={run(restartService, refresh, setMessage)}>{t("restart")}</ButtonItem>
+          </PanelSectionRow>
+          <PanelSectionRow>
+            <ButtonItem layout="below" bottomSeparator="thick" onClick={run(stopService, refresh, setMessage)}>{t("stop")}</ButtonItem>
           </PanelSectionRow>
           <PanelSectionRow>
             <ButtonItem
               layout="below"
               bottomSeparator="none"
-              onClick={() => confirm(t("removeWaydroid"), t("removeWaydroidDescription"), run(removeWaydroid, refresh, setMessage, [t("waydroid"), t("imageRemoved")]))}
+              onClick={() => openModal(<ImageOperationModal
+                operation="remove"
+                perform={removeWaydroid}
+                onError={(error) => reportError(error, setMessage)}
+              />)}
             >
               {t("removeWaydroidButton")}
             </ButtonItem>
@@ -535,7 +514,7 @@ function Content() {
         </PanelSection>
       )}
 
-      {message && <div className={staticClasses.PanelSectionRow} style={{ padding: "8px 16px", opacity: 0.8 }}>{message}</div>}
+      {message && <PanelSection><PanelSectionRow><Field description={message} bottomSeparator="none" /></PanelSectionRow></PanelSection>}
     </div>
   );
 }

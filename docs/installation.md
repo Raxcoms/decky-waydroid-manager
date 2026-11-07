@@ -1,24 +1,23 @@
-# Installation
+# Install Waydroid Manager
 
-## Requirements
+## Before you start
 
-- ArmadaOS with Decky Loader and the `waydroid` package.
-- A working ARM64 binder setup. ArmadaOS images already provide this.
-- Steam's Gamescope session, bundled by ArmadaOS. Native game-window detection and direct touch use its existing support for Wayland windows, also used by Lepton. The plugin does not install system extensions, replace Gamescope, or add a second compositor.
+Use a native Steam Game Mode session with Decky Loader. Your device needs Waydroid, working Android Binder support, LXC tools, systemd, Python 3.10 or newer, and a Gamescope build that can present native Wayland windows to Steam. ArmadaOS is the tested platform.
 
 ## Install the plugin
 
-1. Download the `waydroid-manager` artifact from a GitHub Actions build. Its ZIP contains the plugin directory directly, with no nested ZIP.
-2. In Game Mode, open Decky Loader settings and install the ZIP.
-3. Open **Waydroid Manager** from the Decky quick-access menu.
-4. Select **Install Waydroid with GAPPS**. The plugin runs `waydroid init --system_type GAPPS`, so Waydroid selects the official image for the running architecture rather than a device-name mapping.
-5. After the download completes, select **Add Waydroid to Steam**. The launch option appears once the shortcut exists; Android connects to Steam's Gamescope through a private Wayland socket.
-6. With Waydroid running, use **Install APK or XAPK** in the Android apps section to install a package from the user home folder.
+1. Open the [latest official release](https://github.com/Raxcoms/decky-waydroid-manager/releases/latest) and download the `waydroid-manager-<version>.zip` asset.
+2. Copy the ZIP to your device. In Game Mode, open Decky's settings and use **Install Plugin from ZIP** in the developer options.
+3. Select the ZIP, confirm installation, then open **Waydroid Manager** in Decky.
 
-The first initialization downloads Android images and can take several minutes. Installing again is intentionally blocked while an image exists, so installed Android data is not replaced accidentally.
+For development testing, you can also download a `waydroid-manager-<commit>` artifact from a successful [CI build](https://github.com/Raxcoms/decky-waydroid-manager/actions/workflows/build.yml) and install it the same way.
 
-## Steam shortcuts
+## Set up Android
 
-Use **Add Waydroid to Steam** for the Android launcher, or **Add to Steam** beside an Android app. New shortcuts appear immediately through Steam's live shortcut API. Start the service from the plugin before using a shortcut.
+1. Select **Install Waydroid with GAPPS**. Waydroid chooses the image for your device.
+2. Wait for the progress dialog to finish. The first setup downloads the image, boots Android, and waits for the app list. Fresh Android data starts with Steam's language and English as a fallback. You can change this later in Android Settings.
+3. Select **Add Waydroid to Steam**, then open it from your Steam library or choose **Launch Waydroid** in Decky.
 
-Android receives the primary compositor's output geometry and refresh rate. The QAM frame limiter is synchronized to the foreground app on Android 13; per-game resolution overrides remain under validation. Shortcuts retain Armada's game-launch wrapper, allowing Steam to identify the game window and apply the selected controller configuration.
+If first setup was interrupted, choose **Finish Waydroid setup** to complete it.
+
+Continue with the [user guide](features.md) to install Android apps or adjust how they launch.

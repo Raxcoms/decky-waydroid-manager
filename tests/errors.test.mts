@@ -12,3 +12,8 @@ test("keeps native API errors and picker cancellation messages", () => {
   assert.equal(operationError("User canceled"), "User canceled");
   assert.equal(operationError(null), "");
 });
+
+test("keeps Android failure causes instead of Java traceback tails", () => {
+  assert.equal(operationError({ pythonTraceback: "RuntimeError: Exception occurred while executing install:\njava.lang.IllegalArgumentException: Failed to parse APK\n  at com.android.server.PackageManager\nCaused by: android.content.pm.PackageParser$PackageParserException: Invalid manifest\n  ... 12 more" }), "Invalid manifest");
+  assert.equal(operationError({ pythonTraceback: "RuntimeError: Failure [INSTALL_FAILED_INVALID_APK: Invalid manifest]\n  ... 12 more" }), "INSTALL_FAILED_INVALID_APK: Invalid manifest]");
+});

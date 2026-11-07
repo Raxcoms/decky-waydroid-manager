@@ -1,7 +1,5 @@
-import { callable } from "@decky/api";
+import { syncRuntime } from "./backend";
 import { currentFrameLimit } from "./steamSettings";
-
-const syncRuntime = callable<[number | null], void>("sync_runtime");
 
 export function watchRuntime() {
   let busy = false;

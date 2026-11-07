@@ -1,11 +1,38 @@
 from pathlib import Path
 import os
+import socket
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
-from waydroid_manager.proc import clean_env
+from waydroid_manager.proc import clean_env, steam_wayland_socket
+
+
+@unittest.skipIf(os.name == "nt", "Requires Unix display sockets")
+class SteamDisplayTests(unittest.TestCase):
+    def test_prefers_live_gamescope_socket_without_xwayland(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            proc, runtime = root / "proc", root / "run"
+            proc.mkdir()
+            runtime.mkdir()
+            primary, other = runtime / "gamescope", runtime / "wayland"
+            with socket.socket(socket.AF_UNIX) as gamescope, socket.socket(socket.AF_UNIX) as desktop:
+                gamescope.bind(str(primary))
+                desktop.bind(str(other))
+                for pid, name, display in (
+                    ("1", "steam", "GAMESCOPE_WAYLAND_DISPLAY=stale\0WAYLAND_DISPLAY=wayland"),
+                    ("2", "steamwebhelper", "GAMESCOPE_WAYLAND_DISPLAY=gamescope"),
+                ):
+                    process = proc / pid
+                    process.mkdir()
+                    (process / "cmdline").write_bytes(f"/usr/bin/{name}\0".encode())
+                    (process / "environ").write_bytes(f"XDG_RUNTIME_DIR={runtime}\0{display}\0".encode())
+                self.assertEqual(steam_wayland_socket(proc.stat().st_uid, proc), primary)
+                primary.unlink()
+                self.assertEqual(steam_wayland_socket(proc.stat().st_uid, proc), other)
 
 
 class ProcessEnvironmentTests(unittest.TestCase):

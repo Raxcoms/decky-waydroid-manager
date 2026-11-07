@@ -23,6 +23,8 @@ test("reads changed targets and disabled caps without changing settings", () => 
   const store = settings(values);
   values.gamescope_app_target_framerate = 40;
   assert.equal(frameLimit(store), 40);
+  values.gamescope_app_target_framerate = 17;
+  assert.equal(frameLimit(store), 17);
   values.gamescope_disable_framelimit = true;
   assert.equal(frameLimit(store), 0);
   values.gamescope_disable_framelimit = false;

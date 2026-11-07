@@ -6,13 +6,16 @@ from pathlib import Path
 import socket
 import stat
 import struct
-import subprocess
 import time
 
-from .proc import clean_env
+from .container import container_pid
 
 
 MAX_CLIENTS = 64
+
+
+def is_render_node(info) -> bool:
+    return stat.S_ISCHR(info.st_mode) and os.major(info.st_rdev) == 226 and 128 <= os.minor(info.st_rdev) < 192
 
 
 def close_handles(handles: list[int]) -> None:
@@ -22,7 +25,7 @@ def close_handles(handles: list[int]) -> None:
 
 def drm_identity(handle: int) -> tuple[int, str, str] | None:
     info = os.fstat(handle)
-    if not stat.S_ISCHR(info.st_mode) or os.major(info.st_rdev) != 226:
+    if not is_render_node(info):
         return None
     fields = dict(line.split(":", 1) for line in Path(f"/proc/self/fdinfo/{handle}").read_text().splitlines() if ":" in line)
     driver = fields.get("drm-driver", "").strip()
@@ -40,7 +43,7 @@ def android_clients(init_pid: int, proc: Path = Path("/proc")) -> dict[tuple[int
             for entry in (process / "fd").iterdir():
                 try:
                     info = entry.stat()
-                    if not stat.S_ISCHR(info.st_mode) or os.major(info.st_rdev) != 226:
+                    if not is_render_node(info):
                         continue
                     fields = dict(line.split(":", 1) for line in (process / "fdinfo" / entry.name).read_text().splitlines() if ":" in line)
                     driver, client = fields.get("drm-driver", "").strip(), fields.get("drm-client-id", "").strip()
@@ -169,10 +172,8 @@ class GpuMetrics:
         if launch is None or time.monotonic() < self.next_scan:
             return
         self.next_scan = time.monotonic() + 2
-        result = subprocess.run(["lxc-info", "-P", "/var/lib/waydroid/lxc", "-n", "waydroid", "-pH"],
-                                env=clean_env(), capture_output=True, text=True, timeout=3, check=False)
-        init_pid = result.stdout.strip()
-        clients = android_clients(int(init_pid)) if result.returncode == 0 and init_pid.isdecimal() else {}
+        init_pid = container_pid()
+        clients = android_clients(init_pid) if init_pid else {}
         if self.clients == set(clients):
             return
         handles = []
