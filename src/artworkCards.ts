@@ -56,9 +56,6 @@ function drawIcon(context: CanvasRenderingContext2D, icon: HTMLImageElement, x: 
   const h = icon.naturalHeight * ratio;
   context.drawImage(icon, x + (size - w) / 2, y + (size - h) / 2, w, h);
   context.restore();
-  context.strokeStyle = "#ffffff33";
-  context.lineWidth = 2;
-  context.stroke();
 }
 
 function drawTitle(context: CanvasRenderingContext2D, name: string, x: number, y: number, width: number, size: number, align: CanvasTextAlign) {
@@ -105,11 +102,6 @@ export function renderArtwork(role: ArtworkRole, name: string, icon: HTMLImageEl
   base.addColorStop(1, background[1]);
   context.fillStyle = base;
   context.fillRect(0, 0, width, height);
-  context.strokeStyle = "#ffffff20";
-  context.lineWidth = 2;
-  context.beginPath();
-  context.roundRect(20, 20, width - 40, height - 40, 28);
-  context.stroke();
   drawIcon(context, icon, x, y, size);
   if (portrait) drawTitle(context, name, width / 2, 570, width - 100, 53, "center");
   if (role === "landscape") drawTitle(context, name, 300, height / 2, width - 368, 54, "left");

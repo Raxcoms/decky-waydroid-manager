@@ -24,8 +24,9 @@ class ArtworkTests(unittest.TestCase):
             digest = hashlib.sha256(b"generated").hexdigest()
             records = {str(Path("grid") / name): digest for name in ("123p.png", "123_hero.png", "123.png")}
             self.assertEqual(artwork_updates(home, grid, 123, records), (["portrait"], False))
-            records[str(Path("grid") / "123p.png")] = f"1:{digest}"
-            self.assertEqual(artwork_updates(home, grid, 123, records), (["portrait"], False))
+            for version in (1, 2):
+                records[str(Path("grid") / "123p.png")] = f"{version}:{digest}"
+                self.assertEqual(artwork_updates(home, grid, 123, records), (["portrait"], False))
             records[str(Path("grid") / "123p.png")] = f"{ARTWORK_VERSION}:{digest}"
             self.assertEqual(artwork_updates(home, grid, 123, records), ([], False))
 

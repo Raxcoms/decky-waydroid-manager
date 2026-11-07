@@ -8,7 +8,7 @@ ARTWORK_TYPES = {"portrait": (0, "p"), "hero": (1, "_hero"), "logo": (2, "_logo"
 MAX_TOTAL_BYTES = 12 * 1024 * 1024
 ARTWORK_FILE = re.compile(r"(\d{1,10})(?:(?:_hero|_logo|p)?\.png|\.json)")
 ARTWORK_RECORD = re.compile(r"(?:[1-9]\d{0,2}:)?[0-9a-f]{64}")
-ARTWORK_VERSION = 2
+ARTWORK_VERSION = 3
 
 
 def artwork_filename(app_id: int, role: str) -> str:
