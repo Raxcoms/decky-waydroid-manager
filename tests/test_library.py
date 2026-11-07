@@ -40,6 +40,33 @@ class LibraryTests(unittest.TestCase):
     def tearDown(self):
         self.directory.cleanup()
 
+    def test_gapps_initialization_retries_only_when_ota_channels_are_missing(self):
+        with patch.object(backend, "WAYDROID_DIR", self.home):
+            command = ["waydroid", "init", "--system_type", "GAPPS"]
+            (self.home / "waydroid.cfg").touch()
+
+            def run(args, *, timeout):
+                if args == command:
+                    return "ERROR: You must provide 'System OTA' and 'Vendor OTA' URLs."
+                self.assertEqual(args, [
+                    *command,
+                    "--system_channel", "https://ota.waydro.id/system",
+                    "--vendor_channel", "https://ota.waydro.id/vendor",
+                ])
+                (self.home / "rootfs").mkdir()
+                return ""
+
+            self.plugin._run = run
+            self.plugin._install_gapps()
+            self.assertTrue(self.plugin._initialized())
+
+    def test_gapps_initialization_preserves_other_cli_errors(self):
+        self.plugin._initialized = lambda: False
+        with patch.object(self.plugin, "_run", return_value="Image download failed") as run:
+            with self.assertRaisesRegex(RuntimeError, "Image download failed"):
+                self.plugin._install_gapps()
+            run.assert_called_once()
+
     def test_install_confirmation_replies_require_current_target_token_and_one_boolean_decision(self):
         event, decision = threading.Event(), []
         self.plugin._install_confirmation = ("app.apk", "current", event, decision)

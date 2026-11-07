@@ -77,7 +77,7 @@ class Plugin:
         raise RuntimeError("Could not find the Decky user")
 
     def _initialized(self) -> bool:
-        return (WAYDROID_DIR / "waydroid.cfg").is_file()
+        return (WAYDROID_DIR / "waydroid.cfg").is_file() and (WAYDROID_DIR / "rootfs").is_dir()
 
     def _service_state(self, action: str) -> bool:
         return subprocess.run(
@@ -447,9 +447,17 @@ class Plugin:
     def _install_gapps(self) -> None:
         if self._initialized():
             raise RuntimeError("Waydroid is already initialized. Remove it before installing a new image.")
-        self._run(["waydroid", "init", "--system_type", "GAPPS"], timeout=1800)
+        command = ["waydroid", "init", "--system_type", "GAPPS"]
+        output = self._run(command, timeout=1800)
+        # Some distributions ship without default OTA channels.
+        if not self._initialized() and "You must provide 'System OTA' and 'Vendor OTA' URLs" in output:
+            output = self._run([
+                *command,
+                "--system_channel", "https://ota.waydro.id/system",
+                "--vendor_channel", "https://ota.waydro.id/vendor",
+            ], timeout=1800)
         if not self._initialized():
-            raise RuntimeError("Waydroid did not finish initializing its image")
+            raise RuntimeError(output or "Waydroid did not finish initializing its image")
 
     async def install_gapps(self) -> None:
         async with self._package_lock:

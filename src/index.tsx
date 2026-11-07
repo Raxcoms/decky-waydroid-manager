@@ -239,6 +239,7 @@ function Content() {
   const [status, setStatusState] = useState<Status | null>(cachedStatus);
   const [apps, setAppsState] = useState<AndroidApp[]>(cachedApps);
   const [message, setMessage] = useState<string | null>(null);
+  const [initializing, setInitializing] = useState(false);
   const [visibleApps, setVisibleAppsState] = useState(appListState.visible);
   const setVisibleApps = (next: number | ((current: number) => number)) => {
     setVisibleAppsState((current) => {
@@ -314,6 +315,14 @@ function Content() {
   const removeWaydroid = async () => {
     for (const id of await removeWaydroidImage()) await removeFromSteam(id);
   };
+  const initializeWaydroid = async () => {
+    setInitializing(true);
+    try {
+      await run(installGapps, refresh, setMessage, [t("waydroid"), t("gappsInstalled")])();
+    } finally {
+      setInitializing(false);
+    }
+  };
   const launchFullWaydroid = async () => {
     if (!status?.waydroidShortcutId) {
       throw new Error(t("shortcutStateUnavailable"));
@@ -338,9 +347,10 @@ function Content() {
             <ButtonItem
               layout="below"
               bottomSeparator="none"
-              onClick={() => confirm(t("installGapps"), t("installGappsDescription"), run(installGapps, refresh, setMessage, [t("waydroid"), t("gappsInstalled")]))}
+              disabled={initializing}
+              onClick={() => confirm(t("installGapps"), t("installGappsDescription"), initializeWaydroid)}
             >
-              {t("installWaydroid")}
+              {t(initializing ? "installing" : "installWaydroid")}
             </ButtonItem>
           </PanelSectionRow>
         )}
