@@ -47,6 +47,8 @@ class VerificationRequestTests(unittest.TestCase):
     mCommitted=false mDestroyed=false
   Active Session 44:
     mCommitted=true mDestroyed=true
+  Active Session 47:
+    mCommitted=true mDestroyed=true mStageDirInUse=true
 Finalized install sessions:
   Active Session 45:
     mCommitted=true mDestroyed=false
@@ -54,7 +56,7 @@ Historical install sessions:
   Session 46:
     mCommitted=true mDestroyed=false
 """
-        self.assertEqual(active_install_sessions(dump), {"42"})
+        self.assertEqual(active_install_sessions(dump), {"42", "47"})
 
     def test_requires_owned_session_system_sender_root_installer_and_configured_provider(self):
         self.assertEqual(verification_id(REQUEST, "42", "example.verifier", {"42"}), 7)
@@ -133,7 +135,14 @@ class VerificationBridgeTests(unittest.TestCase):
         self.identity_mock.return_value = (100, "201")
         with self.assertRaisesRegex(RuntimeError, "WAYDROID_NOT_RUNNING"):
             self.bridge.respond(True)
-        self.assertEqual(len(self.commands), 4)
+        self.assertFalse((self.directory / "verifier.dex").exists())
+
+    def test_cleanup_rejects_only_its_own_active_session(self):
+        other = REQUEST.replace("42", "43").replace("VERIFICATION_ID=7", "VERIFICATION_ID=8")
+        active = ACTIVE + "  Active Session 43:\n    mCommitted=true mDestroyed=false\n"
+        self.run.side_effect = ["Required: example.verifier (uid=10123)", active, REQUEST + other, "VERIFICATION_SENT"]
+        self.bridge.reject_pending()
+        self.assertEqual(self.run.call_args.args[0][-3:], ["waydroid.manager.InstallVerifier", "7", "-1"])
 
     def test_finished_or_changed_request_cannot_use_an_old_approval(self):
         self.assertTrue(self.bridge.warning_pending())
@@ -182,6 +191,7 @@ class InstallCommitTests(unittest.TestCase):
             with self.assertRaises(InstallCancelled):
                 commit_install(["pm"], verifier, Mock(return_value=False))
         verifier.respond.assert_called_once_with(False)
+        verifier.reject_pending.assert_not_called()
 
     def test_verification_failure_kills_owned_commit_before_abandonment(self):
         process = Mock(pid=123)
@@ -206,3 +216,4 @@ class InstallCommitTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "PACKAGE_INSTALL_TIMEOUT"):
                 commit_install(["pm"], verifier, Mock())
         verifier.warning_pending.assert_not_called()
+        verifier.reject_pending.assert_called_once_with()
