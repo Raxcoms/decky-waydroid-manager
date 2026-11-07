@@ -15,7 +15,7 @@ import {
   staticClasses,
   type MenuProps,
 } from "@decky/ui";
-import { useCallback, useEffect, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactElement, type Ref } from "react";
 import { t } from "./i18n";
 import { watchRuntime } from "./runtime";
 import { requestArtworkUpdate, watchShortcutArtwork } from "./artwork";
@@ -163,12 +163,13 @@ function AppMenu({ release, ...props }: MenuProps & { release: () => void }) {
 type AppRowProps = {
   app: AndroidApp;
   isLast: boolean;
+  rowRef?: Ref<HTMLDivElement>;
   setShortcutId: (id?: number) => void;
   onUninstalled: () => void;
   setMessage: (message: string | null) => void;
 };
 
-function AppRow({ app, isLast, setShortcutId, onUninstalled, setMessage }: AppRowProps) {
+function AppRow({ app, isLast, rowRef, setShortcutId, onUninstalled, setMessage }: AppRowProps) {
   const add = async () => {
     const shortcut = await getAppShortcut(app.package);
     const appId = await addToSteam(shortcut);
@@ -224,7 +225,7 @@ function AppRow({ app, isLast, setShortcutId, onUninstalled, setMessage }: AppRo
     : <AndroidRobotIcon />;
   return (
     <PanelSectionRow>
-      <Field label={app.name} description={app.package} icon={icon} padding="standard"
+      <Field ref={rowRef} label={app.name} description={app.package} icon={icon} padding="standard"
         bottomSeparator={isLast ? "none" : "standard"} focusable highlightOnFocus onActivate={openMenu} />
     </PanelSectionRow>
   );
@@ -236,6 +237,8 @@ function Content() {
   const [apps, setAppsState] = useState<AndroidApp[]>(cachedApps);
   const [message, setMessage] = useState<string | null>(null);
   const [visibleApps, setVisibleAppsState] = useState(appListState.visible);
+  const [appToFocus, setAppToFocus] = useState<string>();
+  const nextAppRow = useRef<HTMLDivElement>(null);
   const setVisibleApps = (next: number | ((current: number) => number)) => {
     setVisibleAppsState((current) => {
       const value = typeof next === "function" ? next(current) : next;
@@ -281,6 +284,15 @@ function Content() {
   }, [apps.length]);
 
   useEffect(() => {
+    if (!appToFocus) return;
+    const frame = requestAnimationFrame(() => {
+      nextAppRow.current?.focus();
+      setAppToFocus(undefined);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [appToFocus]);
+
+  useEffect(() => {
     const sync = () => void refresh().catch((error) => setMessage(String(error)));
     libraryListeners.add(sync);
     const timer = window.setInterval(sync, 15000);
@@ -293,6 +305,12 @@ function Content() {
   const sortedApps = [...apps].sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" }));
   const shownApps = sortedApps.slice(0, visibleApps);
   const hasMoreApps = visibleApps < sortedApps.length;
+  const showMoreApps = () => {
+    const nextApp = sortedApps[visibleApps];
+    if (!nextApp) return;
+    setAppToFocus(nextApp.package);
+    setVisibleApps((count) => Math.min(count + 10, sortedApps.length));
+  };
   const setupPending = status?.initialized && status.hasAppEntries === false;
   const addWaydroid = async () => {
     const shortcut = await getWaydroidShortcut();
@@ -425,6 +443,7 @@ function Content() {
               key={app.package}
               app={app}
               isLast={!hasMoreApps && index === shownApps.length - 1}
+              rowRef={app.package === appToFocus ? nextAppRow : undefined}
               setShortcutId={(id) => setApps((current) => current.map((item) => item.package === app.package ? { ...item, shortcutId: id } : item))}
               onUninstalled={() => setApps((current) => current.filter((item) => item.package !== app.package))}
               setMessage={setMessage}
@@ -433,7 +452,7 @@ function Content() {
           {!apps.length && <PanelSectionRow><Field description={t("noApps")} bottomSeparator="none" /></PanelSectionRow>}
           {hasMoreApps && (
             <PanelSectionRow>
-              <ButtonItem layout="below" bottomSeparator="none" onClick={() => setVisibleApps((count) => Math.min(count + 10, sortedApps.length))}>
+              <ButtonItem layout="below" bottomSeparator="none" onClick={showMoreApps}>
                 {t("showMore", { count: Math.min(10, sortedApps.length - visibleApps) })}
               </ButtonItem>
             </PanelSectionRow>
