@@ -70,6 +70,15 @@ class FrameLimitTests(unittest.TestCase):
                 self.limiter.sync(target, self.launch)
                 self.assertAlmostEqual(self.android.overrides[10151], expected, places=4)
 
+    def test_one_fps_below_the_reported_refresh_keeps_the_native_cadence(self):
+        for refresh in (59.94, 75, 120, 144, 240):
+            with self.subTest(refresh=refresh):
+                self.android.period = str(round(1_000_000_000 / refresh))
+                self.limiter.sync(round(refresh) - 1, self.launch)
+                self.assertAlmostEqual(self.android.overrides[10151], refresh, places=4)
+                self.limiter.sync(round(refresh) - 2, self.launch)
+                self.assertAlmostEqual(self.android.overrides[10151], refresh / 2, places=4)
+
     def test_unknown_limit_or_display_period_preserves_the_active_override(self):
         self.limiter.sync(24, self.launch)
         self.limiter.sync(None, self.launch)

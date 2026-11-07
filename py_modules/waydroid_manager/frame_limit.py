@@ -35,6 +35,9 @@ class FrameLimiter:
         if not period.isdecimal() or not 1_000_000 <= int(period) <= 1_000_000_000:
             return None
         refresh = round(1_000_000_000 / int(period), 4)
+        # A one-FPS difference at native refresh should not halve the frame rate.
+        if target >= round(refresh) - 1:
+            return refresh
         # Android needs a whole number of refresh periods. Steam rounds the displayed cap.
         divisor = max(1, math.ceil(refresh / (target + min(0.4999, target * 0.01))))
         return refresh / divisor
