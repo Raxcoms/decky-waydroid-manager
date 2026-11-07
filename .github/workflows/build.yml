@@ -40,7 +40,9 @@ jobs:
         run: |
           python3 -m unittest discover -s tests -v
           node --experimental-strip-types --test tests/*.test.mts
-          bash -n bin/waydroid-launcher bin/waydroid-session
+          for script in bin/waydroid-launcher bin/waydroid-game-session bin/waydroid-session; do
+            bash -n "$script"
+          done
       - name: Package plugin
         env:
           BUILD_REVISION: ${{ steps.revision.outputs.sha }}

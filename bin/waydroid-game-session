@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export WAYLAND_DISPLAY="${GAMESCOPE_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:-}}"
+if [ -z "$WAYLAND_DISPLAY" ]; then
+  echo "The Waydroid Wayland relay did not expose a socket." >&2
+  exit 1
+fi
+session_unit="$WAYDROID_MANAGER_SESSION_UNIT"
+owns_session=0
+steam_owner_pid="${WAYDROID_MANAGER_STEAM_OWNER_PID:-}"
+process_is_running() {
+  [ -r "/proc/$1/stat" ] && [ "$(awk "{print \$3}" "/proc/$1/stat")" != Z ]
+}
+cleanup_session() {
+  trap - EXIT HUP INT TERM
+  if [ "$owns_session" = 1 ]; then
+    systemctl --user stop "$session_unit" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup_session EXIT HUP INT TERM
+systemctl --user stop "$session_unit" >/dev/null 2>&1 || true
+# Reconnect Android to the private socket for each launch.
+if waydroid status 2>/dev/null | grep -q "^Session:[[:space:]]*RUNNING"; then
+  waydroid session stop >/dev/null 2>&1 || true
+  for _ in {1..30}; do
+    waydroid status 2>/dev/null | grep -q "^Session:[[:space:]]*RUNNING" || break
+    sleep 1
+  done
+fi
+if waydroid status 2>/dev/null | grep -q "^Session:[[:space:]]*RUNNING"; then
+  echo "The previous Waydroid session did not stop." >&2
+  exit 1
+fi
+rm -f "$WAYDROID_MANAGER_LOG_DIR/android-ready"
+for attempt in {1..45}; do
+  if waydroid status 2>/dev/null | grep -q "^Session:[[:space:]]*RUNNING"; then
+    break
+  fi
+  if (( attempt == 1 )); then
+    systemd-run --user --collect --quiet --unit="$session_unit" \
+      --property=KillMode=control-group \
+      --setenv="HOME=$HOME" \
+      --setenv="USER=$USER" \
+      --setenv="LOGNAME=$LOGNAME" \
+      --setenv="PATH=$PATH" \
+      --setenv="XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" \
+      --setenv="XDG_STATE_HOME=${XDG_STATE_HOME:-}" \
+      --setenv="DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" \
+      --setenv="DISPLAY=$DISPLAY" \
+      --setenv="XAUTHORITY=${XAUTHORITY:-}" \
+      --setenv="GAMESCOPE_WAYLAND_DISPLAY=$GAMESCOPE_WAYLAND_DISPLAY" \
+      --setenv="WAYLAND_DISPLAY=$WAYLAND_DISPLAY" \
+      --setenv="WAYDROID_MANAGER_LOG_DIR=$WAYDROID_MANAGER_LOG_DIR" \
+      "$WAYDROID_MANAGER_SESSION_RUNNER" "$$"
+    owns_session=1
+  fi
+  sleep 1
+done
+if ! waydroid status 2>/dev/null | grep -q "^Session:[[:space:]]*RUNNING"; then
+  echo "Waydroid session did not start. See $WAYDROID_MANAGER_LOG_DIR/session.log" >&2
+  exit 1
+fi
+if [ "$owns_session" = 1 ]; then
+  for _ in {1..180}; do
+    [ -f "$WAYDROID_MANAGER_LOG_DIR/android-ready" ] && break
+    sleep 1
+  done
+  if [ ! -f "$WAYDROID_MANAGER_LOG_DIR/android-ready" ]; then
+    echo "Android did not become ready. See $WAYDROID_MANAGER_LOG_DIR/session.log" >&2
+    exit 1
+  fi
+fi
+for _ in {1..20}; do
+  if waydroid app list 2>/dev/null | grep -q "^Name:"; then
+    break
+  fi
+  if [ "$WAYDROID_MANAGER_MODE" = "full" ]; then
+    waydroid show-full-ui || true
+  else
+    timeout 10 waydroid app launch "$WAYDROID_MANAGER_PACKAGE" >>"$WAYDROID_MANAGER_LOG_DIR/app.log" 2>&1 || true
+  fi
+  sleep 3
+done
+if [ "$WAYDROID_MANAGER_MODE" = "app" ]; then
+  launched=0
+  for _ in {1..5}; do
+    if timeout 15 waydroid app launch "$WAYDROID_MANAGER_PACKAGE" >>"$WAYDROID_MANAGER_LOG_DIR/app.log" 2>&1; then
+      launched=1
+      break
+    fi
+    sleep 3
+  done
+  if [ "$launched" = 0 ]; then
+    echo "Android app did not launch. See $WAYDROID_MANAGER_LOG_DIR/app.log" >&2
+    exit 1
+  fi
+else
+  waydroid show-full-ui
+fi
+while :; do
+  if [ -z "$steam_owner_pid" ]; then
+    sleep 3600
+  else
+    process_is_running "$steam_owner_pid" || exit 0
+    sleep 1
+  fi
+done

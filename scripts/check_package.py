@@ -9,7 +9,10 @@ import types
 
 def check(root: Path) -> None:
     required = ["main.py", "plugin.json", "package.json", "dist/index.js", "README.md", "LICENSE"]
-    required += [f"bin/{name}" for name in ("waydroid-launcher", "waydroid-session", "waydroid-service", "waydroid-input-sync", "waydroid-wayland-relay")]
+    required += [f"bin/{name}" for name in (
+        "waydroid-launcher", "waydroid-game-session", "waydroid-session",
+        "waydroid-service", "waydroid-input-sync", "waydroid-wayland-relay",
+    )]
     for name in required:
         path = root / name
         if not path.is_file() or not path.stat().st_size:
