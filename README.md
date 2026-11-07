@@ -4,7 +4,8 @@ Waydroid Manager is a Decky Loader plugin for ArmadaOS handhelds. It initializes
 
 ## What it provides
 
-- One-confirmation GAPPS setup that follows the running device architecture.
+- GAPPS setup for the device architecture, with progress through the first Android boot and app list.
+- Steam's language and an English fallback for new Android data.
 - A private Wayland socket that connects Android directly to Steam's compositor without another rendering pass.
 - Primary Steam compositor discovery for devices with separate display compositors and explicit Android touch passthrough.
 - Steam global and per-shortcut resolution selection through the launch's virtual display mode.
@@ -18,7 +19,7 @@ Waydroid Manager is a Decky Loader plugin for ArmadaOS handhelds. It initializes
 - Android 13 QAM frame-limit synchronization and redundant frame-commit filtering.
 - Android DRM client telemetry for MangoHud GPU usage, without a second rendering pass.
 - Container start, stop, and restart controls.
-- A confirmed, full image and Android-data removal action.
+- Full image and Android-data removal with confirmation and progress.
 
 ## Documentation
 
@@ -43,8 +44,8 @@ python3 scripts/package.py out
 python3 scripts/check_package.py out/waydroid-manager
 ```
 
-Use Node 22 or newer and the pnpm version declared in `package.json`. Building the bundled verification Dex also requires JDK 17 or newer, Android SDK build-tools 35.0.0 and platform android-35; set `JAVA_HOME` and `ANDROID_HOME` to those installations. These are build dependencies only. Python runtime helpers require Linux and Python 3.10 or newer. Linux-only socket/device tests are skipped on Windows; run the packaged-backend import check on Linux. The build produces `dist/index.js` and `bin/waydroid-verifier.dex`; the package command stages `out/waydroid-manager` into an empty output directory without Python caches. GitHub Actions builds both helpers, runs the checks and uploads the installable plugin directory directly, including for cleanup branches.
+Use Node 22 or newer and the pnpm version in `package.json`. To build the bundled Android Dex, install JDK 17 or newer, Android SDK build-tools 35.0.0, and platform android-35. Set `JAVA_HOME` and `ANDROID_HOME` to those installations. Run the socket, device, and packaged-backend checks on Linux with Python 3.10 or newer. GitHub Actions builds the frontend and Dex, runs the checks, and uploads the installable plugin.
 
 CI artifacts are named `waydroid-manager-<commit>` using the checked-out revision's short SHA. The plugin directory inside the artifact remains `waydroid-manager` for Decky installation.
 
-The direct Wayland path has been tested on Thor with app presentation, direct touch, controller input, repeat launches, Android 13 QAM cap changes, and per-game resolution overrides. Extended gameplay, other devices and rotation need broader validation. Native Gamescope mouse-cursor support remains a platform limitation; see the validation and review notes.
+The direct Wayland path has been tested on Thor and Nova. See the [validation notes](docs/validation.md) for the device results and remaining limits.

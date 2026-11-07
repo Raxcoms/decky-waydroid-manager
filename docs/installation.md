@@ -8,16 +8,15 @@
 
 ## Install the plugin
 
-1. Download the `waydroid-manager-<commit>` artifact from a GitHub Actions build, where `<commit>` is the built revision's short SHA. Its ZIP contains the `waydroid-manager` plugin directory directly, with no nested ZIP.
+1. Download the `waydroid-manager-<commit>` artifact from GitHub Actions. The ZIP contains the plugin directory directly. You can rename the downloaded file to `Waydroid Manager.zip` so Decky's confirmation shows that name.
 2. In Game Mode, open Decky Loader settings and install the ZIP.
 3. Open **Waydroid Manager** from the Decky quick-access menu.
 4. Select **Install Waydroid with GAPPS**. Waydroid selects the image for the running architecture using its configured channels. If the Waydroid package ships without channels, the plugin supplies the [official OTA URLs](https://docs.waydro.id/usage/install-on-desktops) to the CLI for that install.
 
-On the first boot, the plugin sets Steam's interface language with English as the fallback, then waits for the Android app list. If that step was interrupted, select **Finish Waydroid setup** to load the list. You can change the language order later in Android Settings.
-5. After the download completes, select **Add Waydroid to Steam**. The launch option appears once the shortcut exists; Android connects to Steam's Gamescope through a private Wayland socket.
-6. Use **Install APK or XAPK** in the Android apps section and choose a package from the user home folder. Installation starts with background Android startup when needed and phase progress. If Android blocks this install for a Play Protect decision, a second prompt offers **Install anyway** or **Cancel**. That choice applies only to this package operation; Android's saved verification settings stay unchanged.
+   Setup can take several minutes. On the first boot, the plugin sets Steam's interface language with English as the fallback, then waits for the Android app list. If setup was interrupted, select **Finish Waydroid setup**. You can change the language order later in Android Settings.
 
-The first initialization downloads Android images and can take several minutes. Installing again is intentionally blocked while an image exists, so installed Android data is not replaced accidentally.
+5. After setup completes, select **Add Waydroid to Steam**. The launch option appears once the shortcut exists.
+6. Use **Install APK or XAPK** in the Android apps section and choose a package from the user home folder. Installation starts with background Android startup when needed and phase progress. If Android blocks this install for a Play Protect decision, a second prompt offers **Install anyway** or **Cancel**. That choice applies only to this package operation; Android's saved verification settings stay unchanged.
 
 ## Steam shortcuts
 

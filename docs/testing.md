@@ -21,14 +21,14 @@ Record these baselines before installation:
 - Service activity and boot enablement, current controller/input service state, and existing Steam shortcuts/artwork.
 - Steam performance settings and composition flags. Preserve unrelated profiles and custom artwork.
 
-Use the exact CI artifact for the branch revision. Its name contains the short commit SHA. Inspect the archive structure and install it through Decky's native ZIP installer. Do not install OS overlays, replace the compositor, edit system files or change Android verification policy to make the test pass.
+Use the exact CI artifact for the branch revision. Its name contains the short commit SHA. Inspect the archive structure and install it through Decky's native ZIP installer. Decky uses the local filename in its confirmation, so name the test copy `Waydroid Manager.zip` and record its original SHA. Do not install OS overlays, replace the compositor, edit system files or change Android verification policy to make the test pass.
 
 ## Image and full-environment workflow
 
 1. Open the plugin. Confirm it reports no installed image and exposes initialization.
-2. Initialize the GAPPS image through the real button and confirmation. Observe feedback until completion. Verify the resulting image/configuration and architecture, rather than relying only on the button's return value.
+2. Initialize the GAPPS image through the real dialog. Verify both buttons disable and the bar follows the download and first boot. The dialog should remain open until the Android app list is ready. Confirm the image matches the host architecture and use a non-English Steam locale to exercise both language preferences.
 3. Confirm the status changes to installed. Add the environment to Steam and check the same control changes to Remove. Verify the actual live Steam entry, name, executable, arguments and ownership.
-4. Launch the existing Steam shortcut. Wait for Android readiness and then for actual presentation. Capture the primary compositor; a resumed Android activity alone does not prove Steam's loading screen has cleared.
+4. Launch the existing Steam shortcut. Wait for Android readiness and then capture actual presentation on the primary compositor. Check the language order with `sudo waydroid shell -- settings --user 0 get system system_locales`. Change the order in Android Settings, quit, and verify the new order on the next launch.
 5. Quit the owned launch normally. Check that its relay, temporary session, input nodes/mounts and frame overrides are released. Repeat at least three times without restarting the container service as a workaround.
 6. Enable automatic shortcuts through the real toggle. Verify the saved setting and that the apps already present are treated as the baseline rather than new installations.
 
@@ -70,7 +70,7 @@ Test both paced and rapid controller navigation using Steam's real navigation co
 ## Service commands and full removal
 
 1. With owned launches closed, test Stop, Start and Restart through the plugin. Verify actual service transitions and success/failure feedback. Boot enablement must remain at its baseline.
-2. Use the full image/data removal control and its real destructive confirmation. This step is destructive and must be authorized before the test begins.
+2. Use the full image/data removal control and its confirmation. Check the progress bar, disabled buttons and success feedback. This step is destructive and must be authorized before the test begins.
 3. Verify image/configuration, Android user data, generated desktop entries and owned Steam shortcuts are gone. Inspect owned artwork and caches for orphaned files. Preserve unrelated Steam entries, custom data and platform-provided files.
 4. Keep the plugin loaded and poll again to ensure background watchers do not recreate deleted entries or stale state. Confirm initialization is offered again and passive polling does not start the service.
 5. Compare the filesystem and service state with the recorded baseline. Distinguish intentional plugin preferences/logs and plugin-lifetime runtime resources from orphaned Android image data; report any retained files explicitly.

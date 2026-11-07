@@ -53,10 +53,31 @@ The `cleanup-review` build was deployed on the Thor with per-file backups. The c
 
 Owned invalid fixtures, verified old APK staging, the three hash-checked transfer copies, probe Dex files, captures and the known review test stages were removed. Installed apps, original user files, older unrelated caches and deployment backups were preserved. The real APK/XAPK tests use files explicitly supplied by the user. These checks do not substitute for physical-controller gameplay testing after the temporary input implementation, nor for fresh rotation and multi-device validation.
 
+## Fresh Nova, 6 and 7 November 2026
+
+The Nova started without an Android image, user data or Waydroid Manager shortcuts. The tested system used Armada 20261105.e78c9b4 on ARM64, Waydroid 1.6.3, and Decky 3.3.1. The [fresh-device procedure](testing.md) describes how to repeat the checks with supplied `.apk` and `.xapk` fixtures.
+
+| Check | Result |
+| --- | --- |
+| Image and full shortcut | The packaged CLI returned success without initializing because the OTA defaults were empty. With the official OTA fallback, Waydroid downloaded the ARM64 GAPPS system and MAINLINE vendor images. The status switched to installed. Add changed to Remove, Steam recorded the full launcher, and a compositor capture showed the Android home screen at 1280x960. The owned session stopped after quitting through Steam. |
+| Install dialog and app list | The dialog showed a measured download percentage and disabled both actions during setup. An earlier build finished before Waydroid exported its app list. Finish Waydroid setup completed that stage on the existing image and returned to 15 apps with the temporary service stopped. |
+| Language preferences | Android Settings showed Portuguese (Brazil) first and English second after setup. Moving English to the top in Android Settings persisted across a Steam relaunch. |
+| Packages and library | Two supplied `.apk` files and an `.xapk` with a base APK and three splits installed through the native picker. Only the older APK showed a separate verification prompt. The verification setting stayed at its default. Steam received each Android name, icon, portrait, landscape, hero and logo. The split package's hero and logo loaded on its Steam details page. |
+| Shortcut removal and reinstall | Removing the split shortcut in Steam switched its plugin action to Add and kept it removed while the package remained installed. Uninstall cleared the app, launcher entry and removal history. Reinstall automatically created a new shortcut with all four image roles and the logo position. The next uninstall removed the app and the shortcut. The artwork fix removed all five matching generated files. |
+| App launch and resolution | The older APK reached its title screen and gameplay. The game returned after quitting and launching from the library again. Switching the shortcut from the 1280x960 global default to 1024x768 changed Android's physical display to 1024x768 and its app buffer to 1024x714, with the remainder occupied by the Android navigation bar. The original Steam resolution setting was restored. |
+| Controller and touch | The Nova initially exposed the raw shared gamepad, and the user reported doubled stick input. The new plugin node survived the platform's node reconciliation, Android enumerated a single Steam Xbox pad, and the user confirmed the double input was gone. Direct touch also worked. The same node conflict had left the Thor with no gamepad, and the user confirmed the fix there. |
+| Frame limiting and metrics | The older game rendered about 22 FPS at higher caps. After switching QAM to 12, a fresh 67-frame Android sample measured 12.0 FPS for both buffer readiness and presentation. The original 120 FPS cap was restored. The relay exposed 15 Android GPU clients, and GPU counters increased during gameplay. |
+| Composition | The running Steam compositor reported `GAMESCOPE_COMPOSITE_FORCE=0` while the Android shortcut was focused. The launch used the primary Gamescope socket and one relay process. Direct scanout for every frame was outside this check. |
+| Focus and list | The list expanded from 10 to 16 rows. The uninstall dialog and picker returned to their originating controls with all 16 rows still visible. Leaving the panel and reopening returned to 10. Scrolling upward from the last button reached position zero while a Waydroid control still had focus. The header and status field were visible when focus reached Back. The app icon loaded with standard row padding and the panel had no horizontal overflow. |
+| Service and removal | Stop made the service inactive. Start and Restart produced active instances with different PIDs. The removal dialog showed progress and disabled both actions. Full removal cleared the images, Android data, desktop entries, plugin state, owned shortcuts, and tracked artwork. Older artwork from the first test build was cleaned up separately. |
+| Thor reboot regression | Decky logged a missing user runtime directory during boot and never started its controller helper. Moving the socket to the system runtime directory let Decky initialize. Reloading Decky on the existing game session brought back the helper and the single Xbox pad with InputPlumber and Waydroid still running. |
+
+The last clean install retest showed download progress and reached the first Android boot. The user then reported a 30-second command timeout while the Nova stopped opening SSH sessions. The interrupted image and final teardown need a device recheck. The earlier complete removal and app-list recovery were verified separately.
+
 ## Remaining limits
 
 The installed Gamescope logs `NO CURSOR IMPL XDG` for native window focus. Steam mouse-mode cursor visibility remains unresolved in this compositor path. Direct touch is not disabled to work around it.
 
 These checks cover launcher screens and the interactions above. They do not establish the absence of graphical artifacts, input latency, or frame-pacing problems during extended gameplay. Other resolutions, portrait rotation, and other devices still need broader live validation.
 
-The Nova did not answer the SSH probe during this review continuation. No changes were made to it. Other Android versions, upstream Gamescope and Flatpak-confined Steam remain unvalidated; their support is not inferred from the Thor results.
+Other Android versions, upstream Gamescope and Flatpak-confined Steam remain unvalidated.
