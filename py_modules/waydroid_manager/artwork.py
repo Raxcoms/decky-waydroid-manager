@@ -1,6 +1,8 @@
 import base64
+import hashlib
 from pathlib import Path, PurePosixPath
 import re
+import stat
 import zipfile
 
 
@@ -9,6 +11,36 @@ MAX_IMAGE_BYTES = 4 * 1024 * 1024
 MAX_TOTAL_BYTES = 12 * 1024 * 1024
 IMAGE_NAME = re.compile(r"(?:banner|logo|splash|cover|hero|background|homescreen|icon|ic_launcher)[^/]*\.(?:png|webp|jpe?g)$", re.I)
 SDK_NAME = re.compile(r"(?:google|facebook|applovin|mbridge|bigo|admob|unityads|ironsource|bytedance|tiktok|common_google|notification|billing|sentry)", re.I)
+ARTWORK_FILE = re.compile(r"(\d{1,10})(?:(?:_hero|_logo|p)?\.png|\.json)")
+
+
+def artwork_filename(app_id: int, role: str) -> str:
+    if role == "logoPosition":
+        return f"{app_id}.json"
+    return f"{app_id}{ARTWORK_TYPES[role][1]}.png"
+
+
+def prune_artwork(home: Path, grid: Path, recorded: dict[str, str], live_ids: set[int]) -> None:
+    grid = grid.resolve()
+    if not grid.is_relative_to(home.resolve()):
+        return
+    for relative, digest in list(recorded.items()):
+        path = home / relative
+        if path.parent != grid or not (match := ARTWORK_FILE.fullmatch(path.name)) or int(match[1]) in live_ids:
+            continue
+        try:
+            before = path.lstat()
+            if stat.S_ISREG(before.st_mode) and before.st_size <= MAX_TOTAL_BYTES:
+                with path.open("rb") as file:
+                    matches = hashlib.file_digest(file, "sha256").hexdigest() == digest
+                after = path.lstat()
+                if matches and (after.st_ino, after.st_ctime_ns) == (before.st_ino, before.st_ctime_ns):
+                    path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            continue
+        recorded.pop(relative)
 
 
 def persistent_apks(data: Path, package: str) -> list[Path]:

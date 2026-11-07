@@ -17,7 +17,7 @@ from typing import Any, Callable
 import decky
 from waydroid_manager.frame_limit import FrameLimiter
 from waydroid_manager.proc import active_launch, clean_env
-from waydroid_manager.artwork import apk_images, missing_artwork, package_apks, persistent_apks
+from waydroid_manager.artwork import ARTWORK_TYPES, apk_images, artwork_filename, missing_artwork, package_apks, persistent_apks, prune_artwork
 from waydroid_manager.metrics import GpuMetrics
 from waydroid_manager.packages import apk_members, stage_apks, install_apks, check_result
 from waydroid_manager.verification import InstallCancelled, InstallVerification, commit_install
@@ -335,6 +335,13 @@ class Plugin:
         state = self._load_state(home)
         if live_ids is not None:
             ids = set(live_ids)
+            if state.get("artwork"):
+                try:
+                    grid = self._shortcuts_path(home).parent / "grid"
+                except RuntimeError:
+                    pass
+                else:
+                    prune_artwork(home, grid, state["artwork"], ids)
             discovered = self._shortcut_ids(home)
             for key, app_id in list(state["shortcuts"].items()):
                 if app_id in ids:
@@ -442,6 +449,19 @@ class Plugin:
 
     async def get_shortcut_artwork(self, key: str, app_id: int) -> dict[str, Any]:
         return await asyncio.to_thread(self._shortcut_artwork, key, app_id)
+
+    async def record_shortcut_artwork(self, app_id: int, role: str, digest: str) -> None:
+        if (type(app_id) is not int or not 0 < app_id <= 0xFFFFFFFF
+                or role not in {*ARTWORK_TYPES, "logoPosition"} or not re.fullmatch(r"[0-9a-f]{64}", digest)):
+            raise RuntimeError("Invalid Steam artwork record")
+        _, _, home = self._user()
+        grid = (self._shortcuts_path(home).parent / "grid").resolve()
+        if not grid.is_relative_to(home):
+            raise RuntimeError("The Steam artwork directory is outside the user home")
+        with self._edit_state(home) as state:
+            if app_id in self._shortcut_ids(home).values():
+                path = grid / artwork_filename(app_id, role)
+                state["artwork"][str(path.relative_to(home))] = digest
 
     def _install_gapps(self) -> None:
         if self._initialized():
@@ -712,7 +732,8 @@ class Plugin:
         for entry in (home / ".local/share/applications").glob("waydroid.*.desktop"):
             entry.unlink(missing_ok=True)
         with self._state_lock:
-            StateStore(home).clear()
+            store = StateStore(home)
+            store.save({**store.defaults(), "artwork": store.load()["artwork"]})
         decky.logger.info("Removed Waydroid data for %s", user)
         return shortcuts
 

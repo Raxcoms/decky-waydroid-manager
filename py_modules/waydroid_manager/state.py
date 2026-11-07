@@ -2,6 +2,7 @@ import json
 import os
 from errno import ENOTEMPTY
 from pathlib import Path
+import re
 import tempfile
 
 
@@ -10,9 +11,14 @@ class StateStore:
         self.home = home
         self.path = home / ".config/waydroid-manager/state.json"
 
+    @staticmethod
+    def defaults() -> dict:
+        return {"autoAddApps": False, "observedApps": [], "pendingApps": [], "shortcuts": {},
+                "removedShortcuts": [], "removableApps": [], "artwork": {}}
+
     def load(self) -> dict:
         self._validate_path()
-        state = {"autoAddApps": False, "observedApps": [], "pendingApps": [], "shortcuts": {}, "removedShortcuts": [], "removableApps": []}
+        state = self.defaults()
         try:
             if self.path.stat().st_size > 4 * 1024 * 1024:
                 return state
@@ -28,10 +34,16 @@ class StateStore:
         if isinstance(saved.get("shortcuts"), dict):
             state["shortcuts"] = {key: value for key, value in saved["shortcuts"].items()
                                   if isinstance(key, str) and type(value) is int and 0 < value <= 0xFFFFFFFF}
+        if isinstance(saved.get("artwork"), dict):
+            state["artwork"] = {key: value for key, value in saved["artwork"].items()
+                                if isinstance(key, str) and isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value)}
         return state
 
     def save(self, state: dict) -> None:
         self._validate_path()
+        if state == self.defaults():
+            self.clear()
+            return
         if self.load() == state:
             return
         owner = self.home.stat()

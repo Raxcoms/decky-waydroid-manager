@@ -1,4 +1,5 @@
 from pathlib import Path
+import hashlib
 import os
 import sys
 import tempfile
@@ -6,7 +7,7 @@ import unittest
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
-from waydroid_manager.artwork import apk_images, missing_artwork, package_apks, persistent_apks
+from waydroid_manager.artwork import apk_images, missing_artwork, package_apks, persistent_apks, prune_artwork
 
 
 class ArtworkTests(unittest.TestCase):
@@ -54,6 +55,28 @@ class ArtworkTests(unittest.TestCase):
             (grid / "123p.jpg").write_bytes(b"cover")
             (grid / "123_logo.json").write_text("{}")
             self.assertEqual(missing_artwork(grid, 123), ["hero", "logo", "landscape"])
+
+    def test_removed_shortcuts_delete_only_unchanged_generated_artwork_in_the_active_library(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory).resolve()
+            grid = home / "library/grid"
+            other_grid = home / "other-library/grid"
+            for parent in (grid, other_grid):
+                parent.mkdir(parents=True)
+            removed = grid / "123p.png"
+            custom = grid / "123_hero.png"
+            active = grid / "456.png"
+            other = other_grid / "123p.png"
+            for path in (removed, custom, active, other):
+                path.write_bytes(b"generated")
+            records = {str(path.relative_to(home)): hashlib.sha256(b"generated").hexdigest()
+                       for path in (removed, custom, active, other)}
+            custom.write_bytes(b"custom")
+            prune_artwork(home, grid, records, {456})
+            self.assertFalse(removed.exists())
+            self.assertEqual(custom.read_bytes(), b"custom")
+            self.assertEqual(set(records), {str(path.relative_to(home)) for path in (active, other)})
+            self.assertTrue(active.exists() and other.exists())
 
     def test_apk_filter_ignores_ad_sdk_artwork_and_tiny_placeholders(self):
         with tempfile.TemporaryDirectory() as directory:

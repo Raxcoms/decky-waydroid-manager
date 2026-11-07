@@ -38,3 +38,4 @@ export const getPackageProgress = callable<[string, string], { stage: string; co
 export const syncRuntime = callable<[number | null], void>("sync_runtime");
 export const pendingArtwork = callable<[], { key: string; appId: number }[]>("pending_shortcut_artwork");
 export const getArtwork = callable<[string, number], Artwork>("get_shortcut_artwork");
+export const recordGeneratedArtwork = callable<[number, ArtworkRole | "logoPosition", string], void>("record_shortcut_artwork");

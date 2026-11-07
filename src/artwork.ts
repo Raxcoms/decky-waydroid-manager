@@ -1,4 +1,4 @@
-import { pendingArtwork, getArtwork, type ArtworkRole as Role } from "./backend";
+import { pendingArtwork, getArtwork, recordGeneratedArtwork, type ArtworkRole as Role } from "./backend";
 type ImageAsset = { name: string; image: HTMLImageElement };
 const refreshers = new Set<() => void>();
 
@@ -16,6 +16,11 @@ function loadImage(source: string): Promise<HTMLImageElement> {
     image.onerror = () => reject(new Error("Could not decode bundled artwork"));
     image.src = source;
   });
+}
+
+async function recordArtwork(appId: number, role: Role | "logoPosition", bytes: Uint8Array<ArrayBuffer>) {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  await recordGeneratedArtwork(appId, role, Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join(""));
 }
 
 function fit(context: CanvasRenderingContext2D, image: HTMLImageElement, x: number, y: number, width: number, height: number, cover = false) {
@@ -102,7 +107,9 @@ export function watchShortcutArtwork() {
           const icon = bundledIcon || await loadImage(artwork.icon || fallbackIcon).catch(() => undefined);
           for (const role of artwork.roles) {
             if (disposed) break;
-            await apps.SetCustomArtworkForApp(appId, render(role, artwork.name, icon, images), "png", slots[role][0]);
+            const png = render(role, artwork.name, icon, images);
+            await apps.SetCustomArtworkForApp(appId, png, "png", slots[role][0]);
+            await recordArtwork(appId, role, Uint8Array.from(atob(png), (character) => character.charCodeAt(0)));
           }
           const details = (window as unknown as { appDetailsStore?: {
             GetCustomLogoPosition?: (app: unknown) => unknown;
@@ -110,8 +117,10 @@ export function watchShortcutArtwork() {
           } }).appDetailsStore;
           const overview = window.appStore?.GetAppOverviewByAppID(appId);
           // Steam shortcuts need a logo position before their logo is displayed.
-          if (artwork.roles.includes("logo") && overview && !details?.GetCustomLogoPosition?.(overview)) {
-            await details?.SaveCustomLogoPosition?.(overview, { pinnedPosition: "BottomLeft", nWidthPct: 50, nHeightPct: 50 });
+          if (artwork.roles.includes("logo") && overview && details?.SaveCustomLogoPosition && !details.GetCustomLogoPosition?.(overview)) {
+            const logoPosition = { pinnedPosition: "BottomLeft", nWidthPct: 50, nHeightPct: 50 };
+            await details.SaveCustomLogoPosition(overview, logoPosition);
+            await recordArtwork(appId, "logoPosition", new TextEncoder().encode(JSON.stringify({ nVersion: 1, logoPosition })));
           }
         } catch (error) {
           console.warn("Waydroid shortcut artwork failed", key, error);
