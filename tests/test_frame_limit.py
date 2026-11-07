@@ -54,9 +54,21 @@ class FrameLimitTests(unittest.TestCase):
         self.android.period = "8403361"
         self.limiter.sync(17, self.launch)
         self.assertAlmostEqual(self.android.overrides[10151], 17)
-        self.android.period = "16666667"
-        self.limiter.sync(17, self.launch)
-        self.assertAlmostEqual(self.android.overrides[10151], 15)
+
+    def test_display_cadence_varies_with_the_reported_refresh(self):
+        for refresh, target, expected in (
+            (60, 17, 15),
+            (75, 17, 15),
+            (75, 25, 25),
+            (144, 17, 16),
+            (144, 36, 36),
+            (240, 17, 240 / 14),
+            (240, 80, 80),
+        ):
+            with self.subTest(refresh=refresh, target=target):
+                self.android.period = str(round(1_000_000_000 / refresh))
+                self.limiter.sync(target, self.launch)
+                self.assertAlmostEqual(self.android.overrides[10151], expected, places=4)
 
     def test_unknown_limit_or_display_period_preserves_the_active_override(self):
         self.limiter.sync(24, self.launch)
