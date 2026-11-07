@@ -3,7 +3,6 @@ import { addToSteam, removeFromSteam, launchSteamShortcut, updateSteamShortcut }
 import { definePlugin, FileSelectionType, openFilePicker, toaster, useQuickAccessVisible } from "@decky/api";
 import {
   ButtonItem,
-  ConfirmModal,
   Field,
   Focusable,
   Menu,
@@ -23,7 +22,7 @@ import { requestArtworkUpdate, watchShortcutArtwork } from "./artwork";
 import { operationError } from "./errors";
 import { liveShortcutIds } from "./library";
 import { PackageOperationModal } from "./PackageOperationModal";
-import { ImageInstallModal } from "./ImageInstallModal";
+import { ImageOperationModal } from "./ImageOperationModal";
 import { AppListState } from "./panelState";
 
 function AndroidRobotIcon() {
@@ -152,12 +151,6 @@ function openModal(modal: ReactElement) {
     release();
     throw error;
   }
-}
-
-function confirm(title: string, description: string, onConfirm: () => Promise<void>) {
-  openModal(
-    <ConfirmModal strTitle={title} strDescription={description} onOK={onConfirm} />,
-  );
 }
 
 function AppMenu({ release, ...props }: MenuProps & { release: () => void }) {
@@ -312,8 +305,13 @@ function Content() {
     await removeShortcutRecord("waydroid");
     setStatus((current) => current ? { ...current, waydroidShortcutId: undefined } : current);
   };
-  const removeWaydroid = async () => {
-    for (const id of await removeWaydroidImage()) await removeFromSteam(id);
+  const removeWaydroid = async (showLibraryProgress: () => void) => {
+    const shortcuts = await removeWaydroidImage();
+    if (shortcuts.length) showLibraryProgress();
+    for (const id of shortcuts) await removeFromSteam(id);
+    await refresh();
+    setMessage(null);
+    toast(t("waydroid"), t("imageRemoved"));
   };
   const initializeWaydroid = async () => {
     const languageSet = await installGapps(navigator.language);
@@ -346,7 +344,8 @@ function Content() {
             <ButtonItem
               layout="below"
               bottomSeparator="none"
-              onClick={() => openModal(<ImageInstallModal
+              onClick={() => openModal(<ImageOperationModal
+                operation="install"
                 perform={initializeWaydroid}
                 onError={(error) => reportError(error, setMessage)}
               />)}
@@ -457,7 +456,11 @@ function Content() {
             <ButtonItem
               layout="below"
               bottomSeparator="none"
-              onClick={() => confirm(t("removeWaydroid"), t("removeWaydroidDescription"), run(removeWaydroid, refresh, setMessage, [t("waydroid"), t("imageRemoved")]))}
+              onClick={() => openModal(<ImageOperationModal
+                operation="remove"
+                perform={removeWaydroid}
+                onError={(error) => reportError(error, setMessage)}
+              />)}
             >
               {t("removeWaydroidButton")}
             </ButtonItem>

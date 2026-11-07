@@ -761,6 +761,7 @@ class Plugin:
         user, _, home = self._user()
         shortcuts = sorted(set(self._shortcut_ids(home).values()))
         self._run(["systemctl", "stop", SERVICE])
+        self._set_image_progress("deleting", None)
         if WAYDROID_DIR.exists():
             shutil.rmtree(WAYDROID_DIR)
         user_data = home / ".local/share/waydroid"
@@ -776,7 +777,11 @@ class Plugin:
 
     async def remove_waydroid(self) -> list[int]:
         async with self._package_lock:
-            return await asyncio.to_thread(self._remove_image)
+            self._set_image_progress("stopping", None)
+            try:
+                return await asyncio.to_thread(self._remove_image)
+            finally:
+                self._image_progress = None
 
     async def _main(self):
         self._frame_limiter = FrameLimiter(self._run)

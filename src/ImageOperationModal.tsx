@@ -4,15 +4,23 @@ import { t } from "./i18n";
 import { OperationDialog } from "./OperationDialog";
 
 type Props = {
-  perform: () => Promise<void>;
+  operation: "install" | "remove";
+  perform: (showLibraryProgress: () => void) => Promise<void>;
   onError: (error: unknown) => string;
   closeModal?: () => void;
 };
 
-export function ImageInstallModal({ perform, onError, closeModal }: Props) {
+const stageLabels = {
+  preparing: "imagePreparing", downloading: "imageDownloading", finalizing: "imageFinalizing",
+  starting: "packageStarting", booting: "packageBooting", language: "imageLanguage", cleaning: "packageCleaning",
+  stopping: "imageStopping", deleting: "imageDeleting",
+} as const;
+
+export function ImageOperationModal({ operation, perform, onError, closeModal }: Props) {
   const running = useRef(false);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<ImageProgress | null>(null);
+  const [removingShortcuts, setRemovingShortcuts] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -40,9 +48,10 @@ export function ImageInstallModal({ perform, onError, closeModal }: Props) {
     running.current = true;
     setError(null);
     setProgress(null);
+    setRemovingShortcuts(false);
     setBusy(true);
     try {
-      await perform();
+      await perform(() => setRemovingShortcuts(true));
       closeModal?.();
     } catch (error) {
       setError(onError(error));
@@ -52,18 +61,16 @@ export function ImageInstallModal({ perform, onError, closeModal }: Props) {
     }
   };
 
+  const installing = operation === "install";
+  const stage = progress?.stage ?? (installing ? "preparing" : "stopping");
   const percent = progress?.percent ?? undefined;
-  const stageLabels = {
-    preparing: "imagePreparing", downloading: "imageDownloading", finalizing: "imageFinalizing",
-    starting: "packageStarting", booting: "packageBooting", language: "imageLanguage", cleaning: "packageCleaning",
-  } as const;
-  const label = progress?.stage === "downloading" && percent !== undefined
-    ? t("imageDownloadPercent", { percent })
-    : t(stageLabels[progress?.stage ?? "preparing"]);
+  let label = t(stageLabels[stage]);
+  if (stage === "downloading" && percent !== undefined) label = t("imageDownloadPercent", { percent });
+  if (removingShortcuts) label = t("imageRemovingShortcuts");
   return <OperationDialog
-    title={t("installGapps")}
-    description={t("installGappsDescription")}
-    action={t(busy ? "installing" : "install")}
+    title={t(installing ? "installGapps" : "removeWaydroid")}
+    description={t(installing ? "installGappsDescription" : "removeWaydroidDescription")}
+    action={installing ? t(busy ? "installing" : "install") : t(busy ? "imageRemoving" : "removeWaydroid")}
     busy={busy}
     progress={{ label, percent }}
     error={error}
