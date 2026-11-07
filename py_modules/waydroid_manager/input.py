@@ -19,8 +19,11 @@ STEAM_LAYOUT = f"Vendor_{STEAM_VENDOR}_Product_{STEAM_PRODUCT}.kl"
 def attach(pid: int, *args: str) -> None:
     if container_pid() != pid:
         raise RuntimeError("The Waydroid container changed")
-    result = subprocess.run(["lxc-attach", "-P", str(LXC_PATH), "-n", "waydroid", "--", *args],
-                            env=clean_env(), capture_output=True, text=True, timeout=5, check=False)
+    try:
+        result = subprocess.run(["lxc-attach", "-P", str(LXC_PATH), "-n", "waydroid", "--", *args],
+                                env=clean_env(), capture_output=True, text=True, timeout=5, check=False)
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError("Android input setup timed out") from error
     if result.returncode:
         raise RuntimeError(result.stdout.strip() or result.stderr.strip() or "Android input setup failed")
 
@@ -61,10 +64,11 @@ class RuntimeKeylayout:
     def open(self) -> None:
         stock = self.root / "system/usr/keylayout"
         source = stock / "Vendor_045e_Product_028e.kl"
-        content = source.read_bytes()
+        content = source.read_bytes() if source.is_file() else None
         legacy = self.root / "data/system/devices/keylayout"
         marker, target = legacy / ".waydroid-manager-steam-layout", legacy / STEAM_LAYOUT
-        owned_legacy = marker.is_file() and target.is_file() and marker.read_text().strip() == source.name and target.read_bytes() == content
+        owned_legacy = (content is not None and marker.is_file() and target.is_file()
+                        and marker.read_text().strip() == source.name and target.read_bytes() == content)
         if target.exists() and not owned_legacy:
             return
         if (stock / STEAM_LAYOUT).exists():
@@ -72,6 +76,8 @@ class RuntimeKeylayout:
                 target.unlink()
                 marker.unlink()
             return
+        if content is None:
+            raise RuntimeError("Android has no compatible stock Steam controller layout")
         self.directory = Path(tempfile.mkdtemp(prefix=".waydroid-manager-layout-", dir=self.root / "dev"))
         try:
             view = self.directory / "keylayout"
@@ -80,8 +86,8 @@ class RuntimeKeylayout:
             (view / STEAM_LAYOUT).write_bytes(content)
             (view / STEAM_LAYOUT).chmod(0o644)
             source_path = f"/dev/{self.directory.name}/keylayout"
-            self.run(self.pid, "/system/bin/mount", "--bind", source_path, "/system/usr/keylayout")
             self.mount_root = f"/{self.directory.name}/keylayout"
+            self.run(self.pid, "/system/bin/mount", "--bind", source_path, "/system/usr/keylayout")
             # Remove only the matching file written by older plugin versions.
             if owned_legacy:
                 target.unlink()

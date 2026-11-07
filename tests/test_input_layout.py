@@ -1,15 +1,33 @@
 from pathlib import Path
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
-from waydroid_manager.input import ControllerDevice, InputNodes, RuntimeKeylayout, STEAM_LAYOUT
+from waydroid_manager.input import ControllerDevice, InputNodes, RuntimeKeylayout, STEAM_LAYOUT, attach
 
 
 class InputLayoutTests(unittest.TestCase):
+    def test_existing_steam_layout_does_not_require_the_xbox_fallback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            layout = root / "system/usr/keylayout" / STEAM_LAYOUT
+            layout.parent.mkdir(parents=True)
+            layout.write_bytes(b"native Steam layout")
+            view = RuntimeKeylayout(123, root, lambda *args: self.fail("Existing layout was replaced"))
+            view.open()
+            self.assertIsNone(view.directory)
+
+    def test_slow_container_attach_is_reported_as_a_recoverable_input_error(self):
+        with patch("waydroid_manager.input.container_pid", return_value=123), patch(
+            "waydroid_manager.input.subprocess.run", side_effect=subprocess.TimeoutExpired("lxc-attach", 5)
+        ):
+            with self.assertRaisesRegex(RuntimeError, "timed out"):
+                attach(123, "/system/bin/mount")
+
     def test_layout_uses_a_runtime_view_and_removes_only_matching_legacy_data(self):
         with tempfile.TemporaryDirectory() as directory:
             process = Path(directory)
