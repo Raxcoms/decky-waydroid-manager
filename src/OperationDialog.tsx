@@ -1,4 +1,4 @@
-import { DialogBody, DialogBodyText, DialogButtonPrimary, DialogButtonSecondary, DialogFooter, DialogHeader, Focusable, ModalRoot, ProgressBar } from "@decky/ui";
+import { ConfirmModal, DialogBodyText, ProgressBar } from "@decky/ui";
 import { t } from "./i18n";
 
 type Props = {
@@ -14,35 +14,26 @@ type Props = {
 
 export function OperationDialog({ title, description, action, busy, progress, error, onStart, onClose }: Props) {
   return (
-    <ModalRoot
+    <ConfirmModal
+      strTitle={title}
+      strDescription={description}
+      strOKButtonText={action}
+      strCancelButtonText={t("cancel")}
       bDisableBackgroundDismiss={busy}
       bHideCloseIcon={busy}
       bOKDisabled={busy}
       bCancelDisabled={busy}
       closeModal={onClose}
       onCancel={onClose}
+      onOK={onStart}
     >
-      <DialogHeader>{title}</DialogHeader>
-      <DialogBody>
-        {description && <DialogBodyText>{description}</DialogBodyText>}
-        {error && <div role="alert"><DialogBodyText>{error}</DialogBodyText></div>}
-        {busy && (
-          <div aria-live="polite">
-            <DialogBodyText>{progress.label}</DialogBodyText>
-            <ProgressBar nProgress={progress.percent} indeterminate={progress.percent === undefined} focusable={false} />
-          </div>
-        )}
-      </DialogBody>
-      <DialogFooter>
-        <Focusable className="DialogTwoColLayout _DialogColLayout" flow-children="row">
-          <DialogButtonPrimary disabled={busy} onClick={(event) => { event.preventDefault(); onStart(); }}>
-            {action}
-          </DialogButtonPrimary>
-          <DialogButtonSecondary disabled={busy} onClick={(event) => { event.preventDefault(); onClose(); }}>
-            {t("cancel")}
-          </DialogButtonSecondary>
-        </Focusable>
-      </DialogFooter>
-    </ModalRoot>
+      {error && <div role="alert"><DialogBodyText>{error}</DialogBodyText></div>}
+      {busy && (
+        <div aria-live="polite">
+          <DialogBodyText>{progress.label}</DialogBodyText>
+          <ProgressBar nProgress={progress.percent} indeterminate={progress.percent === undefined} focusable={false} />
+        </div>
+      )}
+    </ConfirmModal>
   );
 }
