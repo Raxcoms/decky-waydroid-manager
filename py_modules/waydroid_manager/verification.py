@@ -8,6 +8,7 @@ import subprocess
 import time
 
 from .container import container_pid
+from .packages import check_result
 from .proc import clean_env
 
 
@@ -140,13 +141,17 @@ def commit_install(command: list[str], verifier, confirm, timeout: float = 300) 
     deadline = time.monotonic() + timeout
     asked = False
     responded = False
+    succeeded = False
     try:
         while True:
             try:
                 output, _ = process.communicate(timeout=1)
+                output = output.strip()
                 if process.returncode:
-                    raise RuntimeError(output.strip() or "PACKAGE_OPERATION_FAILED")
-                return output.strip()
+                    raise RuntimeError(output or "PACKAGE_OPERATION_FAILED")
+                check_result(output)
+                succeeded = True
+                return output
             except subprocess.TimeoutExpired:
                 if time.monotonic() >= deadline:
                     raise RuntimeError("PACKAGE_INSTALL_TIMEOUT")
@@ -160,12 +165,12 @@ def commit_install(command: list[str], verifier, confirm, timeout: float = 300) 
                             raise InstallCancelled()
                     deadline = max(deadline, time.monotonic() + 30)
     finally:
+        if not succeeded and not responded:
+            try:
+                verifier.reject_pending()
+            except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                logging.getLogger(__name__).warning("Could not reject pending Android verification: %s", error)
         if process.poll() is None:
-            if not responded:
-                try:
-                    verifier.reject_pending()
-                except (OSError, RuntimeError, subprocess.SubprocessError) as error:
-                    logging.getLogger(__name__).warning("Could not reject pending Android verification: %s", error)
             if os.name == "nt":
                 process.kill()
             else:

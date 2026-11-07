@@ -181,6 +181,20 @@ class InstallCommitTests(unittest.TestCase):
             self.assertEqual(commit_install(["pm"], verifier, confirm), "Success")
         confirm.assert_not_called()
         verifier.respond.assert_not_called()
+        verifier.reject_pending.assert_not_called()
+
+    def test_failed_commit_rejects_pending_verification_even_after_the_client_exits(self):
+        for exit_code in (0, 1):
+            with self.subTest(exit_code=exit_code):
+                process = Mock(returncode=exit_code)
+                process.communicate.return_value = ("Failure [install interrupted]", None)
+                process.poll.return_value = exit_code
+                verifier = Mock()
+                with patch("waydroid_manager.verification.subprocess.Popen", return_value=process):
+                    with self.assertRaisesRegex(RuntimeError, "install interrupted"):
+                        commit_install(["pm"], verifier, Mock())
+                verifier.reject_pending.assert_called_once_with()
+                process.communicate.assert_called_once_with(timeout=1)
 
     def test_declining_warning_rejects_only_that_install_and_cleans_up(self):
         process = Mock(pid=123)
