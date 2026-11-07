@@ -45,7 +45,7 @@ class LibraryTests(unittest.TestCase):
             command = ["waydroid", "init", "--system_type", "GAPPS"]
             (self.home / "waydroid.cfg").touch()
 
-            def run(args, *, timeout):
+            def run(args, report):
                 if args == command:
                     return "ERROR: You must provide 'System OTA' and 'Vendor OTA' URLs."
                 self.assertEqual(args, [
@@ -56,13 +56,13 @@ class LibraryTests(unittest.TestCase):
                 (self.home / "rootfs").mkdir()
                 return ""
 
-            self.plugin._run = run
-            self.plugin._install_gapps()
+            with patch.object(backend, "run_init", side_effect=run):
+                self.plugin._install_gapps()
             self.assertTrue(self.plugin._initialized())
 
     def test_gapps_initialization_preserves_other_cli_errors(self):
         self.plugin._initialized = lambda: False
-        with patch.object(self.plugin, "_run", return_value="Image download failed") as run:
+        with patch.object(backend, "run_init", return_value="Image download failed") as run:
             with self.assertRaisesRegex(RuntimeError, "Image download failed"):
                 self.plugin._install_gapps()
             run.assert_called_once()

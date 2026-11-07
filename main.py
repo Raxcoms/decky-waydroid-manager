@@ -23,6 +23,7 @@ from waydroid_manager.packages import apk_members, stage_apks, install_apks, che
 from waydroid_manager.verification import InstallCancelled, InstallVerification, commit_install
 from waydroid_manager.steam import read_shortcuts, shortcuts_path, shortcut_key, migrated_launch_options
 from waydroid_manager.container import CONFIG_DIR, SERVICE, container_pid
+from waydroid_manager.image import run_init
 from waydroid_manager.control import ServiceControl, control_path
 from waydroid_manager.state import StateStore
 
@@ -39,6 +40,7 @@ class Plugin:
     def __init__(self):
         self._state_lock = threading.RLock()
         self._package_progress: dict[str, str] = {}
+        self._image_progress: dict[str, str | int | None] | None = None
         self._install_confirmation = None
 
     @contextmanager
@@ -448,20 +450,30 @@ class Plugin:
         if self._initialized():
             raise RuntimeError("Waydroid is already initialized. Remove it before installing a new image.")
         command = ["waydroid", "init", "--system_type", "GAPPS"]
-        output = self._run(command, timeout=1800)
+        output = run_init(command, self._set_image_progress)
         # Some distributions ship without default OTA channels.
         if not self._initialized() and "You must provide 'System OTA' and 'Vendor OTA' URLs" in output:
-            output = self._run([
+            output = run_init([
                 *command,
                 "--system_channel", "https://ota.waydro.id/system",
                 "--vendor_channel", "https://ota.waydro.id/vendor",
-            ], timeout=1800)
+            ], self._set_image_progress)
         if not self._initialized():
             raise RuntimeError(output or "Waydroid did not finish initializing its image")
 
     async def install_gapps(self) -> None:
         async with self._package_lock:
-            await asyncio.to_thread(self._install_gapps)
+            self._set_image_progress("preparing", None)
+            try:
+                await asyncio.to_thread(self._install_gapps)
+            finally:
+                self._image_progress = None
+
+    def _set_image_progress(self, stage: str, percent: int | None) -> None:
+        self._image_progress = {"stage": stage, "percent": percent}
+
+    async def get_image_progress(self) -> dict[str, str | int | None] | None:
+        return self._image_progress
 
     def _install_file(self, value: str) -> Path:
         _, _, home = self._user()
