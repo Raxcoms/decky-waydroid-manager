@@ -20,4 +20,10 @@ For development testing, you can also download a `waydroid-manager-<commit>` art
 
 If first setup was interrupted, choose **Finish Waydroid setup** to complete it.
 
+## Use an existing Waydroid image
+
+If Waydroid is already installed, skip the image download and select **Add Waydroid to Steam**. Your current Android apps, language, and settings are kept.
+
+Fresh and existing images use the graphics drivers supplied by the host. If you see a black screen, try the same image in Desktop Mode and check the plugin's `wayland.log` under `~/.local/state/waydroid-manager/` after a failed Steam launch. A warning about staged vendor libraries means Waydroid did not mount the host's overlay. Check the Waydroid service journal before considering changes to your image.
+
 Continue with the [user guide](features.md) to install Android apps or adjust how they launch.

@@ -69,6 +69,7 @@ if ! session_running; then
   echo "Waydroid session did not start. See $WAYDROID_MANAGER_LOG_DIR/session.log" >&2
   exit 1
 fi
+"$(dirname "$0")/waydroid-service" --check-overlay || true
 if [ "$owns_session" = 1 ]; then
   for _ in {1..180}; do
     [ -f "$WAYDROID_MANAGER_LOG_DIR/android-ready" ] && break

@@ -9,6 +9,30 @@ LXC_PATH = CONFIG_DIR / "lxc"
 SERVICE = "waydroid-container.service"
 
 
+def vendor_overlay_warning(config_dir: Path = CONFIG_DIR, mountinfo: Path = Path("/proc/self/mountinfo")) -> str | None:
+    staged = config_dir / "overlay/vendor"
+    target = config_dir / "rootfs/vendor"
+    try:
+        if not any(path.is_file() for path in staged.glob("lib*/**/*.so")):
+            return None
+        mounts = []
+        for line in mountinfo.read_text(errors="replace").splitlines():
+            fields, _, filesystem = line.partition(" - ")
+            if len(parts := fields.split()) > 4 and parts[4] == str(target):
+                mounts.append(filesystem.split())
+    except OSError:
+        return None
+    if not mounts:
+        return None
+    for filesystem in mounts:
+        if len(filesystem) < 3 or filesystem[0] != "overlay":
+            continue
+        for option in filesystem[2].split(","):
+            if option.startswith("lowerdir=") and str(staged) in option.removeprefix("lowerdir=").split(":"):
+                return None
+    return "Waydroid has staged vendor libraries, but its vendor overlay is not mounted. Check the host's Waydroid service and overlay configuration."
+
+
 def container_pid() -> int | None:
     try:
         result = subprocess.run(

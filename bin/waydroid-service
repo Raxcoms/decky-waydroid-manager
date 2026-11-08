@@ -4,7 +4,13 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
+from waydroid_manager.container import vendor_overlay_warning
 from waydroid_manager.control import control_path, request_service_start
+
+if sys.argv[1:] == ["--check-overlay"]:
+    if warning := vendor_overlay_warning():
+        print(warning, file=sys.stderr)
+    sys.exit(0)
 
 try:
     request_service_start(control_path(os.getuid()))

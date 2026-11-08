@@ -23,7 +23,7 @@ from waydroid_manager.metrics import GpuMetrics
 from waydroid_manager.packages import apk_members, stage_apks, install_apks, check_result
 from waydroid_manager.verification import InstallCancelled, InstallVerification, commit_install
 from waydroid_manager.steam import known_accounts, read_shortcuts, shortcuts_path, shortcut_key, shortcut_owners, migrated_launch_options
-from waydroid_manager.container import CONFIG_DIR, SERVICE, container_pid
+from waydroid_manager.container import CONFIG_DIR, SERVICE, container_pid, vendor_overlay_warning
 from waydroid_manager.image import launcher_packages, require_unmounted, require_unredirected, run_init
 from waydroid_manager.control import ServiceControl, control_path
 from waydroid_manager.state import StateStore
@@ -651,6 +651,13 @@ class Plugin:
 
     def _wait_for_android(self, progress: Callable[[str], None], unit_status: list[str] | None = None) -> None:
         progress("booting")
+        try:
+            self._wait_for_boot(unit_status)
+        finally:
+            if warning := vendor_overlay_warning(WAYDROID_DIR):
+                decky.logger.warning("%s", warning)
+
+    def _wait_for_boot(self, unit_status: list[str] | None) -> None:
         deadline = time.monotonic() + 180
         while time.monotonic() < deadline:
             try:

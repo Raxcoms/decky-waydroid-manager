@@ -440,6 +440,19 @@ class PackageSessionTests(unittest.TestCase):
         self.assertEqual(self.commands, [["waydroid", "status"], ["waydroid", "shell", "--", "getprop", "sys.boot_completed"]])
         self.assertEqual(self.removed, ["example.app"])
 
+    def test_fresh_and_existing_image_setup_check_the_vendor_overlay(self):
+        for existing in (False, True):
+            with self.subTest(existing=existing):
+                self.plugin._initialized = lambda: existing
+                self.session_running = existing
+                with (patch.object(self.plugin, "_install_gapps", side_effect=lambda: setattr(self.plugin, "_initialized", lambda: True)) as install,
+                      patch.object(self.plugin, "_wait_for_app_entries"),
+                      patch.object(backend, "vendor_overlay_warning") as check):
+                    check.return_value = None
+                    self.assertTrue(self.plugin._initialize_image(None))
+                    self.assertEqual(install.call_count, int(not existing))
+                    check.assert_called_once_with(backend.WAYDROID_DIR)
+
     def test_running_but_unready_session_is_waited_for_and_preserved(self):
         self.session_running = True
         self.booted = "0"
