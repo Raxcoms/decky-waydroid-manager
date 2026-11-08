@@ -1,4 +1,5 @@
 import array
+from contextlib import nullcontext
 import importlib.machinery
 import importlib.util
 import os
@@ -9,6 +10,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "bin/waydroid-wayland-relay"
@@ -139,13 +141,11 @@ class RelayTests(unittest.TestCase):
             os.close(write_fd)
 
     def test_child_exit_removes_private_socket(self):
-        environment = os.environ.copy()
-        environment["XDG_RUNTIME_DIR"] = self.directory.name
-        result = subprocess.run(
-            [sys.executable, str(SCRIPT), self.parent_path, "--", sys.executable, "-c", "pass"],
-            env=environment, capture_output=True, text=True, timeout=5,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
+        args = [str(SCRIPT), self.parent_path, "--", sys.executable, "-c", "pass"]
+        with (patch.dict(os.environ, {"XDG_RUNTIME_DIR": self.directory.name}),
+              patch.object(sys, "argv", args), patch.object(relay_module.signal, "signal"),
+              patch.object(relay_module, "service_connection", return_value=nullcontext())):
+            self.assertEqual(relay_module.main(), 0)
         self.assertEqual(list(Path(self.directory.name).glob("waydroid-manager-*")), [])
 
 

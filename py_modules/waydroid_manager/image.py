@@ -1,4 +1,6 @@
 from collections import deque
+from contextlib import contextmanager
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -15,6 +17,26 @@ ImageProgress = Callable[[str, int | None], None]
 def require_unredirected(path: Path) -> None:
     if path.resolve() != path:
         raise RuntimeError(f"Waydroid path is redirected: {path}")
+
+
+@contextmanager
+def owned_directory(path: Path, uid: int):
+    flags = os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW
+    fd = os.open(path.anchor, flags)
+    try:
+        try:
+            for part in path.parts[1:]:
+                child = os.open(part, flags, dir_fd=fd)
+                os.close(fd)
+                fd = child
+        except FileNotFoundError:
+            yield None
+            return
+        if os.fstat(fd).st_uid != uid:
+            raise RuntimeError(f"The Android data directory is not owned by the Waydroid user: {path}")
+        yield Path(f"/proc/self/fd/{fd}")
+    finally:
+        os.close(fd)
 
 
 def require_unmounted(paths: tuple[Path, ...], mountinfo: Path = Path("/proc/self/mountinfo")) -> None:

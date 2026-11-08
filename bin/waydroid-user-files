@@ -1,0 +1,38 @@
+#!/usr/bin/python3 -I
+import json
+import os
+from pathlib import Path
+import shutil
+import stat
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
+from waydroid_manager.state import StateStore
+from waydroid_manager.artwork import prune_artwork
+
+
+def main() -> None:
+    home = Path(sys.argv[1])
+    action = sys.argv[2]
+    if action == "load":
+        print(json.dumps(StateStore(home).load()))
+    elif action == "save":
+        StateStore(home).save(json.load(sys.stdin))
+    elif action == "copy":
+        path = Path(sys.argv[3])
+        with os.fdopen(os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW), "rb") as source:
+            if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+                raise RuntimeError("INVALID_PACKAGE_FILE")
+            shutil.copyfileobj(source, sys.stdout.buffer)
+    elif action == "unlink":
+        Path(sys.argv[3]).unlink(missing_ok=True)
+    elif action == "prune-artwork":
+        recorded, ids = json.load(sys.stdin)
+        prune_artwork(home, Path(sys.argv[3]), recorded, set(ids))
+        print(json.dumps(recorded))
+    else:
+        raise RuntimeError("Unknown Waydroid file operation")
+
+
+if __name__ == "__main__":
+    main()

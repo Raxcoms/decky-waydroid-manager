@@ -338,13 +338,16 @@ class LibraryTests(unittest.TestCase):
         self.plugin._package_session = lambda progress: nullcontext()
         (self.home / ".local/share/waydroid/data/local/tmp").mkdir(parents=True)
         def run(args, **kwargs):
+            if args[0] == "lxc-attach":
+                self.assertEqual(args[9], "install-write")
+                self.assertEqual(args[-1], "-")
+                self.assertTrue(kwargs["stdin"].read())
+                return "Failure [INSTALL_FAILED_INVALID_APK]"
             if args[4] == "install-create":
                 return "Success: created install session [42]"
             if args[4] == "install-abandon":
                 return "Success"
-            self.assertEqual(args[4], "install-write")
-            self.assertTrue(args[-1].startswith("/data/local/tmp/waydroid-manager-"))
-            return "Failure [INSTALL_FAILED_INVALID_APK]"
+            self.fail(f"Unexpected command: {args}")
         self.plugin._run = run
         with self.assertRaisesRegex(RuntimeError, "INSTALL_FAILED_INVALID_APK"):
             self.plugin._install_package(str(apk))
@@ -573,9 +576,12 @@ class PackageSessionTests(unittest.TestCase):
                 def run(command, **kwargs):
                     if "getprop" in command:
                         temp.mkdir(parents=True, exist_ok=True)
+                    if command[0] == "lxc-attach":
+                        self.assertEqual(command[9], "install-write")
+                        self.assertTrue(kwargs["stdin"].read())
+                        return "Success: streamed 100 bytes"
                     if command[:4] == ["waydroid", "shell", "--", "pm"]:
                         self.commands.append(command)
-                        self.assertEqual(len(list(temp.glob("waydroid-manager-*"))), 1)
                         if command[4] == "list":
                             return "package:example.app"
                         return {"install-create": "Success: created install session [42]", "install-write": "Success: streamed 100 bytes", "install-commit": result, "install-abandon": "Success"}[command[4]]

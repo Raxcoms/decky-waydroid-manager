@@ -4,6 +4,8 @@ set -euo pipefail
 mode="${1:-full}"
 package="${2:-}"
 runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+data_home="${XDG_DATA_HOME:-}"
+[[ "$data_home" == /* ]] || data_home="$HOME/.local/share"
 parent_display="${DISPLAY:-}"
 parent_wayland="${GAMESCOPE_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:-}}"
 log_dir="${XDG_STATE_HOME:-$HOME/.local/state}/waydroid-manager"
@@ -25,6 +27,7 @@ if [[ "${WAYDROID_MANAGER_CLEAN_ENV:-}" != 1 ]]; then
     GAMESCOPE_WAYLAND_DISPLAY="$parent_wayland" WAYLAND_DISPLAY="$parent_wayland" \
     SteamAppId="${SteamAppId:-}" SteamGameId="${SteamGameId:-}" \
     XDG_STATE_HOME="${XDG_STATE_HOME:-}" \
+    XDG_DATA_HOME="$data_home" \
     WAYDROID_MANAGER_STEAM_OWNER_PID="$steam_owner_pid" \
     "$0" "$@"
 fi
@@ -44,16 +47,12 @@ if ! flock -n 9; then
 fi
 mkdir -p "$log_dir"
 
-if ! systemctl is-active --quiet waydroid-container.service; then
-  "$launcher_dir/waydroid-service"
-fi
-
 export XDG_RUNTIME_DIR="$runtime_dir"
 export WAYDROID_MANAGER_MODE="$mode"
 export WAYDROID_MANAGER_PACKAGE="$package"
 export WAYDROID_MANAGER_LOG_DIR="$log_dir"
 export WAYDROID_MANAGER_SESSION_RUNNER="$session_runner"
-export WAYDROID_MANAGER_SESSION_UNIT="waydroid-manager-session"
+export WAYDROID_MANAGER_SESSION_UNIT="waydroid-manager-session-$$"
 unset ENABLE_GAMESCOPE_WSI
 export DISABLE_GAMESCOPE_WSI=1
 
@@ -68,10 +67,9 @@ host_pid=$!
 
 stop_host() {
   trap - EXIT HUP INT TERM
-  systemctl --user stop "$WAYDROID_MANAGER_SESSION_UNIT" >/dev/null 2>&1 || true
   if kill -0 "$host_pid" 2>/dev/null; then
     kill -TERM "$host_pid" 2>/dev/null || true
-    for _ in {1..60}; do
+    for _ in {1..600}; do
       [[ ! -r "/proc/$host_pid/stat" ]] && break
       [[ "$(awk '{print $3}' "/proc/$host_pid/stat" 2>/dev/null)" == Z ]] && break
       sleep 0.1

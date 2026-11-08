@@ -163,13 +163,14 @@ class GpuMetrics:
             if connection.recv(16) != b"OK":
                 raise OSError("GPU metrics relay did not acknowledge its handles")
 
-    def sync(self, launch: tuple[int, str] | None, uid: int) -> None:
-        if launch != self.launch:
-            self.path = None
+    def sync(self, launch: tuple[int, str] | None, uid: int, path: Path | None) -> None:
+        if launch != self.launch or path != self.path:
+            self.close(uid)
+            self.path = path
             self.clients = None
             self.next_scan = 0
             self.launch = launch
-        if launch is None or time.monotonic() < self.next_scan:
+        if launch is None or self.path is None or time.monotonic() < self.next_scan:
             return
         self.next_scan = time.monotonic() + 2
         init_pid = container_pid()
@@ -180,20 +181,7 @@ class GpuMetrics:
         try:
             for identity, (pid, handle) in clients.items():
                 handles.append(duplicate_client(pid, handle, identity))
-            if self.path is None:
-                environment = (Path("/proc") / str(launch[0]) / "environ").read_bytes().split(b"\0")
-                runtime = next((os.fsdecode(value.split(b"=", 1)[1]) for value in environment if value.startswith(b"XDG_RUNTIME_DIR=")), f"/run/user/{uid}")
-                for path in Path(runtime).glob("waydroid-manager-*/metrics"):
-                    try:
-                        self.send(path, handles, uid)
-                    except OSError:
-                        continue
-                    self.path = path
-                    break
-                if self.path is None:
-                    return
-            else:
-                self.send(self.path, handles, uid)
+            self.send(self.path, handles, uid)
             self.clients = set(clients)
         finally:
             close_handles(handles)

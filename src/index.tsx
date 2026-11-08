@@ -398,7 +398,7 @@ function Content() {
             </ButtonItem>
           </PanelSectionRow>
         )}
-        {status?.initialized && !setupPending && (
+        {status?.initialized && (
           <>
             {status.waydroidShortcutId && (
               <PanelSectionRow>

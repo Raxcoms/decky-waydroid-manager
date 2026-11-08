@@ -39,7 +39,8 @@ class Android:
 class FrameLimitTests(unittest.TestCase):
     def setUp(self):
         self.android = Android()
-        self.limiter = FrameLimiter(self.android.run)
+        self.guest = (100, "boot")
+        self.limiter = FrameLimiter(self.android.run, lambda: self.guest)
         self.launch = (123, "456")
 
     def test_target_changes_apply_without_relaunching(self):
@@ -92,6 +93,20 @@ class FrameLimitTests(unittest.TestCase):
         self.limiter.sync(24, self.launch)
         self.limiter.sync(0, self.launch)
         self.assertEqual(self.android.overrides[10151], 50)
+
+    def test_container_replacement_cannot_restore_an_old_uid(self):
+        self.limiter.sync(24, self.launch)
+        self.guest = (101, "new-boot")
+        self.android.overrides[10151] = 90
+        self.limiter.sync(0, (124, "new-launch"))
+        self.assertEqual(self.android.overrides[10151], 90)
+        self.assertEqual(self.android.writes, [(10151, 24)])
+
+    def test_restore_preserves_a_new_external_override(self):
+        self.limiter.sync(24, self.launch)
+        self.android.overrides[10151] = 40
+        self.limiter.sync(0, self.launch)
+        self.assertEqual(self.android.writes, [(10151, 24)])
 
     def test_foreground_changes_and_exit_restore_each_uid(self):
         self.limiter.sync(24, self.launch)

@@ -1,124 +1,81 @@
 #!/usr/bin/env bash
 set -euo pipefail
-export WAYLAND_DISPLAY="${GAMESCOPE_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:-}}"
-if [ -z "$WAYLAND_DISPLAY" ]; then
-  echo "The Waydroid Wayland relay did not expose a socket." >&2
-  exit 1
-fi
+
+export WAYLAND_DISPLAY="${GAMESCOPE_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:?missing Waydroid relay socket}}"
 session_unit="$WAYDROID_MANAGER_SESSION_UNIT"
-owns_session=0
 steam_owner_pid="${WAYDROID_MANAGER_STEAM_OWNER_PID:-}"
-process_is_running() {
-  [ -r "/proc/$1/stat" ] && [ "$(awk "{print \$3}" "/proc/$1/stat")" != Z ]
+owns_session=0
+policy_saved=0
+service_helper="$(dirname "$0")/waydroid-service"
+
+unit_active() {
+  timeout 5 systemctl --user is-active --quiet "$session_unit"
 }
-session_running() {
-  waydroid status 2>/dev/null | grep -q "^Session:[[:space:]]*RUNNING"
+
+owned_session_running() {
+  local status
+  status=$(timeout 5 waydroid status 2>/dev/null) || return 1
+  grep -qE '^Container:[[:space:]]*(RUNNING|FROZEN)$' <<<"$status" &&
+    awk -v display="$WAYLAND_DISPLAY" '/^Wayland display:/ {sub(/^Wayland display:[[:space:]]*/, ""); found = ($0 == display)} END {exit !found}' <<<"$status"
 }
-require_session() {
-  if ! systemctl --user is-active --quiet "$session_unit" || ! session_running; then
-    echo "Waydroid session stopped before launch. See $WAYDROID_MANAGER_LOG_DIR/session.log" >&2
-    exit 1
-  fi
-}
+
 cleanup_session() {
-  trap - EXIT HUP INT TERM
+  if [ "$policy_saved" = 1 ]; then
+    "$service_helper" --policy restore || true
+  fi
   if [ "$owns_session" = 1 ]; then
-    systemctl --user stop "$session_unit" >/dev/null 2>&1 || true
+    timeout 50 systemctl --user stop "$session_unit" >/dev/null 2>&1 || true
   fi
 }
-trap cleanup_session EXIT HUP INT TERM
-systemctl --user stop "$session_unit" >/dev/null 2>&1 || true
-# Reconnect Android to the private socket for each launch.
-if session_running; then
-  waydroid session stop >/dev/null 2>&1 || true
-  for _ in {1..30}; do
-    session_running || break
-    sleep 1
-  done
-fi
-if session_running; then
-  echo "The previous Waydroid session did not stop." >&2
+trap cleanup_session EXIT
+trap 'exit 1' HUP INT TERM
+
+status=$(timeout 5 waydroid status)
+if ! grep -qE '^Session:[[:space:]]*STOPPED$' <<<"$status"; then
+  echo "Close the running Waydroid session before launching this shortcut." >&2
   exit 1
 fi
-rm -f "$WAYDROID_MANAGER_LOG_DIR/android-ready"
-for attempt in {1..45}; do
-  if session_running; then
+
+systemd-run --user --collect --quiet --unit="$session_unit" \
+  --property=KillMode=control-group --property=TimeoutStopSec=45s \
+  --setenv="HOME=$HOME" --setenv="USER=$USER" --setenv="LOGNAME=$LOGNAME" --setenv="PATH=$PATH" \
+  --setenv="XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" --setenv="XDG_DATA_HOME=${XDG_DATA_HOME:-$HOME/.local/share}" \
+  --setenv="DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" \
+  --setenv="WAYLAND_DISPLAY=$WAYLAND_DISPLAY" \
+  --setenv="WAYDROID_MANAGER_LOG_DIR=$WAYDROID_MANAGER_LOG_DIR" \
+  "$WAYDROID_MANAGER_SESSION_RUNNER"
+owns_session=1
+
+deadline=$((SECONDS + 180))
+ready=0
+while (( SECONDS < deadline )) && unit_active; do
+  # Presentation commands can start a new session, so only query readiness here.
+  if owned_session_running && timeout 5 waydroid app list 2>/dev/null | grep '^Name:' >/dev/null; then
+    ready=1
     break
-  fi
-  if (( attempt == 1 )); then
-    systemd-run --user --collect --quiet --unit="$session_unit" \
-      --property=KillMode=control-group \
-      --setenv="HOME=$HOME" \
-      --setenv="USER=$USER" \
-      --setenv="LOGNAME=$LOGNAME" \
-      --setenv="PATH=$PATH" \
-      --setenv="XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" \
-      --setenv="XDG_STATE_HOME=${XDG_STATE_HOME:-}" \
-      --setenv="DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" \
-      --setenv="DISPLAY=$DISPLAY" \
-      --setenv="XAUTHORITY=${XAUTHORITY:-}" \
-      --setenv="GAMESCOPE_WAYLAND_DISPLAY=$GAMESCOPE_WAYLAND_DISPLAY" \
-      --setenv="WAYLAND_DISPLAY=$WAYLAND_DISPLAY" \
-      --setenv="WAYDROID_MANAGER_LOG_DIR=$WAYDROID_MANAGER_LOG_DIR" \
-      "$WAYDROID_MANAGER_SESSION_RUNNER" "$$"
-    owns_session=1
   fi
   sleep 1
 done
-if ! session_running; then
-  echo "Waydroid session did not start. See $WAYDROID_MANAGER_LOG_DIR/session.log" >&2
+if [ "$ready" = 0 ] || ! unit_active || ! owned_session_running; then
+  echo "Android did not become ready. See $WAYDROID_MANAGER_LOG_DIR/session.log" >&2
   exit 1
 fi
-"$(dirname "$0")/waydroid-service" --check-overlay || true
-if [ "$owns_session" = 1 ]; then
-  for _ in {1..180}; do
-    [ -f "$WAYDROID_MANAGER_LOG_DIR/android-ready" ] && break
-    require_session
-    sleep 1
-  done
-  if [ ! -f "$WAYDROID_MANAGER_LOG_DIR/android-ready" ]; then
-    echo "Android did not become ready. See $WAYDROID_MANAGER_LOG_DIR/session.log" >&2
-    exit 1
-  fi
-fi
-wait_for_apps() {
-  # Launch commands can start another session if the current one stops.
-  for _ in {1..20}; do
-    require_session
-    if timeout 5 waydroid app list 2>/dev/null | grep "^Name:" >/dev/null; then
-      return 0
-    fi
-    sleep 3
-  done
-  return 1
-}
-if ! wait_for_apps; then
-  echo "Android app list did not become ready. See $WAYDROID_MANAGER_LOG_DIR/session.log" >&2
-  exit 1
-fi
+"$service_helper" --check-overlay || true
+"$service_helper" --policy "$WAYDROID_MANAGER_MODE"
+policy_saved=1
+
 if [ "$WAYDROID_MANAGER_MODE" = "app" ]; then
-  launched=0
-  for _ in {1..5}; do
-    require_session
-    if timeout 15 waydroid app launch "$WAYDROID_MANAGER_PACKAGE" >>"$WAYDROID_MANAGER_LOG_DIR/app.log" 2>&1; then
-      launched=1
-      break
-    fi
-    sleep 3
-  done
-  if [ "$launched" = 0 ]; then
-    echo "Android app did not launch. See $WAYDROID_MANAGER_LOG_DIR/app.log" >&2
-    exit 1
-  fi
+  timeout 15 waydroid app launch "$WAYDROID_MANAGER_PACKAGE" >>"$WAYDROID_MANAGER_LOG_DIR/app.log" 2>&1
 else
-  require_session
   timeout 15 waydroid show-full-ui
 fi
-while :; do
-  if [ -z "$steam_owner_pid" ]; then
-    sleep 3600
-  else
-    process_is_running "$steam_owner_pid" || exit 0
-    sleep 1
+
+while unit_active && owned_session_running; do
+  if [ -n "$steam_owner_pid" ]; then
+    state=$(awk '{print $3}' "/proc/$steam_owner_pid/stat" 2>/dev/null) || exit 0
+    [ "$state" != Z ] || exit 0
   fi
+  sleep 1
 done
+echo "Waydroid session ended. See $WAYDROID_MANAGER_LOG_DIR/session.log" >&2
+exit 1

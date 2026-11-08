@@ -82,15 +82,7 @@ class StateStore:
             return
         if self.load() == state:
             return
-        owner = self.home.stat()
-        missing = []
-        directory = self.path.parent
-        while not directory.exists():
-            missing.append(directory)
-            directory = directory.parent
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        for directory in missing:
-            os.chown(directory, owner.st_uid, owner.st_gid)
         temporary_path = None
         try:
             with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.path.parent, delete=False) as temporary:
@@ -98,7 +90,6 @@ class StateStore:
                 json.dump(state, temporary, sort_keys=True)
                 temporary.flush()
                 os.fsync(temporary.fileno())
-            os.chown(temporary_path, owner.st_uid, owner.st_gid)
             temporary_path.replace(self.path)
         finally:
             if temporary_path:

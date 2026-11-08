@@ -1,7 +1,7 @@
 from pathlib import Path
 import subprocess
 
-from .proc import clean_env
+from .proc import clean_env, process_identity
 
 
 CONFIG_DIR = Path("/var/lib/waydroid")
@@ -43,3 +43,20 @@ def container_pid() -> int | None:
         return None
     value = result.stdout.strip()
     return int(value) if result.returncode == 0 and value.isdecimal() and int(value) > 0 else None
+
+
+def container_identity() -> tuple[int, str] | None:
+    pid = container_pid()
+    return process_identity(pid) if pid else None
+
+
+def session_uses_socket(display: Path) -> bool:
+    try:
+        result = subprocess.run(["waydroid", "status"], env=clean_env(), capture_output=True,
+                                text=True, timeout=5, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0 and any(
+        line.partition(":")[2].strip() == str(display)
+        for line in result.stdout.splitlines() if line.startswith("Wayland display:")
+    )

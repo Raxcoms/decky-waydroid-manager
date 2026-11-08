@@ -5,6 +5,8 @@ import shutil
 import subprocess
 import zipfile
 
+from .guest import attach_command
+
 
 MAX_SPLITS = 128
 
@@ -14,7 +16,7 @@ def check_result(output: str) -> None:
         raise RuntimeError(output or "PACKAGE_OPERATION_FAILED")
 
 
-def install_apks(run, directory: Path, guest: str, names: list[str], commit=None) -> None:
+def install_apks(run, directory: Path, names: list[str], commit=None) -> None:
     command = ["waydroid", "shell", "--", "pm"]
     size = sum((directory / name).stat().st_size for name in names)
     output = run([*command, "install-create", "-r", "-S", str(size)])
@@ -25,7 +27,10 @@ def install_apks(run, directory: Path, guest: str, names: list[str], commit=None
     committed = False
     try:
         for name in names:
-            output = run([*command, "install-write", "-S", str((directory / name).stat().st_size), session, name, f"{guest}/{name}"], timeout=300)
+            with (directory / name).open("rb") as source:
+                size = str((directory / name).stat().st_size)
+                output = run(attach_command("/system/bin/cmd", "package", "install-write", "-S", size,
+                                            session, name, "-"), timeout=300, stdin=source)
             if not any(line == "Success" or line.startswith("Success:") for line in output.splitlines()):
                 raise RuntimeError(output or "PACKAGE_OPERATION_FAILED")
         check_result(commit(session) if commit else run([*command, "install-commit", session], timeout=300))

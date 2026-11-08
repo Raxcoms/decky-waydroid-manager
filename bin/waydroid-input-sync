@@ -5,14 +5,14 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
-from waydroid_manager.container import container_pid
-from waydroid_manager.proc import active_launch
+from waydroid_manager.container import container_pid, session_uses_socket
+from waydroid_manager.proc import process_identity
 from waydroid_manager.input import InputNodes, RuntimeKeylayout, controller_sources
 
 
 def main() -> None:
-    uid = int(sys.argv[1])
-    relay = Path(__file__).resolve().with_name("waydroid-wayland-relay")
+    launch = (int(sys.argv[1]), sys.argv[2])
+    display = Path(sys.argv[3])
     active = None
     layout = nodes = None
     stopping = False
@@ -40,11 +40,10 @@ def main() -> None:
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(signum, stop)
     try:
-        while not stopping:
+        while not stopping and process_identity(launch[0]) == launch:
             try:
-                launch = active_launch(uid, relay)
-                pid = container_pid() if launch else None
-                current = (launch, pid)
+                pid = container_pid() if session_uses_socket(display) else None
+                current = pid
                 if current != active:
                     release()
                     if nodes or layout:

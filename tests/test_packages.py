@@ -19,11 +19,14 @@ class PackageSessionTests(unittest.TestCase):
                 (root / name).write_bytes(b"APK")
             commands = []
             def run(command, **kwargs):
-                commands.append(command[4:])
-                return "Success: created install session [42]" if command[4] == "install-create" else "Success"
-            install_apks(run, root, "/data/local/tmp/test", names)
+                args = command[9:] if command[0] == "lxc-attach" else command[4:]
+                commands.append(args)
+                if args[0] == "install-write":
+                    self.assertEqual(kwargs["stdin"].read(), b"APK")
+                return "Success: created install session [42]" if args[0] == "install-create" else "Success"
+            install_apks(run, root, names)
             self.assertEqual(commands[0], ["install-create", "-r", "-S", "6"])
-            self.assertEqual([command[-1] for command in commands[1:-1]], [f"/data/local/tmp/test/{name}" for name in names])
+            self.assertEqual([command[-2:] for command in commands[1:-1]], [[name, "-"] for name in names])
             self.assertEqual(commands[-1], ["install-commit", "42"])
             self.assertFalse(any(command[0] in {"settings", "install-abandon", "install-multiple"} for command in commands))
 
@@ -43,7 +46,7 @@ class PackageSessionTests(unittest.TestCase):
                         return failure
                     return "Success"
                 with self.assertRaises((RuntimeError, subprocess.TimeoutExpired)):
-                    install_apks(run, root, "/data/local/tmp/test", ["base.apk"])
+                    install_apks(run, root, ["base.apk"])
                 self.assertEqual(commands[-1], ["install-abandon", "42"])
 
 
