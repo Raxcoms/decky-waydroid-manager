@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-owner_pid="${1:?missing launch process id}"
 log_dir="${WAYDROID_MANAGER_LOG_DIR:?missing log directory}"
 session_pid=""
 ready_file="$log_dir/android-ready"
@@ -19,6 +18,7 @@ stop_session() {
 }
 
 trap stop_session EXIT HUP INT TERM
+waydroid prop set persist.waydroid.multi_windows true >>"$log_dir/session.log" 2>&1
 waydroid session start >>"$log_dir/session.log" 2>&1 &
 session_pid=$!
 
@@ -38,6 +38,4 @@ for _ in {1..180}; do
   sleep 1
 done
 
-while [ -r "/proc/$owner_pid/stat" ] && [ "$(awk '{print $3}' "/proc/$owner_pid/stat")" != Z ]; do
-  sleep 1
-done
+wait "$session_pid"

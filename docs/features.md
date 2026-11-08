@@ -26,7 +26,7 @@ If Steam cannot remove a shortcut right away after an uninstall or image removal
 
 ## Adjust a Steam launch
 
-Close the running Android shortcut before opening another. Waydroid uses one Android session at a time.
+You can open more than one Android app from Steam. Waydroid keeps one shared Android session and opens each app in its own Wayland window. Closing a Steam shortcut stops only that app; the shared session closes after the final Waydroid shortcut exits.
 
 - Set the resolution in Steam's shortcut properties before launching. Android receives the selected display size when Steam exposes it. An in-game resolution setting still controls how the game renders.
 - Adjust the frame cap in Steam's Quick Access performance settings. The result depends on [the refresh mode Waydroid exposes to Android](#known-issue-with-frame-cap-precision).
