@@ -472,7 +472,9 @@ function Content() {
             >
               {t("installPackage")}
             </ButtonItem>
-            <Field bottomSeparator="none" description={t("installPackageDescription")} />
+            <div style={{ marginBlockStart: -10 }}>
+              <Field bottomSeparator="none" description={t("installPackageDescription")} />
+            </div>
           </PanelSectionRow>
           <PanelSectionRow>
             <ToggleField
