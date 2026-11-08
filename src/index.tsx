@@ -37,7 +37,7 @@ function AndroidRobotIcon() {
 }
 
 function SectionDivider() {
-  return <hr aria-hidden="true" style={{ border: 0, borderBlockStart: "1px solid #ffffff1a", margin: 0 }} />;
+  return <hr aria-hidden="true" style={{ border: 0, borderBlockStart: "1px solid #ffffff1a", margin: "-8px 0 8px" }} />;
 }
 
 const autoAddFailures = new Set<string>();
