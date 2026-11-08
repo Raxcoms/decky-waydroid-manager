@@ -6,6 +6,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
 from waydroid_manager.container import vendor_overlay_warning
 from waydroid_manager.control import control_path, request_service_start, service_connection
+from waydroid_manager.guest import GUEST_STARTING
 
 if sys.argv[1:] == ["--check-overlay"]:
     if warning := vendor_overlay_warning():
@@ -20,4 +21,6 @@ try:
     else:
         request_service_start(path)
 except (OSError, RuntimeError, ValueError) as error:
+    if str(error) == GUEST_STARTING:
+        sys.exit(3)
     raise SystemExit(f"Waydroid Manager could not start its container service: {error}")

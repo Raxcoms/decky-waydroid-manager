@@ -24,7 +24,7 @@ from waydroid_manager.packages import apk_members, stage_apks, install_apks, che
 from waydroid_manager.verification import InstallCancelled, InstallVerification, commit_install
 from waydroid_manager.steam import known_accounts, read_shortcuts, shortcuts_path, shortcut_key, shortcut_owners, migrated_launch_options
 from waydroid_manager.container import CONFIG_DIR, SERVICE, container_identity, container_pid, registered_guest, session_uses_socket, vendor_overlay_warning
-from waydroid_manager.guest import LaunchPolicy, run_dex
+from waydroid_manager.guest import GUEST_STARTING, LaunchPolicy, android_user_ready, run_dex
 from waydroid_manager.image import launcher_packages, owned_directory, require_unmounted, require_unredirected, run_init
 from waydroid_manager.control import Launch, ServiceControl, control_path
 from waydroid_manager.state import StateStore
@@ -133,10 +133,15 @@ class Plugin:
                 await asyncio.to_thread(self._policy.restore)
             except (OSError, RuntimeError, subprocess.SubprocessError) as error:
                 decky.logger.warning("Could not restore Android display policy: %s", error)
-        elif await asyncio.to_thread(session_uses_socket, launch.display):
-            await asyncio.to_thread(self._policy.save, mode)
         else:
+            await asyncio.to_thread(self._prepare_guest_presentation, launch, mode)
+
+    def _prepare_guest_presentation(self, launch: Launch, mode: str) -> None:
+        if not session_uses_socket(launch.display):
             raise RuntimeError("Waydroid launch is no longer active")
+        if not android_user_ready(self._run):
+            raise RuntimeError(GUEST_STARTING)
+        self._policy.save(mode)
 
     def _stop_input_sync(self) -> None:
         subprocess.run(

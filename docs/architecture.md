@@ -24,7 +24,7 @@ flowchart LR
 ## Follow a launch
 
 1. Steam starts the bundled launcher. The relay registers its process and private Wayland socket with the Decky backend, which starts the Waydroid service if needed.
-2. The launcher starts its own Android session and waits for the app list before opening the selected app. If another Waydroid session is already open, close it before launching the shortcut.
+2. The launcher starts its own Android session and waits for Android to finish booting, unlock the current user, and return the app list. If another Waydroid session is already open, close it before launching the shortcut.
 3. The relay forwards shared buffer handles directly to Gamescope. Controller, GPU metrics, and frame-limit adapters attach only to the Android session using the registered socket.
 
 User preferences and artwork cleanup run as the Steam login user. APK and XAPK content goes through Android's package installer, with no need for the backend to stage packages in the user's Android data directory.

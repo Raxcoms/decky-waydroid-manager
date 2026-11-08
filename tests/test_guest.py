@@ -3,7 +3,20 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
-from waydroid_manager.guest import LaunchPolicy
+from waydroid_manager.guest import LaunchPolicy, android_user_ready
+
+
+class AndroidReadinessTests(unittest.TestCase):
+    def test_only_explicit_boot_and_unlock_success_counts(self):
+        for output, expected in (("", False), ("RUNNING_LOCKED", False), ("ANDROID_READY", True)):
+            with self.subTest(output=output):
+                def run(command, **kwargs):
+                    self.assertIn("sys.boot_completed", command[-1])
+                    self.assertIn("get-current-user", command[-1])
+                    self.assertIn("get-started-user-state", command[-1])
+                    self.assertEqual(kwargs["timeout"], 5)
+                    return output
+                self.assertEqual(android_user_ready(run), expected)
 
 
 class LaunchPolicyTests(unittest.TestCase):

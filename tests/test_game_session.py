@@ -15,7 +15,9 @@ case "${0##*/}:$*" in
   systemctl:*stop*) echo stop >> calls ;;
   waydroid:status)
     if [ -f running ]; then
-      printf 'Session: RUNNING\nContainer: RUNNING\nWayland display: %s\n' "$WAYLAND_DISPLAY"
+      state=RUNNING
+      if [ -f freezing ]; then state=FREEZING; fi
+      printf 'Session: RUNNING\nContainer: %s\nWayland display: %s\n' "$state" "$WAYLAND_DISPLAY"
     else
       echo 'Session: STOPPED'
     fi
@@ -25,13 +27,15 @@ case "${0##*/}:$*" in
     case "$SCENARIO" in
       stopped) rm -f running ;;
       owner_lost) touch owner_lost ;;
-      ready|ends) if [ "$(grep -c '^list$' calls)" -ge 3 ]; then echo 'Name: Test app'; fi ;;
+      ready|ends|freezing) if [ "$(grep -c '^list$' calls)" -ge 3 ]; then echo 'Name: Test app'; fi ;;
+      locked) echo 'Name: Test app' ;;
     esac
     exit 0
     ;;
   waydroid:show-full-ui|waydroid:app\\ launch\\ *)
     echo "$*" >> calls
     if [ "$SCENARIO" = ends ]; then rm -f running; fi
+    if [ "$SCENARIO" = freezing ]; then touch freezing; fi
     ;;
   sleep:*) : ;;
   *) exit 2 ;;
@@ -55,7 +59,14 @@ class GameSessionTests(unittest.TestCase):
             runner = directory / RUNNER.name
             runner.write_text(RUNNER.read_text())
             service = directory / "waydroid-service"
-            service.write_text("#!/bin/sh\nexit 0\n")
+            service.write_text(
+                '#!/bin/sh\n'
+                'if [ "$SCENARIO" = locked ] && [ "$1" = --policy ] && [ "$2" != restore ]; then\n'
+                '  calls="$WAYDROID_MANAGER_LOG_DIR/calls"\n'
+                '  echo unlock-check >> "$calls"\n'
+                '  if [ "$(grep -c unlock-check "$calls")" -lt 3 ]; then exit 3; fi\n'
+                'fi\n'
+            )
             service.chmod(0o755)
             env = {
                 **os.environ,
@@ -97,6 +108,16 @@ class GameSessionTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Close the running Waydroid session", result.stderr)
         self.assertEqual(calls, [])
+
+    def test_app_list_does_not_allow_launch_before_unlock(self):
+        result, calls = self.run_session("locked", "app")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(calls, ["list", "unlock-check"] * 3 + ["app launch test.package", "stop"])
+
+    def test_freezing_is_not_a_stopped_container(self):
+        result, calls = self.run_session("freezing")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(calls, ["list", "list", "list", "show-full-ui", "stop"])
 
     def test_shortcut_exits_if_android_dies_after_presentation(self):
         result, calls = self.run_session("ends")

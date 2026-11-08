@@ -15,7 +15,7 @@ unit_active() {
 owned_session_running() {
   local status
   status=$(timeout 5 waydroid status 2>/dev/null) || return 1
-  grep -qE '^Container:[[:space:]]*(RUNNING|FROZEN)$' <<<"$status" &&
+  grep -qE '^Container:[[:space:]]*(RUNNING|FREEZING|FROZEN)$' <<<"$status" &&
     awk -v display="$WAYLAND_DISPLAY" '/^Wayland display:/ {sub(/^Wayland display:[[:space:]]*/, ""); found = ($0 == display)} END {exit !found}' <<<"$status"
 }
 
@@ -51,8 +51,15 @@ ready=0
 while (( SECONDS < deadline )) && unit_active; do
   # Presentation commands can start a new session, so only query readiness here.
   if owned_session_running && timeout 5 waydroid app list 2>/dev/null | grep '^Name:' >/dev/null; then
-    ready=1
-    break
+    # The app list can respond before Android has unlocked the current user.
+    if "$service_helper" --policy "$WAYDROID_MANAGER_MODE"; then
+      policy_saved=1
+      ready=1
+      break
+    else
+      result=$?
+      [ "$result" = 3 ] || exit "$result"
+    fi
   fi
   sleep 1
 done
@@ -61,8 +68,6 @@ if [ "$ready" = 0 ] || ! unit_active || ! owned_session_running; then
   exit 1
 fi
 "$service_helper" --check-overlay || true
-"$service_helper" --policy "$WAYDROID_MANAGER_MODE"
-policy_saved=1
 
 if [ "$WAYDROID_MANAGER_MODE" = "app" ]; then
   timeout 15 waydroid app launch "$WAYDROID_MANAGER_PACKAGE" >>"$WAYDROID_MANAGER_LOG_DIR/app.log" 2>&1

@@ -6,8 +6,25 @@ import uuid
 from .container import LXC_PATH
 
 
+GUEST_STARTING = "WAYDROID_GUEST_STARTING"
+
+
 def attach_command(*args: str) -> list[str]:
     return ["lxc-attach", "-P", str(LXC_PATH), "-n", "waydroid", "--clear-env", "--", *args]
+
+
+def android_user_ready(run) -> bool:
+    check = """
+        [ "$(getprop sys.boot_completed)" = 1 ] || exit 1
+        user=$(cmd activity get-current-user) || exit 1
+        case "$user" in ""|*[!0-9]*) exit 1 ;; esac
+        [ "$(cmd activity get-started-user-state "$user")" = RUNNING_UNLOCKED ] && echo ANDROID_READY
+    """
+    try:
+        output = run(["waydroid", "shell", "--", "/system/bin/sh", "-c", check], timeout=5)
+    except (RuntimeError, subprocess.TimeoutExpired):
+        return False
+    return "ANDROID_READY" in output.splitlines()
 
 
 class LaunchPolicy:
