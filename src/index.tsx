@@ -36,6 +36,10 @@ function AndroidRobotIcon() {
   );
 }
 
+function SectionDivider() {
+  return <hr aria-hidden="true" style={{ border: 0, borderBlockStart: "1px solid #ffffff1a", margin: 0 }} />;
+}
+
 const autoAddFailures = new Set<string>();
 const libraryListeners = new Set<() => void>();
 let cachedStatus: Status | null = null;
@@ -378,18 +382,18 @@ function Content() {
       <Focusable flow-children="column" onGamepadFocus={revealPanelTop}>
       <PanelSection title={t("waydroidStatus")}>
         <PanelSectionRow>
-          <Field label={status?.initialized ? t("installed") : t("notInstalled")} />
+          <Field bottomSeparator="none" label={status?.initialized ? t("installed") : t("notInstalled")} />
         </PanelSectionRow>
         {status && !status.sessionAvailable && (
           <PanelSectionRow>
-            <Field label={t("gamescopeUnavailable")} description={t("gamescopeUnavailableDescription")} />
+            <Field bottomSeparator="none" label={t("gamescopeUnavailable")} description={t("gamescopeUnavailableDescription")} />
           </PanelSectionRow>
         )}
         {(!status?.initialized || setupPending) && (
           <PanelSectionRow>
             <ButtonItem
               layout="below"
-              bottomSeparator={status?.initialized ? "standard" : "none"}
+              bottomSeparator="none"
               onClick={() => openModal(<ImageOperationModal
                 operation={setupPending ? "setup" : "install"}
                 perform={initializeWaydroid}
@@ -404,12 +408,13 @@ function Content() {
           <>
             {status.waydroidShortcutId && (
               <PanelSectionRow>
-                <ButtonItem layout="below" onClick={run(launchFullWaydroid, async () => {}, setMessage)}>{t("launchWaydroid")}</ButtonItem>
+                <ButtonItem layout="below" bottomSeparator="none" onClick={run(launchFullWaydroid, async () => {}, setMessage)}>{t("launchWaydroid")}</ButtonItem>
               </PanelSectionRow>
             )}
             <PanelSectionRow>
               <ButtonItem
                 layout="below"
+                bottomSeparator="none"
                 onClick={status.waydroidShortcutId ? run(removeWaydroidShortcut, async () => {}, setMessage, [t("waydroid"), t("removedFromSteam")]) : run(addWaydroid, async () => {}, setMessage)}
               >
                 {status.waydroidShortcutId ? t("removeWaydroidShortcut") : t("addWaydroid")}
@@ -436,6 +441,8 @@ function Content() {
       </Focusable>
 
       {status?.initialized && !setupPending && (
+        <>
+        <SectionDivider />
         <PanelSection title={t("androidApps", { count: apps.length })}>
           <PanelSectionRow>
             <ButtonItem
@@ -465,12 +472,11 @@ function Content() {
             >
               {t("installPackage")}
             </ButtonItem>
-          </PanelSectionRow>
-          <PanelSectionRow>
-            <Field description={t("installPackageDescription")} />
+            <Field bottomSeparator="none" description={t("installPackageDescription")} />
           </PanelSectionRow>
           <PanelSectionRow>
             <ToggleField
+              bottomSeparator="none"
               label={t("autoAddApps")}
               description={t("autoAddAppsDescription")}
               checked={status.autoAddApps}
@@ -482,7 +488,7 @@ function Content() {
               key={app.package}
               app={app}
               accountId={status.accountId}
-              isLast={!hasMoreApps && index === shownApps.length - 1}
+              isLast={index === shownApps.length - 1}
               rowRef={app.package === appToFocus ? nextAppRow : undefined}
               setShortcutId={(id) => setApps((current) => current.map((item) => item.package === app.package ? { ...item, shortcutId: id } : item))}
               onUninstalled={() => setApps((current) => current.filter((item) => item.package !== app.package))}
@@ -498,23 +504,27 @@ function Content() {
             </PanelSectionRow>
           )}
         </PanelSection>
+        </>
       )}
 
       {status?.initialized && (
-        <PanelSection title={t("dangerZone")}>
+        <>
+        <SectionDivider />
+        <PanelSection title={t("waydroidService")}>
           <PanelSectionRow>
-            <Field label={t("service", { state: status.serviceRunning ? t("running") : t("stopped") })} />
+            <Field bottomSeparator="none" label={t("serviceStatus", { state: status.serviceRunning ? t("running") : t("stopped") })} />
           </PanelSectionRow>
           <PanelSectionRow>
-            <ButtonItem layout="below" onClick={run(startService, refresh, setMessage)}>{t("start")}</ButtonItem>
+            <ButtonItem layout="below" bottomSeparator="none" onClick={run(startService, refresh, setMessage)}>{t("start")}</ButtonItem>
           </PanelSectionRow>
           <PanelSectionRow>
-            <ButtonItem layout="below" onClick={run(restartService, refresh, setMessage)}>{t("restart")}</ButtonItem>
+            <ButtonItem layout="below" bottomSeparator="none" onClick={run(restartService, refresh, setMessage)}>{t("restart")}</ButtonItem>
           </PanelSectionRow>
           <PanelSectionRow>
             <ButtonItem layout="below" bottomSeparator="none" onClick={run(stopService, refresh, setMessage)}>{t("stop")}</ButtonItem>
           </PanelSectionRow>
         </PanelSection>
+        </>
       )}
 
       {message && <PanelSection><PanelSectionRow><Field description={message} bottomSeparator="none" /></PanelSectionRow></PanelSection>}

@@ -6,7 +6,7 @@ Set up Android from Decky and launch Android apps from your Steam library. Waydr
 
 1. Download the `waydroid-manager-<version>.zip` asset from the [latest release](https://github.com/Raxcoms/decky-waydroid-manager/releases/latest).
 2. Install the ZIP in Decky and open **Waydroid Manager** in Game Mode.
-3. Choose **Install Waydroid with GAPPS**, then **Add Waydroid to Steam**.
+3. Choose **Install Waydroid**, then **Add Waydroid to Steam**.
 
 For setup requirements, Android packages, or help with launch settings, see the [installation guide](docs/installation.md) and [user guide](docs/features.md).
 

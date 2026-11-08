@@ -14,7 +14,7 @@ For development testing, you can also download a `waydroid-manager-<commit>` art
 
 ## Set up Android
 
-1. Select **Install Waydroid with GAPPS**. Waydroid chooses the image for your device.
+1. Select **Install Waydroid**. Waydroid chooses the image for your device and includes Google Play services.
 2. Wait for the progress dialog to finish. The first setup downloads the image, boots Android, and waits for the app list. Fresh Android data starts with Steam's language and English as a fallback. You can change this later in Android Settings.
 3. Select **Add Waydroid to Steam**, then open it from your Steam library or choose **Launch Waydroid** in Decky.
 
