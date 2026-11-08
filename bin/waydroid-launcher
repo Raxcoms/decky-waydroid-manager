@@ -52,7 +52,6 @@ export WAYDROID_MANAGER_MODE="$mode"
 export WAYDROID_MANAGER_PACKAGE="$package"
 export WAYDROID_MANAGER_LOG_DIR="$log_dir"
 export WAYDROID_MANAGER_SESSION_RUNNER="$session_runner"
-export WAYDROID_MANAGER_SESSION_UNIT="waydroid-manager-session-$$"
 unset ENABLE_GAMESCOPE_WSI
 export DISABLE_GAMESCOPE_WSI=1
 

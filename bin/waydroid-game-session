@@ -5,7 +5,6 @@ export WAYLAND_DISPLAY="${GAMESCOPE_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:?missing 
 session_unit="$WAYDROID_MANAGER_SESSION_UNIT"
 steam_owner_pid="${WAYDROID_MANAGER_STEAM_OWNER_PID:-}"
 owns_session=0
-policy_saved=0
 service_helper="$(dirname "$0")/waydroid-service"
 
 unit_active() {
@@ -20,11 +19,10 @@ owned_session_running() {
 }
 
 cleanup_session() {
-  if [ "$policy_saved" = 1 ]; then
-    "$service_helper" --policy restore || true
-  fi
   if [ "$owns_session" = 1 ]; then
-    timeout 50 systemctl --user stop "$session_unit" >/dev/null 2>&1 || true
+    if ! "$service_helper" --release; then
+      timeout 10 systemctl --user stop "$session_unit" || true
+    fi
   fi
 }
 trap cleanup_session EXIT
@@ -53,7 +51,6 @@ while (( SECONDS < deadline )) && unit_active; do
   if owned_session_running && timeout 5 waydroid app list 2>/dev/null | grep '^Name:' >/dev/null; then
     # The app list can respond before Android has unlocked the current user.
     if "$service_helper" --policy "$WAYDROID_MANAGER_MODE"; then
-      policy_saved=1
       ready=1
       break
     else

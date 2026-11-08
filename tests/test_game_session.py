@@ -61,6 +61,7 @@ class GameSessionTests(unittest.TestCase):
             service = directory / "waydroid-service"
             service.write_text(
                 '#!/bin/sh\n'
+                'if [ "$1" = --release ]; then echo stop >> "$WAYDROID_MANAGER_LOG_DIR/calls"; exit 0; fi\n'
                 'if [ "$SCENARIO" = locked ] && [ "$1" = --policy ] && [ "$2" != restore ]; then\n'
                 '  calls="$WAYDROID_MANAGER_LOG_DIR/calls"\n'
                 '  echo unlock-check >> "$calls"\n'

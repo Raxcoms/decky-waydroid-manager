@@ -128,13 +128,30 @@ class Plugin:
             decky.logger.warning("Waydroid controller bridge unavailable: %s", error)
 
     async def _launch_policy(self, launch: Launch, mode: str) -> None:
-        if mode == "restore":
+        await asyncio.to_thread(self._prepare_guest_presentation, launch, mode)
+
+    async def _release_launch(self, launch: Launch) -> None:
+        await asyncio.to_thread(self._stop_launch, launch)
+
+    def _stop_launch(self, launch: Launch) -> None:
+        user, uid, home = self._user()
+        try:
+            if session_uses_socket(launch.display):
+                try:
+                    self._policy.restore()
+                except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                    decky.logger.warning("Could not restore Android display policy: %s", error)
+                if session_uses_socket(launch.display):
+                    self._run(["busctl", "--system", "--timeout=12s", "call", "id.waydro.Container",
+                               "/ContainerManager", "id.waydro.ContainerManager", "Stop", "b", "true"], timeout=15)
+        finally:
+            command = [*self._user_command(user, uid, home), "systemctl", "--user"]
             try:
-                await asyncio.to_thread(self._policy.restore)
-            except (OSError, RuntimeError, subprocess.SubprocessError) as error:
-                decky.logger.warning("Could not restore Android display policy: %s", error)
-        else:
-            await asyncio.to_thread(self._prepare_guest_presentation, launch, mode)
+                self._run([*command, "is-active", "--quiet", launch.unit], timeout=5)
+            except RuntimeError:
+                pass
+            else:
+                self._run([*command, "stop", "--no-block", launch.unit], timeout=5)
 
     def _prepare_guest_presentation(self, launch: Launch, mode: str) -> None:
         if not session_uses_socket(launch.display):
@@ -940,7 +957,7 @@ class Plugin:
         _, uid, _ = self._user()
         relay = Path(decky.DECKY_PLUGIN_DIR).resolve() / "bin/waydroid-wayland-relay"
         self._control = ServiceControl(control_path(uid), uid, self._ensure_service, relay, self._prepare_launch,
-                                       self._launch_policy)
+                                       self._launch_policy, self._release_launch)
         await self._control.open()
         decky.logger.info("Waydroid Manager loaded")
 
@@ -961,7 +978,7 @@ class Plugin:
             _, uid, _ = self._user()
             registration = self._control.launch
             guest = None
-            if registration and process_identity(registration.process[0]) == registration.process:
+            if registration and self._control.release_task is None and process_identity(registration.process[0]) == registration.process:
                 guest = await asyncio.to_thread(registered_guest, registration.display)
             launch = registration.process if guest and registration else None
             metrics = registration.display.with_name("metrics") if launch and registration else None

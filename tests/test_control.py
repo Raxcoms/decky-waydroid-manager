@@ -31,7 +31,10 @@ class ServiceControlTests(unittest.TestCase):
             )
             async def start():
                 pass
-            control = ServiceControl(root / "control.sock", os.getuid(), start, relay)
+            releases = []
+            async def release(launch):
+                releases.append(launch)
+            control = ServiceControl(root / "control.sock", os.getuid(), start, relay, on_release=release)
             await control.open()
             child = await asyncio.create_subprocess_exec(
                 "/usr/bin/python3", "-I", str(relay), str(control.path), str(root / "wayland"),
@@ -53,6 +56,7 @@ class ServiceControlTests(unittest.TestCase):
                     await asyncio.sleep(0.01)
                 await control.close()
             self.assertIsNone(control.launch)
+            self.assertEqual([launch.process[0] for launch in releases], [child.pid])
 
         with tempfile.TemporaryDirectory() as directory:
             asyncio.run(exercise(directory))

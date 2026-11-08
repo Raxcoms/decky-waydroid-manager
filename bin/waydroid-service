@@ -15,7 +15,10 @@ if sys.argv[1:] == ["--check-overlay"]:
 
 try:
     path = control_path(os.getuid())
-    if len(sys.argv) == 3 and sys.argv[1] == "--policy":
+    if sys.argv[1:] == ["--release"]:
+        with service_connection(path, b"RELEASE"):
+            pass
+    elif len(sys.argv) == 3 and sys.argv[1] == "--policy":
         with service_connection(path, b"POLICY " + sys.argv[2].encode("ascii")):
             pass
     else:

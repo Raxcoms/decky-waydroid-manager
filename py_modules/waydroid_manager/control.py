@@ -3,6 +3,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 import errno
 import json
+import logging
 import os
 from pathlib import Path
 import socket
@@ -18,6 +19,10 @@ from .proc import descends_from, process_identity
 class Launch:
     process: tuple[int, str]
     display: Path
+
+    @property
+    def unit(self) -> str:
+        return f"waydroid-manager-session-{self.process[0]}"
 
 
 def control_path(uid: int) -> Path:
@@ -54,14 +59,23 @@ def request_service_start(path: Path) -> None:
 class ServiceControl:
     def __init__(self, path: Path, uid: int, start: Callable[[], Awaitable[None]],
                  relay: Path | None = None, on_launch: Callable[[Launch], Awaitable[None]] | None = None,
-                 on_policy: Callable[[Launch, str], Awaitable[None]] | None = None):
+                 on_policy: Callable[[Launch, str], Awaitable[None]] | None = None,
+                 on_release: Callable[[Launch], Awaitable[None]] | None = None):
         self.path, self.uid, self.start_service = path, uid, start
         self.server = None
         self.inode = None
         self.clients = set()
         self.relay, self.on_launch = relay, on_launch
-        self.on_policy = on_policy
+        self.on_policy, self.on_release = on_policy, on_release
         self.launch: Launch | None = None
+        self.release_task: asyncio.Task | None = None
+
+    async def release(self, launch: Launch) -> None:
+        if not self.on_release:
+            return
+        if self.release_task is None:
+            self.release_task = asyncio.create_task(self.on_release(launch))
+        await asyncio.shield(self.release_task)
 
     def identify_launch(self, pid: int, display: Path) -> Launch:
         process = Path("/proc") / str(pid)
@@ -116,10 +130,15 @@ class ServiceControl:
                         raise RuntimeError("A Waydroid shortcut is already running")
                     launch = self.identify_launch(pid, Path(os.fsdecode(command[7:-1])))
                     self.launch = launch
-                elif command in {b"POLICY full\n", b"POLICY app\n", b"POLICY restore\n"}:
-                    if not self.launch or not self.on_policy or not descends_from(pid, self.launch.process):
+                elif command in {b"POLICY full\n", b"POLICY app\n", b"RELEASE\n"}:
+                    if not self.launch or not descends_from(pid, self.launch.process):
                         raise RuntimeError("Waydroid launch is no longer active")
-                    await self.on_policy(self.launch, command[7:-1].decode("ascii"))
+                    if command == b"RELEASE\n":
+                        await self.release(self.launch)
+                    elif self.on_policy and self.release_task is None:
+                        await self.on_policy(self.launch, command[7:-1].decode("ascii"))
+                    else:
+                        raise RuntimeError("Waydroid launch is closing")
                 elif command != b"START\n":
                     raise RuntimeError("Invalid Waydroid Manager service request")
                 if launch or command == b"START\n":
@@ -137,9 +156,13 @@ class ServiceControl:
             pass
         finally:
             if launch is not None and self.launch == launch:
-                if self.on_policy:
-                    await self.on_policy(launch, "restore")
-                self.launch = None
+                try:
+                    await self.release(launch)
+                except (RuntimeError, OSError, subprocess.SubprocessError) as error:
+                    logging.getLogger(__name__).warning("Could not release the Waydroid launch: %s", error)
+                finally:
+                    self.launch = None
+                    self.release_task = None
             self.clients.discard(task)
             writer.close()
             try:

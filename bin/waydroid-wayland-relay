@@ -13,6 +13,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
 from waydroid_manager.wayland import SurfaceCommits
@@ -212,6 +213,7 @@ def main() -> int:
             print(f"Wayland relay started: {os.getpid()}", file=sys.stderr, flush=True)
             environment = os.environ.copy()
             environment.update(WAYLAND_DISPLAY=path, GAMESCOPE_WAYLAND_DISPLAY=path)
+            environment["WAYDROID_MANAGER_SESSION_UNIT"] = f"waydroid-manager-session-{os.getpid()}"
             with service_connection(control_path(os.getuid()), b"LAUNCH " + os.fsencode(path)) as control:
                 child = subprocess.Popen(sys.argv[3:], env=environment, start_new_session=True)
                 try:
@@ -228,9 +230,11 @@ def main() -> int:
                     except ProcessLookupError:
                         pass
                     if child.poll() is None:
-                        try:
-                            child.wait(timeout=55)
-                        except subprocess.TimeoutExpired:
+                        # Android may still need its Wayland connection during cleanup.
+                        deadline = time.monotonic() + 55
+                        while child.poll() is None and time.monotonic() < deadline:
+                            relay.step()
+                        if child.poll() is None:
                             os.killpg(child.pid, signal.SIGKILL)
                             child.wait()
                     relay.close()
