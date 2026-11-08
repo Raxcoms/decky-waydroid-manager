@@ -21,11 +21,15 @@ def steam_wayland_socket(uid: int, proc: Path = Path("/proc"), runtime: Path | N
                 if value:
                     socket = directory / os.fsdecode(value)
                     if socket.is_socket():
-                        candidates.append(((key == b"GAMESCOPE_WAYLAND_DISPLAY", b"steam" in names), socket))
+                        candidates.append(((key == b"GAMESCOPE_WAYLAND_DISPLAY", b"steam" in names), socket.resolve()))
                         break
         except OSError:
             continue
-    return max(candidates, key=lambda candidate: candidate[0])[1] if candidates else None
+    if not candidates:
+        return None
+    best_rank = max(rank for rank, _ in candidates)
+    sockets = {path for rank, path in candidates if rank == best_rank}
+    return sockets.pop() if len(sockets) == 1 else None
 
 
 def active_launch(uid: int, relay: Path) -> tuple[int, str] | None:

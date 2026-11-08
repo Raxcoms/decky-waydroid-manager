@@ -28,7 +28,7 @@ If Steam cannot remove a shortcut right away after an uninstall or image removal
 
 Close the running Android shortcut before opening another. Waydroid uses one Android session at a time.
 
-- Set the resolution in Steam's shortcut properties before launching. Android receives the selected display size when Steam exposes it. An in-game resolution setting still controls how the game renders.
+- Set the resolution in Steam's shortcut properties before launching. Android receives the selected display size when Steam exposes a single active game output. With an ambiguous multi-output layout, Android keeps the size reported by Gamescope. An in-game resolution setting still controls how the game renders.
 - Adjust the frame cap in Steam's Quick Access performance settings. The result depends on [the refresh mode Waydroid exposes to Android](#known-issue-with-frame-cap-precision).
 - Use Steam Input and direct touch where supported by your Game Mode session. On some Gamescope builds, mouse mode can deliver pointer input with no visible cursor.
 - Use Steam's performance overlay to monitor the launch. GPU usage requires a compatible driver and MangoHud.
