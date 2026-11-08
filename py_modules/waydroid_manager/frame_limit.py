@@ -66,8 +66,10 @@ class FrameLimiter:
         self.original.clear()
         self.applied.clear()
 
-    def sync(self, fps: int | None, launch: tuple[int, str] | None) -> None:
+    def sync(self, fps: int | None, launch: tuple[int, str] | None, expected_guest: tuple[int, str] | None = None) -> None:
         guest = self.identify() if launch else None
+        if expected_guest and expected_guest != guest:
+            guest = None
         if launch != self.launch or guest != self.guest:
             self.restore()
             self.launch = launch

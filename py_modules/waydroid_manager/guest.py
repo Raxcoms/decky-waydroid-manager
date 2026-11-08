@@ -29,7 +29,7 @@ class LaunchPolicy:
             raise RuntimeError("WAYDROID_NOT_RUNNING")
         expected = "null*"
         if mode == "app":
-            multiwindow = self.android("getprop", "persist.waydroid.multi_windows")
+            multiwindow = self.android("getprop", "persist.waydroid.multi_windows") or "false"
             expected = "immersive.status=*" if multiwindow == "false" else "immersive.full=*"
         self.saved = identity, self.current(), expected
 
@@ -54,7 +54,7 @@ def run_dex(run, helper: Path, identify, identity, main_class: str, *args: str, 
     try:
         with helper.open("rb") as source:
             run(attach_command("/system/bin/sh", "-c",
-                               'set -e; /system/bin/mkdir -m 755 "$1"; umask 022; /system/bin/cat > "$1/helper.dex"',
+                               'set -e; /system/bin/mkdir -m 755 "$1"; /system/bin/cat > "$1/helper.dex"; /system/bin/chmod 444 "$1/helper.dex"',
                                "sh", directory), timeout=10, stdin=source)
         if identify() != identity:
             raise RuntimeError("WAYDROID_NOT_RUNNING")

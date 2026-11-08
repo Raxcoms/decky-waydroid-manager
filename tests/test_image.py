@@ -5,10 +5,23 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
-from waydroid_manager.image import require_unmounted, require_unredirected, run_init
+from waydroid_manager.image import owned_directory, require_unmounted, require_unredirected, run_init
 
 
 class ImageRemovalSafetyTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Requires Linux directory descriptors")
+    def test_data_directory_remains_pinned_when_renamed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data = root / "share"
+            data.mkdir()
+            (data / "marker").write_text("original")
+            with owned_directory(data, os.getuid()) as pinned:
+                data.rename(root / "old")
+                data.mkdir()
+                (data / "marker").write_text("replacement")
+                self.assertEqual((pinned / "marker").read_text(), "original")
+
     @unittest.skipIf(os.name == "nt", "Requires a Linux-style symlink")
     def test_rejects_a_redirected_parent_directory(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -5,7 +5,7 @@ import sys
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
-from waydroid_manager.container import container_pid, session_uses_socket
+from waydroid_manager.container import registered_guest
 from waydroid_manager.proc import process_identity
 from waydroid_manager.input import InputNodes, RuntimeKeylayout, controller_sources
 
@@ -24,6 +24,9 @@ def main() -> None:
 
     def release():
         nonlocal layout, nodes
+        if active and process_identity(active[0]) != active:
+            layout = nodes = None
+            return
         if nodes:
             try:
                 nodes.close(controller_sources()[1])
@@ -42,8 +45,8 @@ def main() -> None:
     try:
         while not stopping and process_identity(launch[0]) == launch:
             try:
-                pid = container_pid() if session_uses_socket(display) else None
-                current = pid
+                current = registered_guest(display)
+                pid = current[0] if current else None
                 if current != active:
                     release()
                     if nodes or layout:

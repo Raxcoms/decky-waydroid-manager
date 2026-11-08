@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
-from waydroid_manager.proc import clean_env, steam_wayland_socket
+from waydroid_manager.proc import clean_env, steam_session, steam_wayland_socket
 
 
 @unittest.skipIf(os.name == "nt", "Requires Unix display sockets")
@@ -29,8 +29,11 @@ class SteamDisplayTests(unittest.TestCase):
                     process = proc / pid
                     process.mkdir()
                     (process / "cmdline").write_bytes(f"/usr/bin/{name}\0".encode())
-                    (process / "environ").write_bytes(f"XDG_RUNTIME_DIR={runtime}\0{display}\0".encode())
+                    (process / "environ").write_bytes(
+                        f"XDG_RUNTIME_DIR={runtime}\0XDG_DATA_HOME={root / 'custom-share'}\0{display}\0".encode()
+                    )
                 self.assertEqual(steam_wayland_socket(proc.stat().st_uid, proc), primary)
+                self.assertEqual(steam_session(proc.stat().st_uid, proc).data_home, root / "custom-share")
                 primary.unlink()
                 self.assertEqual(steam_wayland_socket(proc.stat().st_uid, proc), other)
 

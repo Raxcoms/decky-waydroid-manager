@@ -6,6 +6,7 @@ from collections import deque
 from dataclasses import dataclass, field
 import os
 from pathlib import Path
+import select
 import selectors
 import signal
 import socket
@@ -211,10 +212,13 @@ def main() -> int:
             print(f"Wayland relay started: {os.getpid()}", file=sys.stderr, flush=True)
             environment = os.environ.copy()
             environment.update(WAYLAND_DISPLAY=path, GAMESCOPE_WAYLAND_DISPLAY=path)
-            with service_connection(control_path(os.getuid()), b"LAUNCH " + os.fsencode(path)):
+            with service_connection(control_path(os.getuid()), b"LAUNCH " + os.fsencode(path)) as control:
                 child = subprocess.Popen(sys.argv[3:], env=environment, start_new_session=True)
                 try:
                     while not stopping and child.poll() is None:
+                        if select.select([control], [], [], 0)[0]:
+                            print("Waydroid launch registration ended", file=sys.stderr)
+                            return 1
                         relay.step()
                         metrics.poll()
                     return child.returncode if child.returncode is not None else 0

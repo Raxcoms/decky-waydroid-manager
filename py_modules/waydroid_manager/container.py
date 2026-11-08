@@ -60,3 +60,10 @@ def session_uses_socket(display: Path) -> bool:
         line.partition(":")[2].strip() == str(display)
         for line in result.stdout.splitlines() if line.startswith("Wayland display:")
     )
+
+
+def registered_guest(display: Path) -> tuple[int, str] | None:
+    identity = container_identity()
+    if identity and session_uses_socket(display) and process_identity(identity[0]) == identity:
+        return identity
+    return None

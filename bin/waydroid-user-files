@@ -1,8 +1,9 @@
 #!/usr/bin/python3 -I
+import array
 import json
 import os
 from pathlib import Path
-import shutil
+import socket
 import stat
 import sys
 
@@ -18,12 +19,13 @@ def main() -> None:
         print(json.dumps(StateStore(home).load()))
     elif action == "save":
         StateStore(home).save(json.load(sys.stdin))
-    elif action == "copy":
+    elif action == "open":
         path = Path(sys.argv[3])
         with os.fdopen(os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW), "rb") as source:
             if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
                 raise RuntimeError("INVALID_PACKAGE_FILE")
-            shutil.copyfileobj(source, sys.stdout.buffer)
+            with socket.socket(fileno=int(sys.argv[4])) as sender:
+                sender.sendmsg([b"F"], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array("i", [source.fileno()]))])
     elif action == "unlink":
         Path(sys.argv[3]).unlink(missing_ok=True)
     elif action == "prune-artwork":

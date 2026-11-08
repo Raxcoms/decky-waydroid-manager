@@ -6,7 +6,6 @@ import pwd
 import re
 import shutil
 import subprocess
-import tempfile
 import threading
 import time
 import uuid
@@ -24,11 +23,12 @@ from waydroid_manager.metrics import GpuMetrics
 from waydroid_manager.packages import apk_members, stage_apks, install_apks, check_result
 from waydroid_manager.verification import InstallCancelled, InstallVerification, commit_install
 from waydroid_manager.steam import known_accounts, read_shortcuts, shortcuts_path, shortcut_key, shortcut_owners, migrated_launch_options
-from waydroid_manager.container import CONFIG_DIR, SERVICE, container_identity, container_pid, session_uses_socket, vendor_overlay_warning
+from waydroid_manager.container import CONFIG_DIR, SERVICE, container_identity, container_pid, registered_guest, session_uses_socket, vendor_overlay_warning
 from waydroid_manager.guest import LaunchPolicy, run_dex
 from waydroid_manager.image import launcher_packages, owned_directory, require_unmounted, require_unredirected, run_init
 from waydroid_manager.control import Launch, ServiceControl, control_path
 from waydroid_manager.state import StateStore
+from waydroid_manager.user_files import open_as_user, run_as_user
 
 
 WAYDROID_DIR = CONFIG_DIR
@@ -169,7 +169,7 @@ class Plugin:
     def _load_state(self, home: Path) -> dict[str, Any]:
         if os.geteuid() == home.stat().st_uid:
             return StateStore(home).load()
-        return json.loads(self._user_files(home, "load").stdout)
+        return json.loads(self._user_files(home, "load"))
 
     def _save_state(self, home: Path, state: dict[str, Any]) -> None:
         if os.geteuid() == home.stat().st_uid:
@@ -177,22 +177,12 @@ class Plugin:
         else:
             self._user_files(home, "save", payload=json.dumps(state).encode())
 
-    def _user_files(self, home: Path, action: str, *args: str, payload: bytes | None = None, stdout=subprocess.PIPE):
-        uid = home.stat().st_uid
-        credentials = {}
-        if os.geteuid() != uid:
-            account = pwd.getpwuid(uid)
-            credentials = {"user": uid, "group": account.pw_gid,
-                           "extra_groups": os.getgrouplist(account.pw_name, account.pw_gid)}
-        helper = Path(decky.DECKY_PLUGIN_DIR) / "bin/waydroid-user-files"
-        result = subprocess.run(
-            ["/usr/bin/python3", "-I", str(helper), str(home), action, *args],
-            env=clean_env(), input=payload, stdout=stdout, stderr=subprocess.PIPE,
-            timeout=300 if action == "copy" else 15, **credentials,
-        )
-        if result.returncode:
-            raise RuntimeError(result.stderr.decode(errors="replace").strip() or "Waydroid file operation failed")
-        return result
+    @staticmethod
+    def _user_files_helper() -> Path:
+        return Path(decky.DECKY_PLUGIN_DIR) / "bin/waydroid-user-files"
+
+    def _user_files(self, home: Path, action: str, *args: str, payload: bytes | None = None) -> bytes:
+        return run_as_user(self._user_files_helper(), home, action, *args, payload=payload)
 
     def _account_state(self, home: Path, state: dict, account_id: int) -> dict:
         legacy = state.pop("legacy", None)
@@ -367,7 +357,7 @@ class Plugin:
                     state["artwork"] = json.loads(self._user_files(
                         home, "prune-artwork", str(path.parent / "grid"),
                         payload=json.dumps([state["artwork"], sorted(ids)]).encode(),
-                    ).stdout)
+                    ))
             discovered = self._shortcut_ids(home, account_id, history)
             for key, app_id in list(history["shortcuts"].items()):
                 if app_id in ids:
@@ -650,7 +640,7 @@ class Plugin:
             return
 
         if self._control and self._control.launch:
-            raise RuntimeError("A Waydroid shortcut is starting. Try again once Android is ready.")
+            raise RuntimeError("WAYDROID_LAUNCH_STARTING")
 
         user, uid, home = self._user()
         wayland = steam_wayland_socket(uid)
@@ -749,20 +739,12 @@ class Plugin:
         _, _, home = self._user()
         report = lambda stage: self._set_package_progress("install", value, stage)
         try:
-            with tempfile.TemporaryDirectory(prefix="waydroid-manager-") as temporary:
-                archive_path = Path(temporary) / "archive"
-                with archive_path.open("wb") as destination:
-                    self._user_files(home, "copy", str(path), stdout=destination)
-                with zipfile.ZipFile(archive_path) as archive:
-                    members = apk_members(archive, path.suffix.lower())
-                    host_dir = Path(temporary) / "staged"
-                    with self._package_session(report):
-                        report("checking")
-                        installed = stage_apks(archive, members, host_dir)
-                        report("installing")
-                        install_apks(self._run, host_dir, installed,
-                                     commit=lambda session: self._commit_package_install(session, value))
-                        self._removable_packages()
+            with open_as_user(self._user_files_helper(), home, path) as source, zipfile.ZipFile(source) as archive:
+                members = apk_members(archive, path.suffix.lower())
+                with self._package_session(report), stage_apks(archive, members) as parts:
+                    report("installing")
+                    install_apks(self._run, parts, commit=lambda session: self._commit_package_install(session, value))
+                    self._removable_packages()
         except zipfile.BadZipFile as error:
             raise RuntimeError("INVALID_PACKAGE_ARCHIVE") from error
 
@@ -936,7 +918,7 @@ class Plugin:
     async def remove_waydroid(self, account_id: int | None = None) -> list[int]:
         async with self._package_lock:
             if self._control and self._control.launch:
-                raise RuntimeError("Close the running Waydroid shortcut before removing the image.")
+                raise RuntimeError("WAYDROID_LAUNCH_ACTIVE")
             self._set_image_progress("stopping", None)
             try:
                 return await asyncio.to_thread(self._remove_image, account_id)
@@ -973,15 +955,16 @@ class Plugin:
         async with self._runtime_lock:
             _, uid, _ = self._user()
             registration = self._control.launch
-            launch = None
-            if (registration and process_identity(registration.process[0]) == registration.process
-                    and await asyncio.to_thread(session_uses_socket, registration.display)):
-                launch = registration.process
+            guest = None
+            if registration and process_identity(registration.process[0]) == registration.process:
+                guest = await asyncio.to_thread(registered_guest, registration.display)
+            launch = registration.process if guest and registration else None
+            metrics = registration.display.with_name("metrics") if launch and registration else None
             try:
-                await asyncio.to_thread(self._gpu_metrics.sync, launch, uid, registration.display.with_name("metrics") if launch else None)
+                await asyncio.to_thread(self._gpu_metrics.sync, launch, uid, metrics, guest)
                 self._metrics_error = None
             except (OSError, RuntimeError, subprocess.SubprocessError) as error:
                 if str(error) != self._metrics_error:
                     decky.logger.warning("GPU metrics unavailable: %s", error)
                 self._metrics_error = str(error)
-            await asyncio.to_thread(self._frame_limiter.sync, fps, launch)
+            await asyncio.to_thread(self._frame_limiter.sync, fps, launch, guest)

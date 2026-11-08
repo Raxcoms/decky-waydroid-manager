@@ -5,7 +5,6 @@ import importlib.util
 import os
 from pathlib import Path
 import socket
-import subprocess
 import sys
 import tempfile
 import time
@@ -144,7 +143,8 @@ class RelayTests(unittest.TestCase):
         args = [str(SCRIPT), self.parent_path, "--", sys.executable, "-c", "pass"]
         with (patch.dict(os.environ, {"XDG_RUNTIME_DIR": self.directory.name}),
               patch.object(sys, "argv", args), patch.object(relay_module.signal, "signal"),
-              patch.object(relay_module, "service_connection", return_value=nullcontext())):
+              patch.object(relay_module, "service_connection", return_value=nullcontext()),
+              patch.object(relay_module.select, "select", return_value=([], [], []))):
             self.assertEqual(relay_module.main(), 0)
         self.assertEqual(list(Path(self.directory.name).glob("waydroid-manager-*")), [])
 

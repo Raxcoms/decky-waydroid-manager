@@ -43,7 +43,7 @@ def service_connection(path: Path, command: bytes):
         result = json.loads(data)
         if not result.get("ok"):
             raise RuntimeError(result.get("error", "Could not start Waydroid"))
-        yield
+        yield connection
 
 
 def request_service_start(path: Path) -> None:
@@ -71,6 +71,12 @@ class ServiceControl:
                 or (process / "exe").resolve(strict=True) != Path("/usr/bin/python3").resolve(strict=True)
                 or not display.is_absolute() or not display.is_socket() or display.stat().st_uid != self.uid):
             raise RuntimeError("Invalid Waydroid launch registration")
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
+            probe.settimeout(0.5)
+            probe.connect(str(display))
+            owner, _, _ = struct.unpack("3i", probe.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+            if owner != pid:
+                raise RuntimeError("The Waydroid relay does not own its registered socket")
         return Launch(identity, display)
 
     async def open(self) -> None:

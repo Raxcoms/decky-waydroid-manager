@@ -1,3 +1,4 @@
+from contextlib import ExitStack
 from pathlib import Path
 import sys
 import subprocess
@@ -24,7 +25,8 @@ class PackageSessionTests(unittest.TestCase):
                 if args[0] == "install-write":
                     self.assertEqual(kwargs["stdin"].read(), b"APK")
                 return "Success: created install session [42]" if args[0] == "install-create" else "Success"
-            install_apks(run, root, names)
+            with ExitStack() as files:
+                install_apks(run, {name: files.enter_context((root / name).open("rb")) for name in names})
             self.assertEqual(commands[0], ["install-create", "-r", "-S", "6"])
             self.assertEqual([command[-2:] for command in commands[1:-1]], [[name, "-"] for name in names])
             self.assertEqual(commands[-1], ["install-commit", "42"])
@@ -45,21 +47,20 @@ class PackageSessionTests(unittest.TestCase):
                             raise failure
                         return failure
                     return "Success"
-                with self.assertRaises((RuntimeError, subprocess.TimeoutExpired)):
-                    install_apks(run, root, ["base.apk"])
+                with (root / "base.apk").open("rb") as source, self.assertRaises((RuntimeError, subprocess.TimeoutExpired)):
+                    install_apks(run, {"base.apk": source})
                 self.assertEqual(commands[-1], ["install-abandon", "42"])
 
 
 class PackageArchiveTests(unittest.TestCase):
-    def test_apk_staging_preserves_the_original_archive(self):
+    def test_apk_staging_uses_the_original_archive(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "app.apk"
             with zipfile.ZipFile(path, "w") as archive:
                 archive.writestr("AndroidManifest.xml", b"manifest")
-            target = Path(directory) / "staged"
             with zipfile.ZipFile(path) as archive:
-                self.assertEqual(stage_apks(archive, apk_members(archive, ".apk"), target), ["base.apk"])
-            self.assertEqual((target / "base.apk").read_bytes(), path.read_bytes())
+                with stage_apks(archive, apk_members(archive, ".apk")) as parts:
+                    self.assertIs(parts["base.apk"], archive.fp)
 
     def test_split_names_cannot_collide_or_exhaust_the_destination(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -72,8 +73,22 @@ class PackageArchiveTests(unittest.TestCase):
                     apk_members(archive, ".xapk")
             with zipfile.ZipFile(path, "w") as archive:
                 archive.writestr("base.apk", b"first")
-            target = Path(directory) / "staged"
             with zipfile.ZipFile(path) as archive, patch("waydroid_manager.packages.shutil.disk_usage", return_value=type("Usage", (), {"free": 1})()):
                 with self.assertRaisesRegex(RuntimeError, "PACKAGE_NO_SPACE"):
-                    stage_apks(archive, apk_members(archive, ".xapk"), target)
-            self.assertFalse(target.exists())
+                    with stage_apks(archive, apk_members(archive, ".xapk"), Path(directory)):
+                        self.fail("Opened package files with insufficient space")
+
+    def test_split_staging_cleans_up_anonymous_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "app.xapk"
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("base.apk", b"base")
+                archive.writestr("split.apk", b"split")
+            with zipfile.ZipFile(path) as archive:
+                with stage_apks(archive, apk_members(archive, ".xapk"), root) as parts:
+                    self.assertEqual(list(parts), ["base.apk", "split.apk"])
+                    self.assertEqual(parts["base.apk"].seek(0), 0)
+                    self.assertEqual(parts["base.apk"].read(), b"base")
+                self.assertTrue(all(source.closed for source in parts.values()))
+            self.assertEqual(list(root.iterdir()), [path])
