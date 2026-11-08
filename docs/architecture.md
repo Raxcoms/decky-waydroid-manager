@@ -6,7 +6,7 @@ flowchart LR
     Panel -->|Shortcuts and artwork| Steam["Steam client"]
     Backend -->|Container and package commands| Android["Waydroid and Android"]
     Steam -->|Launch| Launcher["Bundled launcher"]
-    Launcher -->|Start request| Backend
+    Relay -->|Register launch| Backend
     Launcher -->|Session and app selection| Android
     Android <-->|Wayland messages and buffer handles| Relay["Private Wayland relay"]
     Relay <-->|Native window and input| Gamescope["Steam's Gamescope"]
@@ -23,9 +23,11 @@ flowchart LR
 
 ## Follow a launch
 
-1. Steam starts the bundled launcher with the shortcut's session environment. If needed, the launcher asks Decky's backend to start Waydroid through a private, authenticated socket.
-2. The launcher creates a private Wayland connection and starts an Android session. The relay's process belongs to the Steam shortcut, so Gamescope can associate the Android window with it.
-3. The relay forwards shared buffer handles directly to Gamescope. The plugin applies available Steam resolution and frame-limit settings and cleans up its runtime resources when the launch ends.
+1. Steam starts the bundled launcher. The relay registers its process and private Wayland socket with the Decky backend, which starts the Waydroid service if needed.
+2. The launcher starts its own Android session and waits for the app list before opening the selected app. If another Waydroid session is already open, close it before launching the shortcut.
+3. The relay forwards shared buffer handles directly to Gamescope. Controller, GPU metrics, and frame-limit adapters attach only to the Android session using the registered socket.
+
+User preferences and artwork cleanup run as the Steam login user. APK and XAPK content goes through Android's package installer, with no need for the backend to stage packages in the user's Android data directory.
 
 ## Know what the plugin owns
 
@@ -34,6 +36,6 @@ flowchart LR
 | Android image, apps, and data | Kept until you remove them in the plugin |
 | Shortcut preferences and generated artwork | Saved per user. Steam owns the shortcuts, and the plugin tracks generated artwork by its digest. |
 | Session units, control and relay sockets, and controller bridge | Created for the plugin or launch and cleaned up when it ends |
-| Android frame overrides | Applied during the launch, then restored |
+| Android frame overrides and display policy | Restored on normal shutdown while the original guest is available. Settings changed separately by the user are preserved. |
 
 The plugin uses the platform's existing Waydroid service, Gamescope, and drivers. Native Wayland window selection and direct touch depend on the compositor. Android 13 frame limiting and Play Protect approval depend on Android interfaces specific to that release. Native Steam is the tested configuration. See the [frame cap limitation](features.md#known-issue-with-frame-cap-precision) for the remaining Waydroid driver work.
