@@ -16,15 +16,18 @@ The full-container setting applies to full launches. An app setting overrides th
 
 ## Required runtime boundary
 
-Waydroid mounts `/var/lib/waydroid/overlay/vendor` before starting its container. Replacing `hwcomposer.waydroid.so` there is technically possible, but it is not acceptable for this feature:
+Waydroid already supports rootfs overlays. It mounts `/var/lib/waydroid/overlay` over the system image and `/var/lib/waydroid/overlay/vendor` over the vendor image before it starts the container. This is the correct deployment point for a matching external-display HWC because the original images remain unchanged.
 
-- the overlay is global to Waydroid, not the plugin;
-- a failed cleanup or plugin removal could affect ordinary Waydroid starts;
-- the library is loaded when the Android container starts, so copying it while Android is running cannot change the active hardware composer.
+The overlay is global while Waydroid is running, so the launch path must still own its lifecycle:
 
-The feature therefore needs a plugin-owned container start path. It must create the vendor mount and start the container inside a private mount namespace, with the patched HWC bind-mounted only in that namespace. The Steam launcher owns that namespace and stops the container before it exits. Once the launcher has exited, a normal `waydroid` start must see the untouched vendor image.
+- stage only a matching, primary-display-compatible HWC in the vendor overlay;
+- bind Armada's existing `gamescope-secondary` socket into the container as `wayland-1` before Waydroid starts;
+- add `waydroid.wayland_display_ext=wayland-1` only to the generated properties for that launch;
+- remove the staged HWC and temporary mount when the plugin launch ends.
 
-Do not use a persistent systemd drop-in, a persistent Waydroid overlay, or a replacement under `/var/lib/waydroid/images`.
+The launcher must never acquire or release the DRM lease. Armada's persistent bottom Gamescope owns that lease and yields it as needed. The HWC maps its external Wayland surface only while Android has content for it; unmapping it returns the panel to the compositor and its previous user.
+
+An interrupted cleanup must leave a normal launch safe. The staged HWC therefore has to retain the stock primary path and treat a missing `wayland-1` socket as no external display. Disabling the feature removes the plugin overlay and temporary configuration, restoring the stock HWC on the next container start. Do not alter `/var/lib/waydroid/images` or the host's DRM-lease service.
 
 ## Hardware composer work
 
@@ -32,7 +35,7 @@ The patched HWC needs to:
 
 1. Keep the existing primary display unchanged.
 2. Create a second display context with separate buffers, fences, dimensions, and presentation timing.
-3. Report the external display through Android's HWC hotplug callback, and remove it during plugin-launch cleanup.
+3. Report the external display through Android's HWC hotplug callback after Android boot.
 4. Present that display through a distinct Wayland toplevel, allowing Gamescope to place it on a physical or virtual output.
 5. Support Android's per-display prepare, set, configuration, power, and VSync requests.
 
@@ -44,12 +47,11 @@ After Android sees the external display, a plugin-owned privileged helper must l
 
 ## Safety checks
 
-Before exposing the enable action, the runtime must verify all of the following:
+Before using the enable action, the runtime must verify all of the following:
 
 - the matching HWC payload is bundled and its architecture matches the device;
 - Waydroid is stopped and no unrelated Waydroid session is active;
-- the private launch path can create its own mount namespace;
-- Gamescope provides a usable second output or virtual output;
+- the Armada `gamescope-secondary` socket is present and can be bound as `wayland-1`;
 - the launcher can stop its container and remove all temporary mounts on normal exit, crash, and cancellation.
 
 If any check fails, the feature remains unavailable and standard Waydroid launching continues unchanged.
