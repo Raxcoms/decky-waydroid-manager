@@ -12,7 +12,8 @@ type Props = {
 
 const stageLabels = {
   preparing: "imagePreparing", downloading: "imageDownloading", finalizing: "imageFinalizing",
-  starting: "packageStarting", booting: "packageBooting", language: "imageLanguage", apps: "imageAppEntries", cleaning: "packageCleaning",
+  starting: "packageStarting", booting: "packageBooting", audio: "imageAudio", language: "imageLanguage",
+  apps: "imageAppEntries", cleaning: "packageCleaning",
   stopping: "imageStopping", deleting: "imageDeleting",
 } as const;
 

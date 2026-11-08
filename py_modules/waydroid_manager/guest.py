@@ -1,6 +1,8 @@
 import logging
 from pathlib import Path
+import re
 import subprocess
+import time
 import uuid
 
 from .container import LXC_PATH
@@ -25,6 +27,22 @@ def android_user_ready(run) -> bool:
     except (RuntimeError, subprocess.TimeoutExpired):
         return False
     return "ANDROID_READY" in output.splitlines()
+
+
+def set_media_volume_max(run) -> None:
+    command = ["waydroid", "shell", "--", "cmd", "media_session", "volume"]
+    volume = re.compile(r"\bvolume is (\d+) in range \[\d+\.\.(\d+)\]")
+    current = volume.search(run([*command, "--get"], timeout=5))
+    if not current:
+        raise RuntimeError("Android did not report its media volume range")
+    if current[1] == current[2]:
+        return
+    run([*command, "--set", current[2]], timeout=5)
+    # Android saves volume asynchronously. Keep the setup session open for the write.
+    time.sleep(1)
+    verified = volume.search(run([*command, "--get"], timeout=5))
+    if not verified or verified[1] != verified[2]:
+        raise RuntimeError("Android media volume did not reach its maximum")
 
 
 class LaunchPolicy:

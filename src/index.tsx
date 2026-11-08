@@ -364,11 +364,12 @@ function Content() {
     toast(t("waydroid"), t("imageRemoved"));
   };
   const initializeWaydroid = async () => {
-    const languageSet = await installGapps(navigator.language);
+    const { languageSet, mediaVolumeSet } = await installGapps(navigator.language);
     await refresh();
     setMessage(null);
     toast(t("waydroid"), t("gappsInstalled"));
     if (!languageSet) toast(t("waydroid"), t("imageLanguageUnavailable"));
+    if (!mediaVolumeSet) toast(t("waydroid"), t("imageAudioUnavailable"));
   };
   const launchFullWaydroid = async () => {
     if (!status?.waydroidShortcutId) {

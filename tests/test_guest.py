@@ -1,9 +1,34 @@
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import Mock, call, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
-from waydroid_manager.guest import LaunchPolicy, android_user_ready
+from waydroid_manager.guest import LaunchPolicy, android_user_ready, set_media_volume_max
+
+
+class MediaVolumeTests(unittest.TestCase):
+    command = ["waydroid", "shell", "--", "cmd", "media_session", "volume"]
+
+    def test_sets_and_verifies_the_reported_maximum(self):
+        run = Mock(side_effect=["[V] volume is 5 in range [0..25]", "", "[V] volume is 25 in range [0..25]"])
+        with patch("waydroid_manager.guest.time.sleep"):
+            set_media_volume_max(run)
+        self.assertEqual(run.call_args_list, [
+            call([*self.command, "--get"], timeout=5),
+            call([*self.command, "--set", "25"], timeout=5),
+            call([*self.command, "--get"], timeout=5),
+        ])
+
+    def test_does_not_write_when_already_at_maximum(self):
+        run = Mock(return_value="[V] volume is 15 in range [0..15]")
+        set_media_volume_max(run)
+        run.assert_called_once_with([*self.command, "--get"], timeout=5)
+
+    def test_reports_when_android_does_not_apply_the_requested_volume(self):
+        run = Mock(return_value="[V] volume is 5 in range [0..15]")
+        with patch("waydroid_manager.guest.time.sleep"), self.assertRaisesRegex(RuntimeError, "did not reach"):
+            set_media_volume_max(run)
 
 
 class AndroidReadinessTests(unittest.TestCase):

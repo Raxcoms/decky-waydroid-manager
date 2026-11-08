@@ -24,7 +24,7 @@ from waydroid_manager.packages import apk_members, stage_apks, install_apks, che
 from waydroid_manager.verification import InstallCancelled, InstallVerification, commit_install
 from waydroid_manager.steam import known_accounts, read_shortcuts, shortcuts_path, shortcut_key, shortcut_owners, migrated_launch_options
 from waydroid_manager.container import CONFIG_DIR, SERVICE, container_identity, container_pid, registered_guest, session_uses_socket, vendor_overlay_warning
-from waydroid_manager.guest import GUEST_STARTING, LaunchPolicy, android_user_ready, run_dex
+from waydroid_manager.guest import GUEST_STARTING, LaunchPolicy, android_user_ready, run_dex, set_media_volume_max
 from waydroid_manager.image import launcher_packages, owned_directory, require_unmounted, require_unredirected, run_init
 from waydroid_manager.control import Launch, ServiceControl, control_path
 from waydroid_manager.state import StateStore
@@ -556,25 +556,32 @@ class Plugin:
         if not self._initialized():
             raise RuntimeError(output or "Waydroid did not finish initializing its image")
 
-    def _initialize_image(self, locale: str | None) -> bool:
+    def _initialize_image(self, locale: str | None) -> dict[str, bool]:
         user, uid, home = self._user()
         data = self._data_home(home, uid) / "waydroid/data"
         initialized = self._initialized()
         new_data = not initialized and not data.exists()
         if not initialized:
             self._install_gapps()
-        language_set = True
+        result = {"languageSet": True, "mediaVolumeSet": True}
         with self._package_session(lambda stage: self._set_image_progress(stage, None)):
+            if new_data:
+                self._set_image_progress("audio", None)
+                try:
+                    set_media_volume_max(self._run)
+                except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                    decky.logger.warning("Initial Android media volume setup failed: %s", error)
+                    result["mediaVolumeSet"] = False
             if new_data and locale:
                 self._set_image_progress("language", None)
                 try:
                     self._set_initial_locale(locale)
                 except (OSError, RuntimeError, subprocess.SubprocessError) as error:
                     decky.logger.warning("Initial Android language setup failed: %s", error)
-                    language_set = False
+                    result["languageSet"] = False
             self._set_image_progress("apps", None)
             self._wait_for_app_entries(user, uid, home)
-        return language_set
+        return result
 
     def _set_initial_locale(self, locale: str) -> None:
         tags = locale if locale.lower().split("-")[0] == "en" else f"{locale},en-US"
@@ -610,7 +617,7 @@ class Plugin:
             time.sleep(1)
         raise RuntimeError("IMAGE_APP_EXPORT_TIMEOUT")
 
-    async def install_gapps(self, locale: str | None = None) -> bool:
+    async def install_gapps(self, locale: str | None = None) -> dict[str, bool]:
         if locale is not None and (not isinstance(locale, str) or not re.fullmatch(r"[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,4}", locale)):
             locale = "en-US"
         async with self._package_lock:

@@ -86,15 +86,17 @@ class LibraryTests(unittest.TestCase):
                 self.plugin._install_gapps()
             run.assert_called_once()
 
-    def test_image_setup_preserves_existing_android_language_preferences(self):
+    def test_image_setup_preserves_existing_android_preferences(self):
         (self.home / ".local/share/waydroid/data").mkdir(parents=True)
         self.plugin._initialized = lambda: True
         self.plugin._package_session = lambda progress: nullcontext()
         self.plugin._set_initial_locale = lambda *args: self.fail("Setup changed existing language preferences")
         self.plugin._wait_for_app_entries = lambda *args: None
-        with patch.object(self.plugin, "_install_gapps") as initialize:
-            self.assertTrue(self.plugin._initialize_image("pt-BR"))
+        with (patch.object(self.plugin, "_install_gapps") as initialize,
+              patch.object(backend, "set_media_volume_max") as volume):
+            self.assertEqual(self.plugin._initialize_image("pt-BR"), {"languageSet": True, "mediaVolumeSet": True})
             initialize.assert_not_called()
+            volume.assert_not_called()
 
     def test_image_setup_waits_for_all_launchable_apps_to_be_exported(self):
         directory = self.home / ".local/share/applications"
@@ -464,10 +466,12 @@ class PackageSessionTests(unittest.TestCase):
                 self.session_running = existing
                 with (patch.object(self.plugin, "_install_gapps", side_effect=lambda: setattr(self.plugin, "_initialized", lambda: True)) as install,
                       patch.object(self.plugin, "_wait_for_app_entries"),
+                      patch.object(backend, "set_media_volume_max") as volume,
                       patch.object(backend, "vendor_overlay_warning") as check):
                     check.return_value = None
-                    self.assertTrue(self.plugin._initialize_image(None))
+                    self.assertEqual(self.plugin._initialize_image(None), {"languageSet": True, "mediaVolumeSet": True})
                     self.assertEqual(install.call_count, int(not existing))
+                    self.assertEqual(volume.call_count, int(not existing))
                     check.assert_called_once_with(backend.WAYDROID_DIR)
 
     def test_running_but_unready_session_is_waited_for_and_preserved(self):
