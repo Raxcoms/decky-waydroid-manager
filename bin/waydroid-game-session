@@ -7,16 +7,22 @@ steam_owner_pid="${WAYDROID_MANAGER_STEAM_OWNER_PID:-}"
 launch_dir="$WAYDROID_MANAGER_LAUNCH_DIR"
 launch_file=""
 
-process_running() {
-  [ -r "/proc/$1/stat" ] && [ "$(awk '{print $3}' "/proc/$1/stat")" != Z ]
+process_start() {
+  local fields
+  [ -r "/proc/$1/stat" ] || return 1
+  fields=$(<"/proc/$1/stat")
+  fields="${fields##*) }"
+  set -- $fields
+  [ "$1" != Z ] && [ -n "${20:-}" ] || return 1
+  printf '%s\n' "${20}"
 }
 
 prune_launches() {
-  local file owner
+  local file owner start
   shopt -s nullglob
   for file in "$launch_dir"/*; do
-    read -r owner <"$file" || owner=""
-    if ! [[ "$owner" =~ ^[0-9]+$ ]] || ! process_running "$owner"; then
+    read -r owner start <"$file" || owner=""
+    if ! [[ "$owner" =~ ^[0-9]+$ && "$start" =~ ^[0-9]+$ ]] || [ "$(process_start "$owner" 2>/dev/null)" != "$start" ]; then
       rm -f "$file"
     fi
   done
@@ -57,6 +63,8 @@ start_session() {
     --setenv="HOME=$HOME" --setenv="USER=$USER" --setenv="LOGNAME=$LOGNAME" --setenv="PATH=$PATH" \
     --setenv="XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" --setenv="XDG_STATE_HOME=${XDG_STATE_HOME:-}" \
     --setenv="DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" \
+    --setenv="DISPLAY=${DISPLAY:-}" --setenv="XAUTHORITY=${XAUTHORITY:-}" \
+    --setenv="SteamAppId=${SteamAppId:-}" --setenv="SteamGameId=${SteamGameId:-}" \
     --setenv="WAYDROID_MANAGER_LOG_DIR=$WAYDROID_MANAGER_LOG_DIR" \
     "$(dirname "$0")/waydroid-wayland-relay" "$parent_wayland" -- "$WAYDROID_MANAGER_SESSION_RUNNER" \
     >>"$WAYDROID_MANAGER_LOG_DIR/wayland.log" 2>&1
@@ -64,7 +72,7 @@ start_session() {
 
 release_launch() {
   trap - EXIT HUP INT TERM
-  if [ "$WAYDROID_MANAGER_MODE" = "app" ] && [ -n "${launched:-}" ]; then
+  if [ "$WAYDROID_MANAGER_MODE" = "app" ] && [ -n "${launch_attempted:-}" ]; then
     timeout 15 waydroid shell -- am force-stop "$WAYDROID_MANAGER_PACKAGE" >>"$WAYDROID_MANAGER_LOG_DIR/app.log" 2>&1 || true
   fi
   flock 9
@@ -78,6 +86,8 @@ release_launch() {
 trap release_launch EXIT
 trap 'exit 1' HUP INT TERM
 mkdir -p "$launch_dir"
+owner_pid="${steam_owner_pid:-$$}"
+owner_start=$(process_start "$owner_pid") || exit 0
 exec 9>"$XDG_RUNTIME_DIR/waydroid-manager-session.lock"
 flock 9
 prune_launches
@@ -85,7 +95,7 @@ if ! has_launches && unit_running; then
   systemctl --user stop "$session_unit" >/dev/null 2>&1 || true
 fi
 launch_file=$(mktemp "$launch_dir/launch.XXXXXX")
-printf '%s\n' "${steam_owner_pid:-$$}" >"$launch_file"
+printf '%s %s\n' "$owner_pid" "$owner_start" >"$launch_file"
 if ! unit_running; then
   start_session
 fi
@@ -97,6 +107,7 @@ if ! wait_for_android; then
 fi
 if [ "$WAYDROID_MANAGER_MODE" = "app" ]; then
   : >"$WAYDROID_MANAGER_LOG_DIR/app.log"
+  launch_attempted=1
   if ! timeout 15 waydroid app launch "$WAYDROID_MANAGER_PACKAGE" >>"$WAYDROID_MANAGER_LOG_DIR/app.log" 2>&1; then
     echo "Android app did not launch. See $WAYDROID_MANAGER_LOG_DIR/app.log" >&2
     exit 1
@@ -108,6 +119,6 @@ else
     exit 1
   fi
 fi
-while [ -z "$steam_owner_pid" ] || process_running "$steam_owner_pid"; do
+while [ "$(process_start "$owner_pid" 2>/dev/null)" = "$owner_start" ]; do
   sleep 1
 done

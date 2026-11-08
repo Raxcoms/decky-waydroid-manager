@@ -11,13 +11,17 @@ RUNNER = Path(__file__).resolve().parents[1] / "bin/waydroid-session"
 MOCK_COMMAND = """#!/bin/bash
 cd "$WAYDROID_MANAGER_LOG_DIR" || exit 1
 case "${0##*/}:$*" in
-  'waydroid:prop set persist.waydroid.multi_windows true') echo prop >> calls ;;
+  'waydroid:prop get persist.waydroid.multi_windows') [ -f configured ] && echo true || echo false ;;
+  'waydroid:prop set persist.waydroid.multi_windows true') touch configured; echo prop >> calls ;;
   'waydroid:session start')
     echo start >> calls
+    starts=$(cat starts 2>/dev/null || echo 0)
+    starts=$((starts + 1))
+    echo "$starts" > starts
     echo 'Android with user 0 is ready'
-    while [ ! -f stop ]; do /bin/sleep 0.01; done
+    while [ ! -f "stop-$starts" ]; do /bin/sleep 0.01; done
     ;;
-  'waydroid:session stop') touch stop; echo stop >> calls ;;
+  'waydroid:session stop') starts=$(cat starts); touch "stop-$starts"; echo stop >> calls ;;
   waydroid:status) echo 'Session: RUNNING' ;;
   sleep:*) : ;;
   *) exit 2 ;;
@@ -49,7 +53,7 @@ class WaydroidSessionTests(unittest.TestCase):
             self.assertTrue(ready.exists())
             process.terminate()
             process.wait(timeout=5)
-            self.assertEqual((directory / "calls").read_text().splitlines(), ["prop", "start", "stop"])
+            self.assertEqual((directory / "calls").read_text().splitlines(), ["start", "prop", "stop", "start", "stop"])
 
 
 if __name__ == "__main__":

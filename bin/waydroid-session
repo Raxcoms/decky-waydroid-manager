@@ -18,24 +18,36 @@ stop_session() {
 }
 
 trap stop_session EXIT HUP INT TERM
-waydroid prop set persist.waydroid.multi_windows true >>"$log_dir/session.log" 2>&1
-waydroid session start >>"$log_dir/session.log" 2>&1 &
-session_pid=$!
 
-for _ in {1..45}; do
-  waydroid status 2>/dev/null | grep -q "^Session:[[:space:]]*RUNNING" && break
-  kill -0 "$session_pid" 2>/dev/null || exit 1
-  sleep 1
-done
+start_session() {
+  : >"$log_dir/session.log"
+  waydroid session start >>"$log_dir/session.log" 2>&1 &
+  session_pid=$!
 
-waydroid status 2>/dev/null | grep -q "^Session:[[:space:]]*RUNNING" || exit 1
-for _ in {1..180}; do
-  if grep -q "Android with user 0 is ready" "$log_dir/session.log"; then
-    touch "$ready_file"
-    break
-  fi
-  kill -0 "$session_pid" 2>/dev/null || exit 1
-  sleep 1
-done
+  for _ in {1..45}; do
+    waydroid status 2>/dev/null | grep -q "^Session:[[:space:]]*RUNNING" && break
+    kill -0 "$session_pid" 2>/dev/null || return 1
+    sleep 1
+  done
+
+  waydroid status 2>/dev/null | grep -q "^Session:[[:space:]]*RUNNING" || return 1
+  for _ in {1..180}; do
+    grep -q "Android with user 0 is ready" "$log_dir/session.log" && return 0
+    kill -0 "$session_pid" 2>/dev/null || return 1
+    sleep 1
+  done
+  return 1
+}
+
+start_session
+if [ "$(waydroid prop get persist.waydroid.multi_windows 2>/dev/null)" != "true" ]; then
+  # Waydroid only changes this property in a running session.
+  waydroid prop set persist.waydroid.multi_windows true >>"$log_dir/session.log" 2>&1
+  waydroid session stop >>"$log_dir/session.log" 2>&1 || true
+  wait "$session_pid" || true
+  session_pid=""
+  start_session
+fi
+touch "$ready_file"
 
 wait "$session_pid"
