@@ -435,7 +435,7 @@ class Plugin:
                     queued.pop(value)
                 elif app_id not in owners and app_id not in live:
                     queued.pop(value)
-                elif owners.get(app_id) == key and app_id in live:
+                elif owners.get(app_id) == key:
                     ready.append(app_id)
             return {"ids": ready, "waiting": len(queued) > len(ready)}
 
@@ -868,10 +868,10 @@ class Plugin:
             except (OSError, RuntimeError, ValueError):
                 pass
             queued = {str(app_id): key for app_id, key in owners.items() if key is not None
-                      and key not in history["removedShortcuts"] and (package is None or key == package)}
+                      and (package is None or key == package)}
             history["pendingRemovals"].update(queued)
             if account_id == active_account:
-                active_ids = sorted(map(int, queued))
+                active_ids = sorted(map(int, history["pendingRemovals"] if package is None else queued))
             if package is None:
                 state["accounts"][str(account_id)] = {**StateStore.shortcut_defaults(),
                                                        "pendingRemovals": history["pendingRemovals"]}

@@ -354,7 +354,7 @@ function Content() {
     const accountId = currentSteamAccount();
     const shortcuts = await removeWaydroidImage(accountId);
     if (shortcuts.length) showLibraryProgress();
-    if (accountId && shortcuts.length) await finishSteamCleanup(accountId);
+    if (accountId) await finishSteamCleanup(accountId);
     await refresh();
     setMessage(null);
     toast(t("waydroid"), t("imageRemoved"));

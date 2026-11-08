@@ -298,7 +298,7 @@ class LibraryTests(unittest.TestCase):
             self.assertEqual(fresh._pending_shortcut_removals(1, None), {"ids": [], "waiting": True})
             self.assertEqual(fresh._pending_shortcut_removals(1, [123]), {"ids": [123], "waiting": False})
             self.assertEqual(fresh._pending_shortcut_removals(1, [123]), {"ids": [123], "waiting": False})
-            self.assertEqual(fresh._pending_shortcut_removals(1, []), {"ids": [], "waiting": True})
+            self.assertEqual(fresh._pending_shortcut_removals(1, []), {"ids": [123], "waiting": False})
             write_shortcuts(paths[1], {})
             self.assertEqual(fresh._pending_shortcut_removals(1, []), {"ids": [], "waiting": False})
             self.assertEqual(fresh._pending_shortcut_removals(2, [456]), {"ids": [456], "waiting": False})
@@ -324,11 +324,25 @@ class LibraryTests(unittest.TestCase):
         image = self.home.resolve() / "image"
         image.mkdir()
         with patch.object(backend, "WAYDROID_DIR", image), patch.object(backend, "require_unmounted"), patch.object(backend.decky, "logger", create=True):
-            self.assertEqual(self.plugin._remove_image(1), [123])
+            self.assertEqual(self.plugin._remove_image(1), [123, 234])
         self.assertFalse(image.exists())
         self.assertFalse(self.history["autoAddApps"])
         self.assertEqual(self.state["removableApps"], [])
         self.assertEqual(self.history["pendingRemovals"], {"123": "example.app", "234": "example.older"})
+
+    def test_image_removal_includes_app_shortcut_omitted_from_live_library(self):
+        self.history["removedShortcuts"] = ["example.app"]
+        write_shortcuts(self.plugin._shortcuts_path(self.home, 1), {
+            "0": (0, {"exe": (1, str(self.plugin._launcher())), "appid": (2, 123),
+                      "LaunchOptions": (1, "app example.app")}),
+            "1": (0, {"exe": (1, "/usr/bin/other"), "appid": (2, 456)}),
+        })
+        self.plugin._run = lambda *args, **kwargs: ""
+        image = self.home.resolve() / "image"
+        image.mkdir()
+        with patch.object(backend, "WAYDROID_DIR", image), patch.object(backend, "require_unmounted"), patch.object(backend.decky, "logger", create=True):
+            self.assertEqual(self.plugin._remove_image(1), [123])
+        self.assertEqual(self.plugin._pending_shortcut_removals(1, [456]), {"ids": [123], "waiting": False})
 
     def test_apk_install_rejects_android_failure_and_cleans_staging(self):
         apk = self.home / "app.apk"

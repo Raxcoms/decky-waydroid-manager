@@ -102,9 +102,6 @@ async function removeQueuedShortcuts(accountId: number): Promise<boolean> {
   let complete = !waiting;
   for (const appId of ids) {
     if (currentSteamAccount() !== accountId) return false;
-    const live = liveShortcutIds();
-    if (live === null) return false;
-    if (!live.includes(appId)) continue;
     try {
       await removeFromSteam(appId, accountId);
       if (!await waitForShortcutRemoval(appId, accountId)) complete = false;
