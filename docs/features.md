@@ -50,4 +50,4 @@ A future integration should let the Steam slider change actual Android rendering
 
 ## Manage Waydroid
 
-Use **Start**, **Restart**, or **Stop** under **Danger Zone** to manage the container service. Use **Remove image and data** to delete the Waydroid installation, Android apps and data, and the associated Steam shortcuts.
+Use **Start**, **Restart**, or **Stop** under **Danger Zone** to manage the container service. To delete Waydroid, its Android apps and data, and the associated Steam shortcuts, select **Remove image and data** under **Waydroid Status**.

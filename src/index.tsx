@@ -387,7 +387,7 @@ function Content() {
           <PanelSectionRow>
             <ButtonItem
               layout="below"
-              bottomSeparator="none"
+              bottomSeparator={status?.initialized ? "standard" : "none"}
               onClick={() => openModal(<ImageOperationModal
                 operation={setupPending ? "setup" : "install"}
                 perform={initializeWaydroid}
@@ -408,13 +408,27 @@ function Content() {
             <PanelSectionRow>
               <ButtonItem
                 layout="below"
-                bottomSeparator="none"
                 onClick={status.waydroidShortcutId ? run(removeWaydroidShortcut, async () => {}, setMessage, [t("waydroid"), t("removedFromSteam")]) : run(addWaydroid, async () => {}, setMessage)}
               >
                 {status.waydroidShortcutId ? t("removeWaydroidShortcut") : t("addWaydroid")}
               </ButtonItem>
             </PanelSectionRow>
           </>
+        )}
+        {status?.initialized && (
+          <PanelSectionRow>
+            <ButtonItem
+              layout="below"
+              bottomSeparator="none"
+              onClick={() => openModal(<ImageOperationModal
+                operation="remove"
+                perform={removeWaydroid}
+                onError={(error) => reportError(error, setMessage)}
+              />)}
+            >
+              {t("removeWaydroidButton")}
+            </ButtonItem>
+          </PanelSectionRow>
         )}
       </PanelSection>
       </Focusable>
@@ -496,20 +510,7 @@ function Content() {
             <ButtonItem layout="below" onClick={run(restartService, refresh, setMessage)}>{t("restart")}</ButtonItem>
           </PanelSectionRow>
           <PanelSectionRow>
-            <ButtonItem layout="below" bottomSeparator="thick" onClick={run(stopService, refresh, setMessage)}>{t("stop")}</ButtonItem>
-          </PanelSectionRow>
-          <PanelSectionRow>
-            <ButtonItem
-              layout="below"
-              bottomSeparator="none"
-              onClick={() => openModal(<ImageOperationModal
-                operation="remove"
-                perform={removeWaydroid}
-                onError={(error) => reportError(error, setMessage)}
-              />)}
-            >
-              {t("removeWaydroidButton")}
-            </ButtonItem>
+            <ButtonItem layout="below" bottomSeparator="none" onClick={run(stopService, refresh, setMessage)}>{t("stop")}</ButtonItem>
           </PanelSectionRow>
         </PanelSection>
       )}
