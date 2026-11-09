@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import array
 from collections import deque
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 import os
 from pathlib import Path
@@ -179,10 +180,17 @@ class Relay:
 
 
 def main() -> int:
-    if len(sys.argv) < 4 or sys.argv[2] != "--":
+    host = sys.argv[1:] and sys.argv[1] == "--host"
+    if host:
+        if len(sys.argv) != 4:
+            raise SystemExit("Usage: waydroid-wayland-relay --host PARENT_SOCKET SOCKET")
+        parent_arg, socket_arg = sys.argv[2:]
+    elif len(sys.argv) >= 4 and sys.argv[2] == "--":
+        parent_arg, socket_arg = sys.argv[1], None
+    else:
         raise SystemExit("Usage: waydroid-wayland-relay PARENT_SOCKET -- COMMAND [ARGS...]")
     runtime = Path(os.environ["XDG_RUNTIME_DIR"])
-    parent = str(runtime / sys.argv[1])
+    parent = parent_arg if os.path.isabs(parent_arg) else str(runtime / parent_arg)
     resolution = launch_resolution(os.environ.get("DISPLAY", ""))
     if resolution:
         print(f"Steam game resolution: {resolution[0]}x{resolution[1]}", file=sys.stderr, flush=True)
@@ -197,9 +205,17 @@ def main() -> int:
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     signal.signal(signal.SIGHUP, stop)
-    with tempfile.TemporaryDirectory(prefix="waydroid-manager-", dir=runtime) as directory:
-        path = str(Path(directory) / "wayland")
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener, MetricsSocket(Path(directory) / "metrics") as metrics:
+    with tempfile.TemporaryDirectory(prefix="waydroid-manager-", dir=runtime) if not host else nullcontext() as directory:
+        if host:
+            path = socket_arg
+            directory_path = Path(path).parent
+            directory_path.mkdir(mode=0o700, parents=True, exist_ok=True)
+            if not directory_path.is_dir() or directory_path.is_symlink():
+                raise SystemExit("Invalid shared Waydroid relay directory")
+            Path(path).unlink(missing_ok=True)
+        else:
+            path = str(Path(directory) / "wayland")
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener, MetricsSocket(Path(path).parent / "metrics") as metrics:
             listener.bind(path)
             os.chmod(path, 0o600)
             listener.listen(16)
@@ -213,8 +229,24 @@ def main() -> int:
             print(f"Wayland relay started: {os.getpid()}", file=sys.stderr, flush=True)
             environment = os.environ.copy()
             environment.update(WAYLAND_DISPLAY=path, GAMESCOPE_WAYLAND_DISPLAY=path)
-            environment["WAYDROID_MANAGER_SESSION_UNIT"] = f"waydroid-manager-session-{os.getpid()}"
-            with service_connection(control_path(os.getuid()), b"LAUNCH " + os.fsencode(path)) as control:
+            environment["WAYDROID_MANAGER_SESSION_UNIT"] = "waydroid-manager-shared-session"
+            command = b"HOST " if host else b"LAUNCH "
+            with service_connection(control_path(os.getuid()), command + os.fsencode(path)) as control:
+                if host:
+                    ready = Path(path).parent / "ready"
+                    ready.write_text(str(os.getpid()), encoding="ascii")
+                    try:
+                        while not stopping:
+                            if select.select([control], [], [], 0)[0]:
+                                return 1
+                            relay.step()
+                            metrics.poll()
+                    finally:
+                        ready.unlink(missing_ok=True)
+                        relay.close()
+                    return 0
+                environment["WAYDROID_MANAGER_LEASE_OWNER"] = "1" if control.result.get("owner") else "0"
+                environment["WAYDROID_MANAGER_SHARED_DISPLAY"] = control.result["display"]
                 child = subprocess.Popen(sys.argv[3:], env=environment, start_new_session=True)
                 try:
                     while not stopping and child.poll() is None:

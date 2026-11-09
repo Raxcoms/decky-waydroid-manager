@@ -154,6 +154,7 @@ class Plugin:
                 pass
             else:
                 self._run([*command, "stop", "--no-block", launch.unit], timeout=5)
+            self._run([*command, "stop", "--no-block", "waydroid-manager-shared-relay"], timeout=5)
 
     def _prepare_guest_presentation(self, launch: Launch, mode: str) -> None:
         if not session_uses_socket(launch.display):
@@ -1016,7 +1017,7 @@ class Plugin:
             raise RuntimeError("Invalid frame limit")
         async with self._runtime_lock:
             _, uid, _ = self._user()
-            registration = self._control.launch
+            registration = self._control.host
             guest = None
             if registration and self._control.release_task is None and process_identity(registration.process[0]) == registration.process:
                 guest = await asyncio.to_thread(registered_guest, registration.display)

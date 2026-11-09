@@ -25,6 +25,15 @@ class Launch:
         return f"waydroid-manager-session-{self.process[0]}"
 
 
+@dataclass
+class ServiceConnection:
+    socket: socket.socket
+    result: dict
+
+    def fileno(self) -> int:
+        return self.socket.fileno()
+
+
 def control_path(uid: int) -> Path:
     # Decky can load before logind creates the user's runtime directory.
     return Path(f"/run/waydroid-manager-control-{uid}.sock")
@@ -48,7 +57,7 @@ def service_connection(path: Path, command: bytes):
         result = json.loads(data)
         if not result.get("ok"):
             raise RuntimeError(result.get("error", "Could not start Waydroid"))
-        yield connection
+        yield ServiceConnection(connection, result)
 
 
 def request_service_start(path: Path) -> None:
@@ -67,10 +76,20 @@ class ServiceControl:
         self.clients = set()
         self.relay, self.on_launch = relay, on_launch
         self.on_policy, self.on_release = on_policy, on_release
-        self.launch: Launch | None = None
+        self.host: Launch | None = None
+        self.launches: dict[tuple[int, str], Launch] = {}
         self.release_task: asyncio.Task | None = None
 
+    @property
+    def launch(self) -> Launch | None:
+        return next(iter(self.launches.values()), None)
+
+    def _launch_for_pid(self, pid: int) -> Launch | None:
+        return next((launch for launch in self.launches.values() if descends_from(pid, launch.process)), None)
+
     async def release(self, launch: Launch) -> None:
+        if self.launches.pop(launch.process, None) is None or self.launches:
+            return
         if not self.on_release:
             return
         if self.release_task is None:
@@ -115,6 +134,7 @@ class ServiceControl:
     async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         task = asyncio.current_task()
         launch = None
+        host = None
         try:
             try:
                 if len(self.clients) >= 4:
@@ -125,44 +145,63 @@ class ServiceControl:
                 command = await asyncio.wait_for(reader.readline(), 5)
                 if uid != self.uid:
                     raise RuntimeError("Invalid Waydroid Manager service request")
-                if command.startswith(b"LAUNCH ") and command.endswith(b"\n"):
-                    if self.launch is not None:
-                        raise RuntimeError("A Waydroid shortcut is already running")
-                    launch = self.identify_launch(pid, Path(os.fsdecode(command[7:-1])))
-                    self.launch = launch
+                if command.startswith(b"HOST ") and command.endswith(b"\n"):
+                    if self.host is not None:
+                        raise RuntimeError("The shared Waydroid relay is already running")
+                    host = self.identify_launch(pid, Path(os.fsdecode(command[5:-1])))
+                    self.host = host
+                elif command.startswith(b"LAUNCH ") and command.endswith(b"\n"):
+                    if self.host is None:
+                        raise RuntimeError("The shared Waydroid relay is not ready")
+                    owner = not self.launches
+                    registered = self.identify_launch(pid, Path(os.fsdecode(command[7:-1])))
+                    launch = Launch(registered.process, self.host.display)
+                    self.launches[launch.process] = launch
                 elif command in {b"POLICY full\n", b"POLICY app\n", b"RELEASE\n"}:
-                    if not self.launch or not descends_from(pid, self.launch.process):
+                    active = self._launch_for_pid(pid)
+                    if active is None:
                         raise RuntimeError("Waydroid launch is no longer active")
                     if command == b"RELEASE\n":
-                        await self.release(self.launch)
+                        await self.release(active)
                     elif self.on_policy and self.release_task is None:
-                        await self.on_policy(self.launch, command[7:-1].decode("ascii"))
+                        await self.on_policy(active, command[7:-1].decode("ascii"))
                     else:
                         raise RuntimeError("Waydroid launch is closing")
                 elif command != b"START\n":
                     raise RuntimeError("Invalid Waydroid Manager service request")
                 if launch or command == b"START\n":
                     await asyncio.wait_for(self.start_service(), 30)
-                    if launch and self.on_launch:
+                    if launch and owner and self.on_launch:
                         await self.on_launch(launch)
                 result = {"ok": True}
+                if launch:
+                    result.update(owner=owner, display=str(self.host.display))
             except (RuntimeError, OSError, ValueError, asyncio.TimeoutError, subprocess.SubprocessError) as error:
                 result = {"ok": False, "error": str(error) or "Waydroid service start timed out"}
             writer.write((json.dumps(result) + "\n").encode())
             await writer.drain()
-            if launch and result["ok"]:
+            if (launch or host) and result["ok"]:
                 await reader.read(1)
         except OSError:
             pass
         finally:
-            if launch is not None and self.launch == launch:
+            if launch is not None:
                 try:
                     await self.release(launch)
                 except (RuntimeError, OSError, subprocess.SubprocessError) as error:
                     logging.getLogger(__name__).warning("Could not release the Waydroid launch: %s", error)
-                finally:
-                    self.launch = None
-                    self.release_task = None
+            if host is not None and self.host == host:
+                self.host = None
+                if self.launches:
+                    launches = tuple(self.launches.values())
+                    self.launches.clear()
+                    try:
+                        if self.on_release:
+                            await self.on_release(launches[0])
+                    except (RuntimeError, OSError, subprocess.SubprocessError) as error:
+                        logging.getLogger(__name__).warning("Could not stop the lost Waydroid relay: %s", error)
+            if not self.launches:
+                self.release_task = None
             self.clients.discard(task)
             writer.close()
             try:

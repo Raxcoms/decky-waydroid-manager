@@ -84,6 +84,7 @@ class GameSessionTests(unittest.TestCase):
                 "WAYDROID_MANAGER_LOG_DIR": tmp,
                 "WAYDROID_MANAGER_MODE": mode,
                 "WAYDROID_MANAGER_PACKAGE": "test.package",
+                "WAYDROID_MANAGER_LEASE_OWNER": "1",
                 "SCENARIO": scenario,
             }
             result = subprocess.run(["bash", str(runner)], env=env, capture_output=True, text=True, timeout=20)

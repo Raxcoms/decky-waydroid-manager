@@ -25,7 +25,7 @@ class ServiceControlTests(unittest.TestCase):
                 "display.listen()\n"
                 "with socket.socket(socket.AF_UNIX) as control:\n"
                 "    control.connect(sys.argv[1])\n"
-                "    control.sendall(b'LAUNCH ' + sys.argv[2].encode() + b'\\n')\n"
+                "    control.sendall(sys.argv[3].encode() + b' ' + sys.argv[2].encode() + b'\\n')\n"
                 "    print(control.recv(4096).decode().strip(), flush=True)\n"
                 "    sys.stdin.read()\n"
             )
@@ -36,20 +36,30 @@ class ServiceControlTests(unittest.TestCase):
                 releases.append(launch)
             control = ServiceControl(root / "control.sock", os.getuid(), start, relay, on_release=release)
             await control.open()
-            child = await asyncio.create_subprocess_exec(
-                "/usr/bin/python3", "-I", str(relay), str(control.path), str(root / "wayland"),
+            host = await asyncio.create_subprocess_exec(
+                "/usr/bin/python3", "-I", str(relay), str(control.path), str(root / "host-wayland"), "HOST",
                 stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             )
+            child = None
             try:
-                response = await asyncio.wait_for(child.stdout.readline(), 5)
+                response = await asyncio.wait_for(host.stdout.readline(), 5)
                 self.assertEqual(json.loads(response), {"ok": True})
+                child = await asyncio.create_subprocess_exec(
+                    "/usr/bin/python3", "-I", str(relay), str(control.path), str(root / "wayland"), "LAUNCH",
+                    stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+                )
+                response = await asyncio.wait_for(child.stdout.readline(), 5)
+                self.assertEqual(json.loads(response)["ok"], True)
                 self.assertEqual(control.launch.process[0], child.pid)
-                self.assertEqual(control.launch.display, root / "wayland")
+                self.assertEqual(control.launch.display, root / "host-wayland")
                 with self.assertRaisesRegex(RuntimeError, "Invalid Waydroid launch"):
                     control.identify_launch(os.getpid(), root / "wayland")
             finally:
-                child.stdin.close()
-                await asyncio.wait_for(child.wait(), 5)
+                if child:
+                    child.stdin.close()
+                    await asyncio.wait_for(child.wait(), 5)
+                host.stdin.close()
+                await asyncio.wait_for(host.wait(), 5)
                 for _ in range(10):
                     if control.launch is None:
                         break

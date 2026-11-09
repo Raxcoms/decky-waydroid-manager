@@ -4,7 +4,11 @@ set -euo pipefail
 export WAYLAND_DISPLAY="${GAMESCOPE_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:?missing Waydroid relay socket}}"
 session_unit="$WAYDROID_MANAGER_SESSION_UNIT"
 steam_owner_pid="${WAYDROID_MANAGER_STEAM_OWNER_PID:-}"
+lease_owner="${WAYDROID_MANAGER_LEASE_OWNER:-0}"
+shared_display="${WAYDROID_MANAGER_SHARED_DISPLAY:-$WAYLAND_DISPLAY}"
 owns_session=0
+export WAYLAND_DISPLAY="$shared_display"
+export GAMESCOPE_WAYLAND_DISPLAY="$shared_display"
 service_helper="$(dirname "$0")/waydroid-service"
 
 unit_active() {
@@ -19,34 +23,31 @@ owned_session_running() {
 }
 
 cleanup_session() {
-  if [ "$owns_session" = 1 ]; then
-    if ! "$service_helper" --release; then
-      timeout 10 systemctl --user stop "$session_unit" || true
-    fi
-  fi
+  "$service_helper" --release || true
 }
 trap cleanup_session EXIT
 trap 'exit 1' HUP INT TERM
 
-status=$(timeout 5 waydroid status)
-if ! grep -qE '^Session:[[:space:]]*STOPPED$' <<<"$status"; then
-  echo "Close the running Waydroid session before launching this shortcut." >&2
-  exit 1
+if [ "$lease_owner" = 1 ]; then
+  status=$(timeout 5 waydroid status)
+  if ! grep -qE '^Session:[[:space:]]*STOPPED$' <<<"$status"; then
+    echo "Close the running Waydroid session before launching this shortcut." >&2
+    exit 1
+  fi
+  systemd-run --user --collect --quiet --unit="$session_unit" \
+    --property=KillMode=control-group --property=TimeoutStopSec=45s \
+    --setenv="HOME=$HOME" --setenv="USER=$USER" --setenv="LOGNAME=$LOGNAME" --setenv="PATH=$PATH" \
+    --setenv="XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" --setenv="XDG_DATA_HOME=${XDG_DATA_HOME:-$HOME/.local/share}" \
+    --setenv="DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" \
+    --setenv="WAYLAND_DISPLAY=$WAYLAND_DISPLAY" \
+    --setenv="WAYDROID_MANAGER_LOG_DIR=$WAYDROID_MANAGER_LOG_DIR" \
+    "$WAYDROID_MANAGER_SESSION_RUNNER"
+  owns_session=1
 fi
-
-systemd-run --user --collect --quiet --unit="$session_unit" \
-  --property=KillMode=control-group --property=TimeoutStopSec=45s \
-  --setenv="HOME=$HOME" --setenv="USER=$USER" --setenv="LOGNAME=$LOGNAME" --setenv="PATH=$PATH" \
-  --setenv="XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" --setenv="XDG_DATA_HOME=${XDG_DATA_HOME:-$HOME/.local/share}" \
-  --setenv="DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" \
-  --setenv="WAYLAND_DISPLAY=$WAYLAND_DISPLAY" \
-  --setenv="WAYDROID_MANAGER_LOG_DIR=$WAYDROID_MANAGER_LOG_DIR" \
-  "$WAYDROID_MANAGER_SESSION_RUNNER"
-owns_session=1
 
 deadline=$((SECONDS + 180))
 ready=0
-while (( SECONDS < deadline )) && unit_active; do
+while (( SECONDS < deadline )) && { [ "$lease_owner" != 1 ] || unit_active; }; do
   # Presentation commands can start a new session, so only query readiness here.
   if owned_session_running && timeout 5 waydroid app list 2>/dev/null | grep '^Name:' >/dev/null; then
     # The app list can respond before Android has unlocked the current user.
@@ -60,7 +61,7 @@ while (( SECONDS < deadline )) && unit_active; do
   fi
   sleep 1
 done
-if [ "$ready" = 0 ] || ! unit_active || ! owned_session_running; then
+if [ "$ready" = 0 ] || { [ "$lease_owner" = 1 ] && ! unit_active; } || ! owned_session_running; then
   echo "Android did not become ready. See $WAYDROID_MANAGER_LOG_DIR/session.log" >&2
   exit 1
 fi
@@ -72,7 +73,7 @@ else
   timeout 15 waydroid show-full-ui
 fi
 
-while unit_active && owned_session_running; do
+while owned_session_running; do
   if [ -n "$steam_owner_pid" ]; then
     state=$(awk '{print $3}' "/proc/$steam_owner_pid/stat" 2>/dev/null) || exit 0
     [ "$state" != Z ] || exit 0

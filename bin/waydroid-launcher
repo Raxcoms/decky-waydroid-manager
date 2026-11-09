@@ -40,12 +40,39 @@ if [[ ! -S "$parent_socket" ]]; then
   echo "Waydroid Manager needs Steam's active Game Mode Wayland socket." >&2
   exit 1
 fi
-exec 9>"$runtime_dir/waydroid-manager-launch.lock"
-if ! flock -n 9; then
-  echo "Close the running Waydroid shortcut before launching another." >&2
+mkdir -p "$log_dir"
+
+shared_dir="$runtime_dir/waydroid-manager"
+shared_socket="$shared_dir/wayland"
+shared_ready="$shared_dir/ready"
+shared_unit="waydroid-manager-shared-relay"
+mkdir -p -m 700 "$shared_dir"
+exec 9>"$shared_dir/relay.lock"
+flock 9
+if [[ ! -S "$shared_socket" || ! -f "$shared_ready" ]]; then
+  if systemctl --user is-active --quiet "$shared_unit"; then
+    for _ in {1..50}; do
+      [[ -S "$shared_socket" && -f "$shared_ready" ]] && break
+      sleep 0.1
+    done
+  else
+    rm -f "$shared_socket" "$shared_ready"
+    systemd-run --user --collect --quiet --unit="$shared_unit" \
+      --property=KillMode=control-group \
+      --setenv="XDG_RUNTIME_DIR=$runtime_dir" \
+      --setenv="DISPLAY=$parent_display" \
+      "$launcher_dir/waydroid-wayland-relay" --host "$parent_wayland" "$shared_socket"
+    for _ in {1..50}; do
+      [[ -S "$shared_socket" && -f "$shared_ready" ]] && break
+      sleep 0.1
+    done
+  fi
+fi
+flock -u 9
+if [[ ! -S "$shared_socket" || ! -f "$shared_ready" ]]; then
+  echo "Waydroid Manager could not start its shared Wayland relay." >&2
   exit 1
 fi
-mkdir -p "$log_dir"
 
 export XDG_RUNTIME_DIR="$runtime_dir"
 export WAYDROID_MANAGER_MODE="$mode"
