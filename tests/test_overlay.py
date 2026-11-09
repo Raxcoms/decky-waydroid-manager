@@ -52,3 +52,11 @@ class OverlayLeaseTests(unittest.TestCase):
         self.lease._copy(self.source, target, 0o644)
         self.lease.recover()
         self.assertEqual(target.read_bytes(), b"existing")
+
+    def test_recovery_does_not_overwrite_another_change(self):
+        self.lease.acquire({self.relative: self.source})
+        target = self.lease.overlay / self.relative
+        target.write_bytes(b"other")
+        with self.assertRaisesRegex(RuntimeError, "target changed"):
+            self.lease.recover()
+        self.assertEqual(target.read_bytes(), b"other")

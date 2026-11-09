@@ -121,8 +121,12 @@ class OverlayLease:
                     if target.exists() or target.is_symlink():
                         if not target.is_file() or target.is_symlink():
                             raise RuntimeError(f"Waydroid overlay target changed: {target}")
+                        if self._digest(target) != entry.get("sourceDigest"):
+                            raise RuntimeError(f"Waydroid overlay target changed: {target}")
                         target.unlink()
                 elif backup.is_file() and not backup.is_symlink():
+                    if not target.is_file() or target.is_symlink() or self._digest(target) != entry.get("sourceDigest"):
+                        raise RuntimeError(f"Waydroid overlay target changed: {target}")
                     self._copy(backup, target, backup.stat().st_mode & 0o777)
                 else:
                     raise RuntimeError(f"Waydroid overlay backup is missing: {backup}")
