@@ -21,11 +21,13 @@ Waydroid already supports rootfs overlays. It mounts `/var/lib/waydroid/overlay`
 The overlay is global while Waydroid is running, so the launch path must still own its lifecycle:
 
 - stage only a matching, primary-display-compatible HWC in the vendor overlay;
-- bind Armada's existing `gamescope-secondary` socket into the container as `wayland-1` before Waydroid starts;
+- discover a host-provided external Wayland socket and bind it into the container as `wayland-1` before Waydroid starts;
 - add `waydroid.wayland_display_ext=wayland-1` only to the generated properties for that launch;
 - remove the staged HWC and temporary mount when the plugin launch ends.
 
-The launcher must never acquire or release the DRM lease. Armada's persistent bottom Gamescope owns that lease and yields it as needed. The HWC maps its external Wayland surface only while Android has content for it; unmapping it returns the panel to the compositor and its previous user.
+The launcher must never acquire, hold, or release a DRM lease. The host compositor owns its lease and arbitrates it with its existing applications. The plugin requests use by mapping its external Wayland surface only for a second-screen session. When the final eligible Waydroid app exits, the HWC closes that surface, returning presentation to the compositor and its previous user.
+
+The HWC extension is owned by this plugin and has no device, connector, panel, or touch-controller rules. Its only host input is the external Wayland socket supplied for that session. A host integration may expose the socket through an environment file, a launcher, or an explicit plugin setting, but it remains responsible for lease policy. On Thor, the existing secondary Gamescope is one example of this contract: it holds a yielded DRM lease and exposes a socket for normal client applications. It is a validation fixture, not a runtime dependency.
 
 An interrupted cleanup must leave a normal launch safe. The staged HWC therefore has to retain the stock primary path and treat a missing `wayland-1` socket as no external display. Disabling the feature removes the plugin overlay and temporary configuration, restoring the stock HWC on the next container start. Do not alter `/var/lib/waydroid/images` or the host's DRM-lease service.
 
@@ -51,7 +53,7 @@ Before using the enable action, the runtime must verify all of the following:
 
 - the matching HWC payload is bundled and its architecture matches the device;
 - Waydroid is stopped and no unrelated Waydroid session is active;
-- the Armada `gamescope-secondary` socket is present and can be bound as `wayland-1`;
+- a usable host-provided external Wayland socket is present and can be bound as `wayland-1`;
 - the launcher can stop its container and remove all temporary mounts on normal exit, crash, and cancellation.
 
 If any check fails, the feature remains unavailable and standard Waydroid launching continues unchanged.
