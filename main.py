@@ -27,6 +27,7 @@ from waydroid_manager.container import CONFIG_DIR, SERVICE, container_identity, 
 from waydroid_manager.guest import GUEST_STARTING, LaunchPolicy, android_user_ready, keep_package_guest_running, run_dex, set_media_volume_max
 from waydroid_manager.image import launcher_packages, owned_directory, require_unmounted, require_unredirected, run_init
 from waydroid_manager.control import Launch, ServiceControl, control_path
+from waydroid_manager.overlay import OverlayLease
 from waydroid_manager.state import StateStore
 from waydroid_manager.user_files import open_as_user, run_as_user
 
@@ -45,6 +46,7 @@ class Plugin:
         self._image_progress: dict[str, str | int | None] | None = None
         self._install_confirmation = None
         self._control = None
+        self._overlay = OverlayLease(WAYDROID_DIR)
 
     @contextmanager
     def _edit_state(self, home: Path):
@@ -829,6 +831,10 @@ class Plugin:
     async def _ensure_service(self) -> None:
         if not self._initialized():
             raise RuntimeError("WAYDROID_NOT_INSTALLED")
+        if self._overlay.manifest.exists():
+            if self._service_running() or container_pid() is not None:
+                raise RuntimeError("Waydroid has a pending overlay transaction. Stop Waydroid before launching it again.")
+            await asyncio.to_thread(self._overlay.recover)
         await self.start_service()
 
     def _uninstall_package(self, package: str, account_id: int | None = None) -> int | None:
