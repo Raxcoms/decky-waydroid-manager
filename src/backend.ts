@@ -6,12 +6,13 @@ export type Status = {
   serviceRunning: boolean;
   sessionAvailable: boolean;
   autoAddApps: boolean;
+  secondScreen: boolean;
   accountId: number | null;
   userHome: string;
   waydroidShortcutId?: number;
 };
 
-export type AndroidApp = { name: string; package: string; icon: string; iconPath: string; shortcutId?: number; removable: boolean };
+export type AndroidApp = { name: string; package: string; icon: string; iconPath: string; shortcutId?: number; removable: boolean; secondScreen: boolean };
 export type Shortcut = { accountId: number; name: string; exe: string; startDir: string; launchOptions: string; icon: string; key: string };
 export type ArtworkRole = "portrait" | "hero" | "landscape";
 export type ImageProgress = { stage: "preparing" | "downloading" | "finalizing" | "starting" | "booting" | "audio" | "language" | "apps" | "cleaning" | "stopping" | "deleting"; percent: number | null };
@@ -30,6 +31,8 @@ export const getAppShortcut = callable<[number, string], Shortcut>("get_app_shor
 export const saveShortcutRecord = callable<[number, string, number], void>("record_shortcut");
 export const removeShortcutRecord = callable<[number, string], void>("remove_shortcut_record");
 export const setAutoAddApps = callable<[number, boolean], void>("set_auto_add_apps");
+export const setSecondScreenContainer = callable<[boolean], void>("set_second_screen_container");
+export const setSecondScreenApp = callable<[string, boolean], void>("set_second_screen_app");
 export const pendingAutoShortcuts = callable<[number, number[] | null], Shortcut[]>("pending_auto_shortcuts");
 export const pendingShortcutRemovals = callable<[number, number[] | null], { ids: number[]; waiting: boolean }>("pending_shortcut_removals");
 export const legacyShortcuts = callable<[number], { appId: number; launchOptions?: string; name?: string }[]>("legacy_shortcuts");

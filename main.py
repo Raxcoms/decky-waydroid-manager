@@ -260,6 +260,7 @@ class Plugin:
     def _desktop_entries(self, removable_packages: set[str] | None = None, *, account_id: int | None = None,
                          package: str | None = None, include_icons: bool = False) -> list[dict[str, Any]]:
         _, uid, home = self._user()
+        state = self._load_state(home)
         shortcut_ids = self._shortcut_ids(home, account_id)
         data_home = self._data_home(home, uid)
         removable = removable_packages or set()
@@ -270,6 +271,7 @@ class Plugin:
             "iconPath": app.icon,
             "shortcutId": shortcut_ids.get(app.package),
             "removable": app.package in removable,
+            "secondScreen": StateStore.second_screen_enabled(state, app.package),
         } for app in app_exports(home, package, data_home=data_home)]
         return sorted(apps, key=lambda app: app["name"].casefold())
 
@@ -280,7 +282,8 @@ class Plugin:
 
     def _status(self, account_id: int | None) -> dict[str, Any]:
         _, uid, home = self._user()
-        history = self._account_state(home, self._load_state(home), account_id) if account_id is not None else StateStore.shortcut_defaults()
+        state = self._load_state(home)
+        history = self._account_state(home, state, account_id) if account_id is not None else StateStore.shortcut_defaults()
         shortcut_ids = self._shortcut_ids(home, account_id, history)
         return {
             "initialized": self._initialized(),
@@ -288,6 +291,7 @@ class Plugin:
             "serviceRunning": self._service_running(),
             "sessionAvailable": steam_wayland_socket(uid) is not None,
             "autoAddApps": history["autoAddApps"],
+            "secondScreen": StateStore.second_screen_enabled(state),
             "accountId": account_id,
             "userHome": str(home),
             "waydroidShortcutId": shortcut_ids.get(WAYDROID_SHORTCUT_KEY),
@@ -360,6 +364,24 @@ class Plugin:
             history["autoAddApps"] = enabled
             if enabled:
                 history["observedApps"] = sorted({*history["observedApps"], *(app["package"] for app in self._desktop_entries())})
+
+    async def set_second_screen_container(self, enabled: bool) -> None:
+        if type(enabled) is not bool:
+            raise RuntimeError("Invalid second screen setting")
+        _, _, home = self._user()
+        with self._edit_state(home) as state:
+            StateStore.second_screen(state)["container"] = enabled
+
+    async def set_second_screen_app(self, package: str, enabled: bool) -> None:
+        if not PACKAGE_RE.fullmatch(package) or type(enabled) is not bool:
+            raise RuntimeError("Invalid second screen setting")
+        _, _, home = self._user()
+        with self._edit_state(home) as state:
+            settings = StateStore.second_screen(state)
+            if enabled == settings["container"]:
+                settings["apps"].pop(package, None)
+            else:
+                settings["apps"][package] = enabled
 
     def _pending_auto_shortcuts(self, account_id: int, live_ids: list[int] | None = None) -> list[dict[str, Any]]:
         if self._initialized() and container_pid() is not None:
@@ -896,6 +918,10 @@ class Plugin:
                 state.pop("legacy")
             else:
                 self._forget_app_history(state["legacy"], package)
+        if package is None:
+            state["secondScreen"] = StateStore.second_screen_defaults()
+        else:
+            StateStore.second_screen(state)["apps"].pop(package, None)
         return active_ids
 
     @staticmethod

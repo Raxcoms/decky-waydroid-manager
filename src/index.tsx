@@ -1,8 +1,9 @@
-import { getStatus, listApps, installGapps, startService, stopService, restartService, uninstallApp, getWaydroidShortcut, getAppShortcut, removeShortcutRecord, setAutoAddApps, pendingAutoShortcuts, legacyShortcuts, removeWaydroidImage, installPackage, type Status, type AndroidApp } from "./backend";
+import { getStatus, listApps, installGapps, startService, stopService, restartService, uninstallApp, getWaydroidShortcut, getAppShortcut, removeShortcutRecord, setAutoAddApps, setSecondScreenContainer, setSecondScreenApp, pendingAutoShortcuts, legacyShortcuts, removeWaydroidImage, installPackage, type Status, type AndroidApp } from "./backend";
 import { addToSteam, removeFromSteam, launchSteamShortcut, requireSteamAccount, retrySteamShortcutRemovals, updateSteamShortcut } from "./steam";
 import { definePlugin, FileSelectionType, openFilePicker, toaster, useQuickAccessVisible } from "@decky/api";
 import {
   ButtonItem,
+  ConfirmModal,
   Field,
   Focusable,
   Menu,
@@ -190,10 +191,11 @@ type AppRowProps = {
   rowRef?: Ref<HTMLDivElement>;
   setShortcutId: (id?: number) => void;
   onUninstalled: () => void;
+  setSecondScreen: (enabled: boolean) => void;
   setMessage: (message: string | null) => void;
 };
 
-function AppRow({ app, accountId, isLast, rowRef, setShortcutId, onUninstalled, setMessage }: AppRowProps) {
+function AppRow({ app, accountId, isLast, rowRef, setShortcutId, onUninstalled, setSecondScreen, setMessage }: AppRowProps) {
   const add = async () => {
     const account = requireSteamAccount(accountId);
     const shortcut = await getAppShortcut(account, app.package);
@@ -226,6 +228,17 @@ function AppRow({ app, accountId, isLast, rowRef, setShortcutId, onUninstalled, 
           ) : (
             <MenuItem onSelected={run(add, async () => {}, setMessage)}>{t("addToSteam")}</MenuItem>
           )}
+          <MenuItem onSelected={() => {
+            showModal(<ConfirmModal
+              strTitle={app.secondScreen ? t("disableSecondScreen") : t("enableSecondScreen")}
+              strDescription={t("secondScreenReboot")}
+              strOKButtonText={app.secondScreen ? t("disableSecondScreen") : t("enableSecondScreen")}
+              strCancelButtonText={t("cancel")}
+              onOK={() => void setSecondScreenApp(app.package, !app.secondScreen)
+                .then(() => setSecondScreen(!app.secondScreen))
+                .catch((error) => reportError(error, setMessage))}
+            />);
+          }}>{app.secondScreen ? t("disableSecondScreen") : t("enableSecondScreen")}</MenuItem>
           {app.removable && (
             <MenuItem onSelected={() => openModal(
               <PackageOperationModal name={app.name} operation="uninstall" target={app.package} onError={(error) => reportError(error, setMessage)} perform={async () => {
@@ -378,6 +391,36 @@ function Content() {
     }
     launchSteamShortcut(status.waydroidShortcutId, requireSteamAccount(status.accountId));
   };
+  const openWaydroidMenu = () => {
+    if (!status) return;
+    const release = appListState.retainForOverlay();
+    try {
+      showContextMenu(
+        <AppMenu label={t("waydroid")} release={release}>
+          {status.waydroidShortcutId && <MenuItem onSelected={run(launchFullWaydroid, async () => {}, setMessage)}>{t("launch")}</MenuItem>}
+          <MenuItem onSelected={status.waydroidShortcutId
+            ? run(removeWaydroidShortcut, async () => {}, setMessage, [t("waydroid"), t("removedFromSteam")])
+            : run(addWaydroid, async () => {}, setMessage)}>
+            {status.waydroidShortcutId ? t("removeWaydroidShortcut") : t("addWaydroid")}
+          </MenuItem>
+          <MenuItem onSelected={() => {
+            showModal(<ConfirmModal
+              strTitle={status.secondScreen ? t("disableSecondScreen") : t("enableSecondScreen")}
+              strDescription={t("secondScreenReboot")}
+              strOKButtonText={status.secondScreen ? t("disableSecondScreen") : t("enableSecondScreen")}
+              strCancelButtonText={t("cancel")}
+              onOK={() => void setSecondScreenContainer(!status.secondScreen)
+                .then(() => setStatus((current) => current ? { ...current, secondScreen: !status.secondScreen } : current))
+                .catch((error) => reportError(error, setMessage))}
+            />);
+          }}>{status.secondScreen ? t("disableSecondScreen") : t("enableSecondScreen")}</MenuItem>
+        </AppMenu>,
+      );
+    } catch (error) {
+      release();
+      reportError(error, setMessage);
+    }
+  };
 
   return (
     <div>
@@ -408,18 +451,13 @@ function Content() {
         )}
         {status?.initialized && (
           <>
-            {status.waydroidShortcutId && (
-              <PanelSectionRow>
-                <ButtonItem layout="below" bottomSeparator="none" onClick={run(launchFullWaydroid, async () => {}, setMessage)}>{t("launchWaydroid")}</ButtonItem>
-              </PanelSectionRow>
-            )}
             <PanelSectionRow>
               <ButtonItem
                 layout="below"
                 bottomSeparator="none"
-                onClick={status.waydroidShortcutId ? run(removeWaydroidShortcut, async () => {}, setMessage, [t("waydroid"), t("removedFromSteam")]) : run(addWaydroid, async () => {}, setMessage)}
+                onClick={openWaydroidMenu}
               >
-                {status.waydroidShortcutId ? t("removeWaydroidShortcut") : t("addWaydroid")}
+                {t("waydroidActions")}
               </ButtonItem>
             </PanelSectionRow>
           </>
@@ -496,6 +534,7 @@ function Content() {
               rowRef={app.package === appToFocus ? nextAppRow : undefined}
               setShortcutId={(id) => setApps((current) => current.map((item) => item.package === app.package ? { ...item, shortcutId: id } : item))}
               onUninstalled={() => setApps((current) => current.filter((item) => item.package !== app.package))}
+              setSecondScreen={(enabled) => setApps((current) => current.map((item) => item.package === app.package ? { ...item, secondScreen: enabled } : item))}
               setMessage={setMessage}
             />
           ))}

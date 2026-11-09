@@ -2,19 +2,36 @@ import json
 import os
 from errno import ENOTEMPTY
 from pathlib import Path
+import re
 import tempfile
 
 from .artwork import ARTWORK_RECORD
 
 
 class StateStore:
+    PACKAGE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,254}")
     def __init__(self, home: Path):
         self.home = home
         self.path = home / ".config/waydroid-manager/state.json"
 
     @staticmethod
     def defaults() -> dict:
-        return {"accounts": {}, "removableApps": [], "artwork": {}}
+        return {"accounts": {}, "removableApps": [], "artwork": {}, "secondScreen": StateStore.second_screen_defaults()}
+
+    @staticmethod
+    def second_screen_defaults() -> dict:
+        return {"container": False, "apps": {}}
+
+    @staticmethod
+    def second_screen(state: dict) -> dict:
+        return state.setdefault("secondScreen", StateStore.second_screen_defaults())
+
+    @staticmethod
+    def second_screen_enabled(state: dict, package: str | None = None) -> bool:
+        settings = StateStore.second_screen(state)
+        if package is not None and package in settings["apps"]:
+            return settings["apps"][package]
+        return settings["container"]
 
     @staticmethod
     def shortcut_defaults() -> dict:
@@ -47,6 +64,19 @@ class StateStore:
                                         if StateStore._valid_id_key(key) and isinstance(value, str)}
         return state
 
+    @staticmethod
+    def _second_screen_state(saved) -> dict:
+        state = StateStore.second_screen_defaults()
+        if not isinstance(saved, dict):
+            return state
+        state["container"] = saved.get("container") is True
+        apps = saved.get("apps")
+        if isinstance(apps, dict):
+            state["apps"] = {package: enabled for package, enabled in apps.items()
+                             if isinstance(package, str) and StateStore.PACKAGE.fullmatch(package)
+                             and type(enabled) is bool}
+        return state
+
     def load(self) -> dict:
         self._validate_path()
         state = self.defaults()
@@ -59,6 +89,7 @@ class StateStore:
         if not isinstance(saved, dict):
             return state
         state["removableApps"] = self._strings(saved.get("removableApps"))
+        state["secondScreen"] = self._second_screen_state(saved.get("secondScreen"))
         accounts = saved.get("accounts")
         if isinstance(accounts, dict):
             state["accounts"] = {key: self._shortcut_state(value) for key, value in accounts.items()

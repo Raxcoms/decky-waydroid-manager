@@ -39,6 +39,20 @@ class StateStoreTests(unittest.TestCase):
             store.save(state)
             self.assertFalse(store.path.parent.exists())
 
+    def test_second_screen_preferences_are_validated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = StateStore(Path(directory))
+            store.path.parent.mkdir(parents=True)
+            store.path.write_text(json.dumps({
+                "secondScreen": {"container": True, "apps": {
+                    "example.app": False, "bad/package": True, "other.app": "true",
+                }},
+            }))
+            state = store.load()
+            self.assertTrue(StateStore.second_screen_enabled(state))
+            self.assertFalse(StateStore.second_screen_enabled(state, "example.app"))
+            self.assertTrue(StateStore.second_screen_enabled(state, "other.app"))
+
             store.account(state, 1)["autoAddApps"] = True
             store.save(state)
             self.assertTrue(store.path.exists())
