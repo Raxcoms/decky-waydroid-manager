@@ -1,4 +1,7 @@
+from contextlib import ExitStack
+import os
 from pathlib import Path
+import stat
 import sys
 import subprocess
 import tempfile
@@ -17,15 +20,24 @@ class PackageSessionTests(unittest.TestCase):
             names = ["base.apk", "config.arm64_v8a.apk"]
             for name in names:
                 (root / name).write_bytes(b"APK")
+                (root / name).chmod(0o640)
             commands = []
             def run(command, **kwargs):
-                commands.append(command[4:])
-                return "Success: created install session [42]" if command[4] == "install-create" else "Success"
-            install_apks(run, root, "/data/local/tmp/test", names)
+                args = command[9:] if command[0] == "lxc-attach" else command[4:]
+                commands.append(args)
+                if args[0] == "install-write":
+                    stream = kwargs["stdin"]
+                    self.assertTrue(stat.S_ISFIFO(os.fstat(stream.fileno()).st_mode))
+                    os.fchmod(stream.fileno(), 0o600)
+                    self.assertEqual(stream.read(), b"APK")
+                return "Success: created install session [42]" if args[0] == "install-create" else "Success"
+            with ExitStack() as files:
+                install_apks(run, {name: files.enter_context((root / name).open("rb")) for name in names})
             self.assertEqual(commands[0], ["install-create", "-r", "-S", "6"])
-            self.assertEqual([command[-1] for command in commands[1:-1]], [f"/data/local/tmp/test/{name}" for name in names])
+            self.assertEqual([command[-2:] for command in commands[1:-1]], [[name, "-"] for name in names])
             self.assertEqual(commands[-1], ["install-commit", "42"])
             self.assertFalse(any(command[0] in {"settings", "install-abandon", "install-multiple"} for command in commands))
+            self.assertTrue(all(stat.S_IMODE((root / name).stat().st_mode) == 0o640 for name in names))
 
     def test_failed_or_timed_out_commit_abandons_only_its_session(self):
         for failure in ("Failure [INSTALL_FAILED_INVALID_APK]", subprocess.TimeoutExpired("pm", 300)):
@@ -42,21 +54,20 @@ class PackageSessionTests(unittest.TestCase):
                             raise failure
                         return failure
                     return "Success"
-                with self.assertRaises((RuntimeError, subprocess.TimeoutExpired)):
-                    install_apks(run, root, "/data/local/tmp/test", ["base.apk"])
+                with (root / "base.apk").open("rb") as source, self.assertRaises((RuntimeError, subprocess.TimeoutExpired)):
+                    install_apks(run, {"base.apk": source})
                 self.assertEqual(commands[-1], ["install-abandon", "42"])
 
 
 class PackageArchiveTests(unittest.TestCase):
-    def test_apk_staging_preserves_the_original_archive(self):
+    def test_apk_staging_uses_the_original_archive(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "app.apk"
             with zipfile.ZipFile(path, "w") as archive:
                 archive.writestr("AndroidManifest.xml", b"manifest")
-            target = Path(directory) / "staged"
             with zipfile.ZipFile(path) as archive:
-                self.assertEqual(stage_apks(archive, apk_members(archive, ".apk"), target), ["base.apk"])
-            self.assertEqual((target / "base.apk").read_bytes(), path.read_bytes())
+                with stage_apks(archive, apk_members(archive, ".apk")) as parts:
+                    self.assertIs(parts["base.apk"], archive.fp)
 
     def test_split_names_cannot_collide_or_exhaust_the_destination(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -69,8 +80,22 @@ class PackageArchiveTests(unittest.TestCase):
                     apk_members(archive, ".xapk")
             with zipfile.ZipFile(path, "w") as archive:
                 archive.writestr("base.apk", b"first")
-            target = Path(directory) / "staged"
             with zipfile.ZipFile(path) as archive, patch("waydroid_manager.packages.shutil.disk_usage", return_value=type("Usage", (), {"free": 1})()):
                 with self.assertRaisesRegex(RuntimeError, "PACKAGE_NO_SPACE"):
-                    stage_apks(archive, apk_members(archive, ".xapk"), target)
-            self.assertFalse(target.exists())
+                    with stage_apks(archive, apk_members(archive, ".xapk"), Path(directory)):
+                        self.fail("Opened package files with insufficient space")
+
+    def test_split_staging_cleans_up_anonymous_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "app.xapk"
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("base.apk", b"base")
+                archive.writestr("split.apk", b"split")
+            with zipfile.ZipFile(path) as archive:
+                with stage_apks(archive, apk_members(archive, ".xapk"), root) as parts:
+                    self.assertEqual(list(parts), ["base.apk", "split.apk"])
+                    self.assertEqual(parts["base.apk"].seek(0), 0)
+                    self.assertEqual(parts["base.apk"].read(), b"base")
+                self.assertTrue(all(source.closed for source in parts.values()))
+            self.assertEqual(list(root.iterdir()), [path])

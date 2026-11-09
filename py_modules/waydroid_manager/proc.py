@@ -1,8 +1,15 @@
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 
-def steam_wayland_socket(uid: int, proc: Path = Path("/proc"), runtime: Path | None = None) -> Path | None:
+@dataclass(frozen=True)
+class SteamSession:
+    socket: Path
+    data_home: Path | None
+
+
+def steam_session(uid: int, proc: Path = Path("/proc"), runtime: Path | None = None) -> SteamSession | None:
     runtime = runtime if runtime is not None else Path(f"/run/user/{uid}")
     candidates = []
     for process in proc.glob("[0-9]*"):
@@ -16,30 +23,47 @@ def steam_wayland_socket(uid: int, proc: Path = Path("/proc"), runtime: Path | N
             directory = Path(os.fsdecode(environment.get(b"XDG_RUNTIME_DIR", b"")))
             if not directory.is_absolute():
                 directory = runtime
+            data_home = Path(os.fsdecode(environment.get(b"XDG_DATA_HOME", b"")))
             for key in (b"GAMESCOPE_WAYLAND_DISPLAY", b"WAYLAND_DISPLAY"):
                 value = environment.get(key)
                 if value:
                     socket = directory / os.fsdecode(value)
                     if socket.is_socket():
-                        candidates.append(((key == b"GAMESCOPE_WAYLAND_DISPLAY", b"steam" in names), socket))
+                        session = SteamSession(socket.resolve(), data_home if data_home.is_absolute() else None)
+                        candidates.append(((key == b"GAMESCOPE_WAYLAND_DISPLAY", b"steam" in names), session))
                         break
         except OSError:
             continue
-    return max(candidates, key=lambda candidate: candidate[0])[1] if candidates else None
+    if not candidates:
+        return None
+    best_rank = max(rank for rank, _ in candidates)
+    sessions = {session for rank, session in candidates if rank == best_rank}
+    return sessions.pop() if len(sessions) == 1 else None
 
 
-def active_launch(uid: int, relay: Path) -> tuple[int, str] | None:
-    for process in Path("/proc").glob("[0-9]*"):
+def steam_wayland_socket(uid: int, proc: Path = Path("/proc"), runtime: Path | None = None) -> Path | None:
+    session = steam_session(uid, proc, runtime)
+    return session.socket if session else None
+
+
+def process_identity(pid: int) -> tuple[int, str] | None:
+    try:
+        fields = (Path("/proc") / str(pid) / "stat").read_text().rsplit(")", 1)[1].split()
+        return (pid, fields[19]) if fields[0] != "Z" else None
+    except (OSError, IndexError):
+        return None
+
+
+def descends_from(pid: int, owner: tuple[int, str]) -> bool:
+    while pid > 1:
+        if pid == owner[0]:
+            return process_identity(pid) == owner
         try:
-            if process.stat().st_uid != uid:
-                continue
-            args = (process / "cmdline").read_bytes().split(b"\0")
-            if len(args) < 2 or os.fsdecode(args[1]) != str(relay):
-                continue
-            return int(process.name), (process / "stat").read_text().rsplit(")", 1)[1].split()[19]
+            fields = (Path("/proc") / str(pid) / "stat").read_text().rsplit(")", 1)[1].split()
+            pid = int(fields[1])
         except (OSError, ValueError, IndexError):
-            continue
-    return None
+            return False
+    return False
 
 
 def clean_env():

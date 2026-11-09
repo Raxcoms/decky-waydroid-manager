@@ -36,6 +36,10 @@ function AndroidRobotIcon() {
   );
 }
 
+function SectionDivider() {
+  return <hr aria-hidden="true" style={{ border: 0, borderBlockStart: "1px solid #ffffff1a", margin: "-8px 0 12px" }} />;
+}
+
 const autoAddFailures = new Set<string>();
 const libraryListeners = new Set<() => void>();
 let cachedStatus: Status | null = null;
@@ -52,11 +56,14 @@ function reportError(error: unknown, setMessage?: (message: string | null) => vo
     WAYDROID_NOT_RUNNING: "androidMustBeRunning", INVALID_PACKAGE_FILE: "invalidPackageFile",
     ANDROID_VERIFICATION_UNAVAILABLE: "androidVerificationUnavailable", ANDROID_VERIFICATION_AMBIGUOUS: "androidVerificationUnavailable",
     PACKAGE_INSTALL_TIMEOUT: "packageInstallTimeout",
+    PACKAGE_FILE_UNREADABLE: "packageFileUnreadable",
     INVALID_PACKAGE_ARCHIVE: "invalidPackageArchive", INVALID_APK_MANIFEST: "invalidApkManifest",
     XAPK_NO_APKS: "xapkNoApks", XAPK_INVALID_NAMES: "xapkInvalidNames",
     WAYDROID_NOT_INSTALLED: "installWaydroidFirst", PACKAGE_OPERATION_FAILED: "packageOperationFailed",
     APP_NOT_REMOVABLE: "appNotRemovable",
     WAYDROID_START_FAILED: "androidStartFailed",
+    WAYDROID_LAUNCH_STARTING: "androidLaunchStarting",
+    WAYDROID_LAUNCH_ACTIVE: "androidLaunchActive",
     WAYDROID_CLEANUP_FAILED: "packageCleanupFailed",
     XAPK_TOO_MANY_APKS: "xapkTooManyApks", PACKAGE_NO_SPACE: "packageNoSpace",
     IMAGE_APP_EXPORT_TIMEOUT: "imageAppExportTimeout",
@@ -352,17 +359,18 @@ function Content() {
     const accountId = currentSteamAccount();
     const shortcuts = await removeWaydroidImage(accountId);
     if (shortcuts.length) showLibraryProgress();
-    if (accountId && shortcuts.length) await finishSteamCleanup(accountId);
+    if (accountId) await finishSteamCleanup(accountId);
     await refresh();
     setMessage(null);
     toast(t("waydroid"), t("imageRemoved"));
   };
   const initializeWaydroid = async () => {
-    const languageSet = await installGapps(navigator.language);
+    const { languageSet, mediaVolumeSet } = await installGapps(navigator.language);
     await refresh();
     setMessage(null);
     toast(t("waydroid"), t("gappsInstalled"));
     if (!languageSet) toast(t("waydroid"), t("imageLanguageUnavailable"));
+    if (!mediaVolumeSet) toast(t("waydroid"), t("imageAudioUnavailable"));
   };
   const launchFullWaydroid = async () => {
     if (!status?.waydroidShortcutId) {
@@ -376,11 +384,11 @@ function Content() {
       <Focusable flow-children="column" onGamepadFocus={revealPanelTop}>
       <PanelSection title={t("waydroidStatus")}>
         <PanelSectionRow>
-          <Field label={status?.initialized ? t("installed") : t("notInstalled")} />
+          <Field bottomSeparator="none" label={status?.initialized ? t("installed") : t("notInstalled")} />
         </PanelSectionRow>
         {status && !status.sessionAvailable && (
           <PanelSectionRow>
-            <Field label={t("gamescopeUnavailable")} description={t("gamescopeUnavailableDescription")} />
+            <Field bottomSeparator="none" label={t("gamescopeUnavailable")} description={t("gamescopeUnavailableDescription")} />
           </PanelSectionRow>
         )}
         {(!status?.initialized || setupPending) && (
@@ -398,11 +406,11 @@ function Content() {
             </ButtonItem>
           </PanelSectionRow>
         )}
-        {status?.initialized && !setupPending && (
+        {status?.initialized && (
           <>
             {status.waydroidShortcutId && (
               <PanelSectionRow>
-                <ButtonItem layout="below" onClick={run(launchFullWaydroid, async () => {}, setMessage)}>{t("launchWaydroid")}</ButtonItem>
+                <ButtonItem layout="below" bottomSeparator="none" onClick={run(launchFullWaydroid, async () => {}, setMessage)}>{t("launchWaydroid")}</ButtonItem>
               </PanelSectionRow>
             )}
             <PanelSectionRow>
@@ -416,10 +424,27 @@ function Content() {
             </PanelSectionRow>
           </>
         )}
+        {status?.initialized && (
+          <PanelSectionRow>
+            <ButtonItem
+              layout="below"
+              bottomSeparator="none"
+              onClick={() => openModal(<ImageOperationModal
+                operation="remove"
+                perform={removeWaydroid}
+                onError={(error) => reportError(error, setMessage)}
+              />)}
+            >
+              {t("removeWaydroidButton")}
+            </ButtonItem>
+          </PanelSectionRow>
+        )}
       </PanelSection>
       </Focusable>
 
       {status?.initialized && !setupPending && (
+        <>
+        <SectionDivider />
         <PanelSection title={t("androidApps", { count: apps.length })}>
           <PanelSectionRow>
             <ButtonItem
@@ -449,12 +474,13 @@ function Content() {
             >
               {t("installPackage")}
             </ButtonItem>
-          </PanelSectionRow>
-          <PanelSectionRow>
-            <Field description={t("installPackageDescription")} />
+            <div style={{ marginBlockStart: -10 }}>
+              <Field bottomSeparator="none" description={t("installPackageDescription")} />
+            </div>
           </PanelSectionRow>
           <PanelSectionRow>
             <ToggleField
+              bottomSeparator="none"
               label={t("autoAddApps")}
               description={t("autoAddAppsDescription")}
               checked={status.autoAddApps}
@@ -466,7 +492,7 @@ function Content() {
               key={app.package}
               app={app}
               accountId={status.accountId}
-              isLast={!hasMoreApps && index === shownApps.length - 1}
+              isLast={index === shownApps.length - 1}
               rowRef={app.package === appToFocus ? nextAppRow : undefined}
               setShortcutId={(id) => setApps((current) => current.map((item) => item.package === app.package ? { ...item, shortcutId: id } : item))}
               onUninstalled={() => setApps((current) => current.filter((item) => item.package !== app.package))}
@@ -482,36 +508,27 @@ function Content() {
             </PanelSectionRow>
           )}
         </PanelSection>
+        </>
       )}
 
       {status?.initialized && (
-        <PanelSection title={t("dangerZone")}>
+        <>
+        <SectionDivider />
+        <PanelSection title={t("waydroidService")}>
           <PanelSectionRow>
-            <Field label={t("service", { state: status.serviceRunning ? t("running") : t("stopped") })} />
+            <Field bottomSeparator="none" label={t("serviceStatus", { state: status.serviceRunning ? t("running") : t("stopped") })} />
           </PanelSectionRow>
           <PanelSectionRow>
-            <ButtonItem layout="below" onClick={run(startService, refresh, setMessage)}>{t("start")}</ButtonItem>
+            <ButtonItem layout="below" bottomSeparator="none" onClick={run(startService, refresh, setMessage)}>{t("start")}</ButtonItem>
           </PanelSectionRow>
           <PanelSectionRow>
-            <ButtonItem layout="below" onClick={run(restartService, refresh, setMessage)}>{t("restart")}</ButtonItem>
+            <ButtonItem layout="below" bottomSeparator="none" onClick={run(restartService, refresh, setMessage)}>{t("restart")}</ButtonItem>
           </PanelSectionRow>
           <PanelSectionRow>
-            <ButtonItem layout="below" bottomSeparator="thick" onClick={run(stopService, refresh, setMessage)}>{t("stop")}</ButtonItem>
-          </PanelSectionRow>
-          <PanelSectionRow>
-            <ButtonItem
-              layout="below"
-              bottomSeparator="none"
-              onClick={() => openModal(<ImageOperationModal
-                operation="remove"
-                perform={removeWaydroid}
-                onError={(error) => reportError(error, setMessage)}
-              />)}
-            >
-              {t("removeWaydroidButton")}
-            </ButtonItem>
+            <ButtonItem layout="below" bottomSeparator="none" onClick={run(stopService, refresh, setMessage)}>{t("stop")}</ButtonItem>
           </PanelSectionRow>
         </PanelSection>
+        </>
       )}
 
       {message && <PanelSection><PanelSectionRow><Field description={message} bottomSeparator="none" /></PanelSectionRow></PanelSection>}

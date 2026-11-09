@@ -86,15 +86,17 @@ class LibraryTests(unittest.TestCase):
                 self.plugin._install_gapps()
             run.assert_called_once()
 
-    def test_image_setup_preserves_existing_android_language_preferences(self):
+    def test_image_setup_preserves_existing_android_preferences(self):
         (self.home / ".local/share/waydroid/data").mkdir(parents=True)
         self.plugin._initialized = lambda: True
         self.plugin._package_session = lambda progress: nullcontext()
         self.plugin._set_initial_locale = lambda *args: self.fail("Setup changed existing language preferences")
         self.plugin._wait_for_app_entries = lambda *args: None
-        with patch.object(self.plugin, "_install_gapps") as initialize:
-            self.assertTrue(self.plugin._initialize_image("pt-BR"))
+        with (patch.object(self.plugin, "_install_gapps") as initialize,
+              patch.object(backend, "set_media_volume_max") as volume):
+            self.assertEqual(self.plugin._initialize_image("pt-BR"), {"languageSet": True, "mediaVolumeSet": True})
             initialize.assert_not_called()
+            volume.assert_not_called()
 
     def test_image_setup_waits_for_all_launchable_apps_to_be_exported(self):
         directory = self.home / ".local/share/applications"
@@ -298,7 +300,7 @@ class LibraryTests(unittest.TestCase):
             self.assertEqual(fresh._pending_shortcut_removals(1, None), {"ids": [], "waiting": True})
             self.assertEqual(fresh._pending_shortcut_removals(1, [123]), {"ids": [123], "waiting": False})
             self.assertEqual(fresh._pending_shortcut_removals(1, [123]), {"ids": [123], "waiting": False})
-            self.assertEqual(fresh._pending_shortcut_removals(1, []), {"ids": [], "waiting": True})
+            self.assertEqual(fresh._pending_shortcut_removals(1, []), {"ids": [123], "waiting": False})
             write_shortcuts(paths[1], {})
             self.assertEqual(fresh._pending_shortcut_removals(1, []), {"ids": [], "waiting": False})
             self.assertEqual(fresh._pending_shortcut_removals(2, [456]), {"ids": [456], "waiting": False})
@@ -324,11 +326,25 @@ class LibraryTests(unittest.TestCase):
         image = self.home.resolve() / "image"
         image.mkdir()
         with patch.object(backend, "WAYDROID_DIR", image), patch.object(backend, "require_unmounted"), patch.object(backend.decky, "logger", create=True):
-            self.assertEqual(self.plugin._remove_image(1), [123])
+            self.assertEqual(self.plugin._remove_image(1), [123, 234])
         self.assertFalse(image.exists())
         self.assertFalse(self.history["autoAddApps"])
         self.assertEqual(self.state["removableApps"], [])
         self.assertEqual(self.history["pendingRemovals"], {"123": "example.app", "234": "example.older"})
+
+    def test_image_removal_includes_app_shortcut_omitted_from_live_library(self):
+        self.history["removedShortcuts"] = ["example.app"]
+        write_shortcuts(self.plugin._shortcuts_path(self.home, 1), {
+            "0": (0, {"exe": (1, str(self.plugin._launcher())), "appid": (2, 123),
+                      "LaunchOptions": (1, "app example.app")}),
+            "1": (0, {"exe": (1, "/usr/bin/other"), "appid": (2, 456)}),
+        })
+        self.plugin._run = lambda *args, **kwargs: ""
+        image = self.home.resolve() / "image"
+        image.mkdir()
+        with patch.object(backend, "WAYDROID_DIR", image), patch.object(backend, "require_unmounted"), patch.object(backend.decky, "logger", create=True):
+            self.assertEqual(self.plugin._remove_image(1), [123])
+        self.assertEqual(self.plugin._pending_shortcut_removals(1, [456]), {"ids": [123], "waiting": False})
 
     def test_apk_install_rejects_android_failure_and_cleans_staging(self):
         apk = self.home / "app.apk"
@@ -338,13 +354,16 @@ class LibraryTests(unittest.TestCase):
         self.plugin._package_session = lambda progress: nullcontext()
         (self.home / ".local/share/waydroid/data/local/tmp").mkdir(parents=True)
         def run(args, **kwargs):
+            if args[0] == "lxc-attach":
+                self.assertEqual(args[9], "install-write")
+                self.assertEqual(args[-1], "-")
+                self.assertTrue(kwargs["stdin"].read())
+                return "Failure [INSTALL_FAILED_INVALID_APK]"
             if args[4] == "install-create":
                 return "Success: created install session [42]"
             if args[4] == "install-abandon":
                 return "Success"
-            self.assertEqual(args[4], "install-write")
-            self.assertTrue(args[-1].startswith("/data/local/tmp/waydroid-manager-"))
-            return "Failure [INSTALL_FAILED_INVALID_APK]"
+            self.fail(f"Unexpected command: {args}")
         self.plugin._run = run
         with self.assertRaisesRegex(RuntimeError, "INSTALL_FAILED_INVALID_APK"):
             self.plugin._install_package(str(apk))
@@ -406,6 +425,9 @@ class PackageSessionTests(unittest.TestCase):
         self.socket = patch.object(backend, "steam_wayland_socket", return_value=Path("gamescope-primary"))
         self.socket.start()
         self.addCleanup(self.socket.stop)
+        guard = patch.object(backend, "keep_package_guest_running", return_value=nullcontext())
+        guard.start()
+        self.addCleanup(guard.stop)
         self.plugin._service_running = lambda: self.service_active
         self.service_active = True
         self.session_running = False
@@ -439,6 +461,21 @@ class PackageSessionTests(unittest.TestCase):
         self.assertEqual(self.plugin._uninstall_package("example.app"), 123)
         self.assertEqual(self.commands, [["waydroid", "status"], ["waydroid", "shell", "--", "getprop", "sys.boot_completed"]])
         self.assertEqual(self.removed, ["example.app"])
+
+    def test_fresh_and_existing_image_setup_check_the_vendor_overlay(self):
+        for existing in (False, True):
+            with self.subTest(existing=existing):
+                self.plugin._initialized = lambda: existing
+                self.session_running = existing
+                with (patch.object(self.plugin, "_install_gapps", side_effect=lambda: setattr(self.plugin, "_initialized", lambda: True)) as install,
+                      patch.object(self.plugin, "_wait_for_app_entries"),
+                      patch.object(backend, "set_media_volume_max") as volume,
+                      patch.object(backend, "vendor_overlay_warning") as check):
+                    check.return_value = None
+                    self.assertEqual(self.plugin._initialize_image(None), {"languageSet": True, "mediaVolumeSet": True})
+                    self.assertEqual(install.call_count, int(not existing))
+                    self.assertEqual(volume.call_count, int(not existing))
+                    check.assert_called_once_with(backend.WAYDROID_DIR)
 
     def test_running_but_unready_session_is_waited_for_and_preserved(self):
         self.session_running = True
@@ -560,9 +597,12 @@ class PackageSessionTests(unittest.TestCase):
                 def run(command, **kwargs):
                     if "getprop" in command:
                         temp.mkdir(parents=True, exist_ok=True)
+                    if command[0] == "lxc-attach":
+                        self.assertEqual(command[9], "install-write")
+                        self.assertTrue(kwargs["stdin"].read())
+                        return "Success: streamed 100 bytes"
                     if command[:4] == ["waydroid", "shell", "--", "pm"]:
                         self.commands.append(command)
-                        self.assertEqual(len(list(temp.glob("waydroid-manager-*"))), 1)
                         if command[4] == "list":
                             return "package:example.app"
                         return {"install-create": "Success: created install session [42]", "install-write": "Success: streamed 100 bytes", "install-commit": result, "install-abandon": "Success"}[command[4]]

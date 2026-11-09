@@ -11,7 +11,7 @@ def check(root: Path) -> None:
     required = ["main.py", "plugin.json", "package.json", "dist/index.js", "README.md", "LICENSE"]
     required += [f"bin/{name}" for name in (
         "waydroid-launcher", "waydroid-game-session", "waydroid-session",
-        "waydroid-service", "waydroid-input-sync", "waydroid-wayland-relay",
+        "waydroid-service", "waydroid-input-sync", "waydroid-wayland-relay", "waydroid-user-files",
     )]
     for name in required:
         path = root / name

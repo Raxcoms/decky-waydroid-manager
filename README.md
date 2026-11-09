@@ -6,7 +6,7 @@ Set up Android from Decky and launch Android apps from your Steam library. Waydr
 
 1. Download the `waydroid-manager-<version>.zip` asset from the [latest release](https://github.com/Raxcoms/decky-waydroid-manager/releases/latest).
 2. Install the ZIP in Decky and open **Waydroid Manager** in Game Mode.
-3. Choose **Install Waydroid with GAPPS**, then **Add Waydroid to Steam**.
+3. Choose **Install Waydroid**, then **Add Waydroid to Steam**.
 
 For setup requirements, Android packages, or help with launch settings, see the [installation guide](docs/installation.md) and [user guide](docs/features.md).
 
@@ -31,7 +31,7 @@ python3 scripts/package.py out
 python3 scripts/check_package.py out/waydroid-manager
 ```
 
-Run the Linux runtime and package checks on Linux. [Automated CI builds](https://github.com/Raxcoms/decky-waydroid-manager/actions/workflows/build.yml) use a short commit SHA in both the artifact name and installed version, such as `1.0.0+c670aaf`.
+Run the Linux runtime and package checks on Linux. [Automated CI builds](https://github.com/Raxcoms/decky-waydroid-manager/actions/workflows/build.yml) are named `waydroid-manager-<version>-ci.zip`. The installed version includes the short commit SHA, such as `1.0.0+c670aaf`.
 
 To publish an official release, merge the `package.json` version bump into `main`, then run **Publish Waydroid Manager release** in GitHub Actions with that version. The workflow publishes the tested Decky ZIP under a tag such as `v1.0.0`. The installed version is `1.0.0`.
 

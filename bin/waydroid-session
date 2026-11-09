@@ -1,43 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-owner_pid="${1:?missing launch process id}"
 log_dir="${WAYDROID_MANAGER_LOG_DIR:?missing log directory}"
-session_pid=""
-ready_file="$log_dir/android-ready"
-
-rm -f "$ready_file"
-: >"$log_dir/session.log"
-
-stop_session() {
-  trap - EXIT HUP INT TERM
-  if [[ -n "$session_pid" ]] && kill -0 "$session_pid" 2>/dev/null; then
-    waydroid session stop >>"$log_dir/session.log" 2>&1 || true
-    wait "$session_pid" || true
-  fi
-  rm -f "$ready_file"
-}
-
-trap stop_session EXIT HUP INT TERM
-waydroid session start >>"$log_dir/session.log" 2>&1 &
-session_pid=$!
-
-for _ in {1..45}; do
-  waydroid status 2>/dev/null | grep -q "^Session:[[:space:]]*RUNNING" && break
-  kill -0 "$session_pid" 2>/dev/null || exit 1
-  sleep 1
-done
-
-waydroid status 2>/dev/null | grep -q "^Session:[[:space:]]*RUNNING" || exit 1
-for _ in {1..180}; do
-  if grep -q "Android with user 0 is ready" "$log_dir/session.log"; then
-    touch "$ready_file"
-    break
-  fi
-  kill -0 "$session_pid" 2>/dev/null || exit 1
-  sleep 1
-done
-
-while [ -r "/proc/$owner_pid/stat" ] && [ "$(awk '{print $3}' "/proc/$owner_pid/stat")" != Z ]; do
-  sleep 1
-done
+exec waydroid session start >"$log_dir/session.log" 2>&1

@@ -19,6 +19,7 @@ class SurfaceCommits:
         self.server_fds: list[int] = []
         self.resolution = resolution
         self.objects = {1: "wl_display"}
+        self.outputs: set[int] = set()
         self.surfaces: dict[int, Surface] = {}
         self.xdg_surfaces: dict[int, int] = {}
         self.regions: dict[int, list[tuple[int, bytes]]] = {}
@@ -43,11 +44,19 @@ class SurfaceCommits:
             elif self.objects.get(object_id) == "zwp_linux_buffer_params_v1" and opcode == 0 and size == 12:
                 self.objects[struct.unpack_from("=I", self.events, offset + 8)[0]] = "wl_buffer"
             message = bytearray(self.events[offset:offset + size])
-            if self.resolution and self.enabled:
-                kind = self.objects.get(object_id)
+            kind = self.objects.get(object_id)
+            if kind == "wl_registry":
+                if opcode == 0 and size >= 20:
+                    name, length = struct.unpack_from("=II", message, 8)
+                    if message[16:16 + length] == b"wl_output\0":
+                        self.outputs.add(name)
+                elif opcode == 1 and size == 12:
+                    self.outputs.discard(struct.unpack_from("=I", message, 8)[0])
+            if self.resolution and self.enabled and len(self.outputs) == 1:
                 # Steam sets the game mode on its inherited Xwayland display, not the native output.
                 if kind == "wl_output" and opcode == 1 and size == 24:
-                    struct.pack_into("=ii", message, 12, *self.resolution)
+                    if struct.unpack_from("=I", message, 8)[0] & 1:
+                        struct.pack_into("=ii", message, 12, *self.resolution)
                 elif kind == "wl_output" and opcode == 3 and size == 12:
                     struct.pack_into("=i", message, 8, 1)
                 elif (kind == "xdg_toplevel" and opcode in (0, 2) and size >= 16) or (kind == "zxdg_output_v1" and opcode == 1 and size == 16):

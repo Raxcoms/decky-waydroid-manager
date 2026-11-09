@@ -14,6 +14,53 @@ from waydroid_manager.control import ServiceControl
 
 @unittest.skipUnless(hasattr(socket, "SO_PEERCRED"), "Requires Linux peer credentials")
 class ServiceControlTests(unittest.TestCase):
+    def test_relay_lease_uses_peer_identity_and_releases_on_disconnect(self):
+        async def exercise(directory):
+            root = Path(directory)
+            relay = root / "relay"
+            relay.write_text(
+                "import socket, sys\n"
+                "display = socket.socket(socket.AF_UNIX)\n"
+                "display.bind(sys.argv[2])\n"
+                "display.listen()\n"
+                "with socket.socket(socket.AF_UNIX) as control:\n"
+                "    control.connect(sys.argv[1])\n"
+                "    control.sendall(b'LAUNCH ' + sys.argv[2].encode() + b'\\n')\n"
+                "    print(control.recv(4096).decode().strip(), flush=True)\n"
+                "    sys.stdin.read()\n"
+            )
+            async def start():
+                pass
+            releases = []
+            async def release(launch):
+                releases.append(launch)
+            control = ServiceControl(root / "control.sock", os.getuid(), start, relay, on_release=release)
+            await control.open()
+            child = await asyncio.create_subprocess_exec(
+                "/usr/bin/python3", "-I", str(relay), str(control.path), str(root / "wayland"),
+                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+            )
+            try:
+                response = await asyncio.wait_for(child.stdout.readline(), 5)
+                self.assertEqual(json.loads(response), {"ok": True})
+                self.assertEqual(control.launch.process[0], child.pid)
+                self.assertEqual(control.launch.display, root / "wayland")
+                with self.assertRaisesRegex(RuntimeError, "Invalid Waydroid launch"):
+                    control.identify_launch(os.getpid(), root / "wayland")
+            finally:
+                child.stdin.close()
+                await asyncio.wait_for(child.wait(), 5)
+                for _ in range(10):
+                    if control.launch is None:
+                        break
+                    await asyncio.sleep(0.01)
+                await control.close()
+            self.assertIsNone(control.launch)
+            self.assertEqual([launch.process[0] for launch in releases], [child.pid])
+
+        with tempfile.TemporaryDirectory() as directory:
+            asyncio.run(exercise(directory))
+
     def test_failed_service_command_returns_an_error_response(self):
         async def exercise(directory):
             async def start():

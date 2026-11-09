@@ -2,11 +2,14 @@ import math
 import re
 import subprocess
 from typing import Callable
+from .container import container_identity
 
 
 class FrameLimiter:
-    def __init__(self, run: Callable[[list[str]], str]):
+    def __init__(self, run: Callable[[list[str]], str], identify=container_identity):
         self.run = run
+        self.identify = identify
+        self.guest = None
         self.launch = None
         self.original: dict[int, float] = {}
         self.applied: dict[int, float] = {}
@@ -26,6 +29,8 @@ class FrameLimiter:
         return int(match.group(1)) if match else None
 
     def override(self, uid: int, fps: float) -> None:
+        if self.identify() != self.guest:
+            raise RuntimeError("The Waydroid guest changed")
         # Android 13's SurfaceFlinger exposes a temporary per-UID frame-rate override.
         self.android("service", "call", "SurfaceFlinger", "1039", "i32", str(uid), "f", str(fps))
 
@@ -42,21 +47,35 @@ class FrameLimiter:
         divisor = max(1, math.ceil(refresh / (target + min(0.4999, target * 0.01))))
         return refresh / divisor
 
+    def overrides(self) -> dict[int, float]:
+        output = self.android("dumpsys", "SurfaceFlinger")
+        section = re.search(r"Frame Rate Overrides \(backdoor\):[^\n]*", output)
+        if not section:
+            raise RuntimeError("Could not read Android's existing frame-rate overrides")
+        return {int(uid): float(fps) for uid, fps in re.findall(r"uid:\s*(\d+)\s+frameRate:\s*([\d.]+)", section.group())}
+
     def restore(self) -> None:
-        for uid, fps in self.original.items():
+        if self.applied and self.guest == self.identify():
             try:
-                self.override(uid, fps)
+                current = self.overrides()
+                for uid, fps in self.original.items():
+                    if math.isclose(current.get(uid, 0), self.applied.get(uid, -1), abs_tol=0.01):
+                        self.override(uid, fps)
             except (RuntimeError, subprocess.SubprocessError):
                 pass
         self.original.clear()
         self.applied.clear()
 
-    def sync(self, fps: int | None, launch: tuple[int, str] | None) -> None:
-        if launch != self.launch:
+    def sync(self, fps: int | None, launch: tuple[int, str] | None, expected_guest: tuple[int, str] | None = None) -> None:
+        guest = self.identify() if launch else None
+        if expected_guest and expected_guest != guest:
+            guest = None
+        if launch != self.launch or guest != self.guest:
             self.restore()
             self.launch = launch
+            self.guest = guest
             self.sdk = None
-        if launch is None or fps is None:
+        if guest is None or fps is None:
             return
         if not fps:
             self.restore()
@@ -83,11 +102,6 @@ class FrameLimiter:
         if uid is None or self.applied.get(uid) == target:
             return
         if uid not in self.original:
-            output = self.android("dumpsys", "SurfaceFlinger")
-            section = re.search(r"Frame Rate Overrides \(backdoor\):[^\n]*", output)
-            if not section:
-                raise RuntimeError("Could not read Android's existing frame-rate overrides")
-            original = dict(re.findall(r"uid:\s*(\d+)\s+frameRate:\s*([\d.]+)", section.group()))
-            self.original[uid] = float(original.get(str(uid), 0))
+            self.original[uid] = self.overrides().get(uid, 0)
         self.override(uid, target)
         self.applied[uid] = target

@@ -2,12 +2,12 @@ import logging
 import os
 from pathlib import Path
 import re
-import shutil
 import signal
 import subprocess
 import time
 
-from .container import container_pid
+from .container import container_identity
+from .guest import run_dex
 from .packages import check_result
 from .proc import clean_env
 
@@ -60,17 +60,10 @@ def verification_id(dump: str, session: str, provider: str, active_sessions: set
     return next(iter(owned)) if owned and len(pending) == 1 else None
 
 
-def container_identity() -> tuple[int, str]:
-    pid = container_pid()
-    if not pid:
-        raise RuntimeError("WAYDROID_NOT_RUNNING")
-    return pid, (Path("/proc") / str(pid) / "stat").read_text().rsplit(")", 1)[1].split()[19]
-
-
 class InstallVerification:
-    def __init__(self, run, session: str, directory: Path, guest: str, helper: Path):
+    def __init__(self, run, session: str, helper: Path):
         self.run, self.session = run, session
-        self.directory, self.guest, self.helper = directory, guest, helper
+        self.helper = helper
         self.identity = container_identity()
         self.request = None
         self.provider = None
@@ -117,20 +110,12 @@ class InstallVerification:
                 self.send_response(request, provider[1], False)
 
     def send_response(self, request: int, uid: str, approved: bool) -> None:
-        if container_identity() != self.identity:
+        if not self.identity or container_identity() != self.identity:
             raise RuntimeError("WAYDROID_NOT_RUNNING")
         if not self.helper.is_file():
             raise RuntimeError("ANDROID_VERIFICATION_UNAVAILABLE")
-        target = self.directory / "verifier.dex"
-        shutil.copyfile(self.helper, target)
-        self.directory.chmod(0o755)
-        target.chmod(0o644)
-        # Waydroid supplies Android's classpath and runs only this helper as the configured verifier.
-        output = self.run([
-            "waydroid", "shell", "--uid", uid, "--", "env",
-            f"CLASSPATH={self.guest}/verifier.dex", "/system/bin/app_process", "/system/bin",
-            "waydroid.manager.InstallVerifier", str(request), "2" if approved else "-1",
-        ], timeout=15)
+        output = run_dex(self.run, self.helper, container_identity, self.identity,
+                         "waydroid.manager.InstallVerifier", str(request), "2" if approved else "-1", uid=uid)
         if "VERIFICATION_SENT" not in output.splitlines():
             raise RuntimeError("ANDROID_VERIFICATION_UNAVAILABLE")
 

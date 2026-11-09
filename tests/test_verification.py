@@ -97,7 +97,12 @@ class VerificationBridgeTests(unittest.TestCase):
         self.identity = patch("waydroid_manager.verification.container_identity", return_value=(100, "200"))
         self.identity_mock = self.identity.start()
         self.addCleanup(self.identity.stop)
-        self.bridge = InstallVerification(self.run, "42", self.directory, "/data/local/tmp/staged", self.helper)
+        self.bridge = InstallVerification(self.run_command, "42", self.helper)
+
+    def run_command(self, args, **kwargs):
+        if stream := kwargs.get("stdin"):
+            self.assertEqual(stream.read(), b"dex\n")
+        return self.run(args, **kwargs)
 
     def command(self, args, **kwargs):
         self.commands.append(args)
@@ -115,9 +120,10 @@ class VerificationBridgeTests(unittest.TestCase):
         self.assertTrue(self.bridge.warning_pending())
         self.bridge.respond(True)
         self.assertEqual(self.commands[:4], self.commands[4:8])
-        self.assertEqual(self.commands[-1][:6], ["waydroid", "shell", "--uid", "10123", "--", "env"])
-        self.assertEqual(self.commands[-1][-3:], ["waydroid.manager.InstallVerifier", "7", "2"])
-        self.assertEqual((self.directory / "verifier.dex").read_bytes(), self.helper.read_bytes())
+        self.assertEqual(self.commands[-2][:6], ["waydroid", "shell", "--uid", "10123", "--", "env"])
+        self.assertEqual(self.commands[-2][-3:], ["waydroid.manager.InstallVerifier", "7", "2"])
+        self.assertEqual(self.commands[-3][0], "lxc-attach")
+        self.assertEqual(self.commands[-1][-3:-1], ["/system/bin/rm", "-rf"])
 
     def test_waits_for_request_and_never_guesses_an_id(self):
         self.run.side_effect = ["Required: example.verifier (uid=10123)", ACTIVITIES, ACTIVE, ""]
@@ -140,9 +146,9 @@ class VerificationBridgeTests(unittest.TestCase):
     def test_cleanup_rejects_only_its_own_active_session(self):
         other = REQUEST.replace("42", "43").replace("VERIFICATION_ID=7", "VERIFICATION_ID=8")
         active = ACTIVE + "  Active Session 43:\n    mCommitted=true mDestroyed=false\n"
-        self.run.side_effect = ["Required: example.verifier (uid=10123)", active, REQUEST + other, "VERIFICATION_SENT"]
+        self.run.side_effect = ["Required: example.verifier (uid=10123)", active, REQUEST + other, "", "VERIFICATION_SENT", ""]
         self.bridge.reject_pending()
-        self.assertEqual(self.run.call_args.args[0][-3:], ["waydroid.manager.InstallVerifier", "7", "-1"])
+        self.assertEqual(self.run.call_args_list[-2].args[0][-3:], ["waydroid.manager.InstallVerifier", "7", "-1"])
 
     def test_finished_or_changed_request_cannot_use_an_old_approval(self):
         self.assertTrue(self.bridge.warning_pending())
@@ -153,7 +159,7 @@ class VerificationBridgeTests(unittest.TestCase):
         self.assertFalse((self.directory / "verifier.dex").exists())
 
     def test_waydroid_zero_exit_status_without_helper_marker_is_not_success(self):
-        self.run.side_effect = ["Required: example.verifier (uid=10123)", ACTIVITIES, ACTIVE, REQUEST] * 2 + [""]
+        self.run.side_effect = ["Required: example.verifier (uid=10123)", ACTIVITIES, ACTIVE, REQUEST] * 2 + ["", "", ""]
         self.assertTrue(self.bridge.warning_pending())
         with self.assertRaisesRegex(RuntimeError, "VERIFICATION_UNAVAILABLE"):
             self.bridge.respond(True)

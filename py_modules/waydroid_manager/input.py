@@ -48,7 +48,8 @@ def controller_sources() -> tuple[dict[str, ControllerDevice], dict[str, Control
                 steam[event.name] = device
             elif stat.S_IMODE(info.st_mode) == 0:
                 database = Path(f"/run/udev/data/c{os.major(info.st_rdev)}:{os.minor(info.st_rdev)}")
-                if "E:INPUTPLUMBER_SHARED_GAMEPAD=1" in database.read_text().splitlines():
+                properties = set(database.read_text().splitlines())
+                if properties.intersection({"E:ID_INPUT_JOYSTICK=1", "E:INPUTPLUMBER_SHARED_GAMEPAD=1"}):
                     shared[event.name] = device
         except OSError:
             continue

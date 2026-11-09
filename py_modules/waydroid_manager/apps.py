@@ -16,10 +16,10 @@ class AppExport:
     icon: str
 
 
-def app_exports(home: Path, package: str | None = None) -> Iterator[AppExport]:
+def app_exports(home: Path, package: str | None = None, *, data_home: Path | None = None) -> Iterator[AppExport]:
     if package is not None and not PACKAGE_RE.fullmatch(package):
         return
-    directory = home / ".local/share/applications"
+    directory = (data_home or home / ".local/share") / "applications"
     entries = (directory / f"waydroid.{package}.desktop",) if package else directory.glob("waydroid.*.desktop")
     for entry in entries:
         package_name = entry.stem.removeprefix("waydroid.")

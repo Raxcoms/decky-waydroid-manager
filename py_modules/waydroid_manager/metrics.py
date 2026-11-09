@@ -8,7 +8,7 @@ import stat
 import struct
 import time
 
-from .container import container_pid
+from .proc import process_identity
 
 
 MAX_CLIENTS = 64
@@ -150,6 +150,7 @@ class GpuMetrics:
         self.path = None
         self.clients = None
         self.next_scan = 0
+        self.guest = None
 
     def send(self, path: Path, handles: list[int], uid: int) -> None:
         with socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET) as connection:
@@ -163,37 +164,28 @@ class GpuMetrics:
             if connection.recv(16) != b"OK":
                 raise OSError("GPU metrics relay did not acknowledge its handles")
 
-    def sync(self, launch: tuple[int, str] | None, uid: int) -> None:
-        if launch != self.launch:
-            self.path = None
+    def sync(self, launch: tuple[int, str] | None, uid: int, path: Path | None,
+             guest: tuple[int, str] | None) -> None:
+        if launch != self.launch or path != self.path or guest != self.guest:
+            self.close(uid)
+            self.path = path
+            self.guest = guest
             self.clients = None
             self.next_scan = 0
             self.launch = launch
-        if launch is None or time.monotonic() < self.next_scan:
+        if launch is None or self.path is None or guest is None or time.monotonic() < self.next_scan:
             return
         self.next_scan = time.monotonic() + 2
-        init_pid = container_pid()
-        clients = android_clients(init_pid) if init_pid else {}
+        clients = android_clients(guest[0])
         if self.clients == set(clients):
             return
         handles = []
         try:
             for identity, (pid, handle) in clients.items():
                 handles.append(duplicate_client(pid, handle, identity))
-            if self.path is None:
-                environment = (Path("/proc") / str(launch[0]) / "environ").read_bytes().split(b"\0")
-                runtime = next((os.fsdecode(value.split(b"=", 1)[1]) for value in environment if value.startswith(b"XDG_RUNTIME_DIR=")), f"/run/user/{uid}")
-                for path in Path(runtime).glob("waydroid-manager-*/metrics"):
-                    try:
-                        self.send(path, handles, uid)
-                    except OSError:
-                        continue
-                    self.path = path
-                    break
-                if self.path is None:
-                    return
-            else:
-                self.send(self.path, handles, uid)
+            if process_identity(guest[0]) != guest:
+                return
+            self.send(self.path, handles, uid)
             self.clients = set(clients)
         finally:
             close_handles(handles)

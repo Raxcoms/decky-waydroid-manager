@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/python3 -I
 from __future__ import annotations
 
 import array
@@ -6,17 +6,20 @@ from collections import deque
 from dataclasses import dataclass, field
 import os
 from pathlib import Path
+import select
 import selectors
 import signal
 import socket
 import subprocess
 import sys
 import tempfile
+import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
 from waydroid_manager.wayland import SurfaceCommits
 from waydroid_manager.metrics import MetricsSocket
 from waydroid_manager.resolution import launch_resolution
+from waydroid_manager.control import control_path, service_connection
 
 
 MAX_PENDING = 1024 * 1024
@@ -210,24 +213,31 @@ def main() -> int:
             print(f"Wayland relay started: {os.getpid()}", file=sys.stderr, flush=True)
             environment = os.environ.copy()
             environment.update(WAYLAND_DISPLAY=path, GAMESCOPE_WAYLAND_DISPLAY=path)
-            child = subprocess.Popen(sys.argv[3:], env=environment, start_new_session=True)
-            try:
-                while not stopping and child.poll() is None:
-                    relay.step()
-                    metrics.poll()
-                return child.returncode if child.returncode is not None else 0
-            finally:
+            environment["WAYDROID_MANAGER_SESSION_UNIT"] = f"waydroid-manager-session-{os.getpid()}"
+            with service_connection(control_path(os.getuid()), b"LAUNCH " + os.fsencode(path)) as control:
+                child = subprocess.Popen(sys.argv[3:], env=environment, start_new_session=True)
                 try:
-                    os.killpg(child.pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
-                if child.poll() is None:
+                    while not stopping and child.poll() is None:
+                        if select.select([control], [], [], 0)[0]:
+                            print("Waydroid launch registration ended", file=sys.stderr)
+                            return 1
+                        relay.step()
+                        metrics.poll()
+                    return child.returncode if child.returncode is not None else 0
+                finally:
                     try:
-                        child.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        os.killpg(child.pid, signal.SIGKILL)
-                        child.wait()
-                relay.close()
+                        os.killpg(child.pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+                    if child.poll() is None:
+                        # Android may still need its Wayland connection during cleanup.
+                        deadline = time.monotonic() + 55
+                        while child.poll() is None and time.monotonic() < deadline:
+                            relay.step()
+                        if child.poll() is None:
+                            os.killpg(child.pid, signal.SIGKILL)
+                            child.wait()
+                    relay.close()
 
 
 if __name__ == "__main__":

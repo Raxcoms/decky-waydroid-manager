@@ -4,9 +4,26 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
-from waydroid_manager.control import control_path, request_service_start
+from waydroid_manager.container import vendor_overlay_warning
+from waydroid_manager.control import control_path, request_service_start, service_connection
+from waydroid_manager.guest import GUEST_STARTING
+
+if sys.argv[1:] == ["--check-overlay"]:
+    if warning := vendor_overlay_warning():
+        print(warning, file=sys.stderr)
+    sys.exit(0)
 
 try:
-    request_service_start(control_path(os.getuid()))
+    path = control_path(os.getuid())
+    if sys.argv[1:] == ["--release"]:
+        with service_connection(path, b"RELEASE"):
+            pass
+    elif len(sys.argv) == 3 and sys.argv[1] == "--policy":
+        with service_connection(path, b"POLICY " + sys.argv[2].encode("ascii")):
+            pass
+    else:
+        request_service_start(path)
 except (OSError, RuntimeError, ValueError) as error:
+    if str(error) == GUEST_STARTING:
+        sys.exit(3)
     raise SystemExit(f"Waydroid Manager could not start its container service: {error}")

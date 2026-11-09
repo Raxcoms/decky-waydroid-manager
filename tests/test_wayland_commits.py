@@ -19,6 +19,11 @@ def bind(object_id, interface):
     return struct.pack("=II", 2, (len(body) + 8) << 16) + body
 
 
+def output_global(name):
+    body = struct.pack("=II", name, 10) + b"wl_output\0\0\0" + struct.pack("=I", 4)
+    return struct.pack("=II", 2, (len(body) + 8) << 16) + body
+
+
 BOOTSTRAP = message(1, 1, 2) + bind(3, "wl_compositor") + message(3, 0, 4) + message(4, 6) + bind(5, "wp_presentation")
 BUFFER = message(4, 1, 10, 0, 0) + message(4, 2, 0, 0, 1920, 1080) + message(4, 6)
 FEEDBACK = message(5, 1, 4, 11)
@@ -92,6 +97,7 @@ class SurfaceCommitTests(unittest.TestCase):
         setup += message(31, 2, 32, 4) + message(32, 1, 33)
         setup += bind(34, "zxdg_output_manager_v1") + message(34, 1, 35, 30)
         protocol.feed(setup, [])
+        protocol.observe_server(output_global(1))
         stream = message(30, 1, 3, 1920, 1080, 120000) + message(30, 3, 2)
         stream += message(33, 0, 1920, 1080, 4, 2) + message(33, 2, 1920, 1080)
         stream += message(35, 1, 1920, 1080)
@@ -101,6 +107,13 @@ class SurfaceCommitTests(unittest.TestCase):
         for boundary in range(len(stream) + 1):
             with self.subTest(boundary=boundary):
                 self.assertEqual(protocol.observe_server(stream[:boundary]) + protocol.observe_server(stream[boundary:]), expected)
+
+    def test_multiple_native_outputs_keep_their_original_modes(self):
+        protocol = SurfaceCommits((1280, 720))
+        protocol.feed(BOOTSTRAP + bind(30, "wl_output") + bind(31, "wl_output"), [])
+        protocol.observe_server(output_global(1) + output_global(2))
+        events = message(30, 1, 3, 1920, 1080, 120000) + message(31, 1, 3, 1080, 1920, 60000)
+        self.assertEqual(protocol.observe_server(events), events)
 
     def test_no_resolution_override_preserves_native_events(self):
         self.protocol.feed(bind(30, "wl_output"), [])
