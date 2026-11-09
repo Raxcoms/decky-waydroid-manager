@@ -29,6 +29,7 @@ jobs:
           RELEASE_VERSION: ${{ inputs.release_version }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
+          version=$(node -p 'require("./package.json").version')
           revision=$(git rev-parse --short=7 HEAD)
           if [[ -n "$RELEASE_VERSION" ]]; then
             if [[ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]]; then
@@ -36,13 +37,14 @@ jobs:
               exit 1
             fi
             if [[ ! "$RELEASE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] ||
-               [[ "$RELEASE_VERSION" != "$(node -p 'require("./package.json").version')" ]]; then
+               [[ "$RELEASE_VERSION" != "$version" ]]; then
               echo 'Enter the major.minor.patch version from package.json.' >&2
               exit 1
             fi
             revision=''
           fi
           echo "revision=$revision" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - run: pnpm install --frozen-lockfile
       - run: pnpm run check
       - run: pnpm run build
@@ -78,7 +80,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: inputs.release_version == ''
         with:
-          name: waydroid-manager-${{ steps.version.outputs.revision }}
+          name: waydroid-manager-${{ steps.version.outputs.version }}-dev
           path: package
           if-no-files-found: error
       - name: Create release ZIP
