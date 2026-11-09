@@ -1,10 +1,29 @@
 from pathlib import Path
 import sys
+import threading
 import unittest
 from unittest.mock import Mock, call, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
-from waydroid_manager.guest import LaunchPolicy, android_user_ready, set_media_volume_max
+from waydroid_manager.guest import LaunchPolicy, android_user_ready, keep_package_guest_running, set_media_volume_max
+
+
+class PackageWakeTests(unittest.TestCase):
+    def test_resumes_the_same_frozen_guest_during_a_package_operation(self):
+        identity = (100, "boot")
+        resumed = threading.Event()
+
+        def run(command, *, timeout):
+            if command[0] == "lxc-info":
+                return "FROZEN"
+            if command == ["waydroid", "container", "unfreeze"]:
+                resumed.set()
+            return ""
+
+        with patch("waydroid_manager.guest.container_identity", return_value=identity), \
+             patch("waydroid_manager.guest.process_identity", return_value=identity):
+            with keep_package_guest_running(run):
+                self.assertTrue(resumed.wait(2))
 
 
 class MediaVolumeTests(unittest.TestCase):

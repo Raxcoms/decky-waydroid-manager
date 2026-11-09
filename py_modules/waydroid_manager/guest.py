@@ -1,12 +1,14 @@
+from contextlib import contextmanager
 import logging
 from pathlib import Path
 import re
 import subprocess
+import threading
 import time
 import uuid
 
-from .container import LXC_PATH
-from .proc import clean_env
+from .container import LXC_PATH, container_identity
+from .proc import clean_env, process_identity
 
 
 GUEST_STARTING = "WAYDROID_GUEST_STARTING"
@@ -28,6 +30,34 @@ def stream_to_guest(run, source, *args: str, timeout: int) -> str:
         finally:
             if reader.poll() is None:
                 reader.kill()
+
+
+@contextmanager
+def keep_package_guest_running(run):
+    identity = container_identity()
+    if not identity:
+        raise RuntimeError("WAYDROID_NOT_RUNNING")
+    stop = threading.Event()
+
+    def watch() -> None:
+        # Android can suspend the hidden session while Package Manager is still working.
+        status = ["lxc-info", "-P", str(LXC_PATH), "-n", "waydroid", "-sH"]
+        while not stop.is_set() and process_identity(identity[0]) == identity:
+            try:
+                if run(status, timeout=3) == "FROZEN" and container_identity() == identity and not stop.is_set():
+                    run(["waydroid", "container", "unfreeze"], timeout=5)
+            except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                logging.getLogger(__name__).warning("Could not resume the Android package session: %s", error)
+                return
+            stop.wait(2)
+
+    thread = threading.Thread(target=watch, name="waydroid-package-wake")
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join()
 
 
 def android_user_ready(run) -> bool:

@@ -425,6 +425,9 @@ class PackageSessionTests(unittest.TestCase):
         self.socket = patch.object(backend, "steam_wayland_socket", return_value=Path("gamescope-primary"))
         self.socket.start()
         self.addCleanup(self.socket.stop)
+        guard = patch.object(backend, "keep_package_guest_running", return_value=nullcontext())
+        guard.start()
+        self.addCleanup(guard.stop)
         self.plugin._service_running = lambda: self.service_active
         self.service_active = True
         self.session_running = False

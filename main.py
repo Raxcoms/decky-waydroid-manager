@@ -24,7 +24,7 @@ from waydroid_manager.packages import apk_members, stage_apks, install_apks, che
 from waydroid_manager.verification import InstallCancelled, InstallVerification, commit_install
 from waydroid_manager.steam import known_accounts, read_shortcuts, shortcuts_path, shortcut_key, shortcut_owners, migrated_launch_options
 from waydroid_manager.container import CONFIG_DIR, SERVICE, container_identity, container_pid, registered_guest, session_uses_socket, vendor_overlay_warning
-from waydroid_manager.guest import GUEST_STARTING, LaunchPolicy, android_user_ready, run_dex, set_media_volume_max
+from waydroid_manager.guest import GUEST_STARTING, LaunchPolicy, android_user_ready, keep_package_guest_running, run_dex, set_media_volume_max
 from waydroid_manager.image import launcher_packages, owned_directory, require_unmounted, require_unredirected, run_init
 from waydroid_manager.control import Launch, ServiceControl, control_path
 from waydroid_manager.state import StateStore
@@ -690,7 +690,8 @@ class Plugin:
                 "env", f"WAYLAND_DISPLAY={wayland}", "waydroid", "session", "start",
             ])
             self._wait_for_android(progress, unit_status)
-            yield
+            with keep_package_guest_running(self._run):
+                yield
             completed = True
         finally:
             progress("cleaning")
