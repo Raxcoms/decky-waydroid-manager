@@ -56,6 +56,7 @@ function reportError(error: unknown, setMessage?: (message: string | null) => vo
     WAYDROID_NOT_RUNNING: "androidMustBeRunning", INVALID_PACKAGE_FILE: "invalidPackageFile",
     ANDROID_VERIFICATION_UNAVAILABLE: "androidVerificationUnavailable", ANDROID_VERIFICATION_AMBIGUOUS: "androidVerificationUnavailable",
     PACKAGE_INSTALL_TIMEOUT: "packageInstallTimeout",
+    PACKAGE_FILE_UNREADABLE: "packageFileUnreadable",
     INVALID_PACKAGE_ARCHIVE: "invalidPackageArchive", INVALID_APK_MANIFEST: "invalidApkManifest",
     XAPK_NO_APKS: "xapkNoApks", XAPK_INVALID_NAMES: "xapkInvalidNames",
     WAYDROID_NOT_INSTALLED: "installWaydroidFirst", PACKAGE_OPERATION_FAILED: "packageOperationFailed",

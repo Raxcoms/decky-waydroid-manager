@@ -97,7 +97,12 @@ class VerificationBridgeTests(unittest.TestCase):
         self.identity = patch("waydroid_manager.verification.container_identity", return_value=(100, "200"))
         self.identity_mock = self.identity.start()
         self.addCleanup(self.identity.stop)
-        self.bridge = InstallVerification(self.run, "42", self.helper)
+        self.bridge = InstallVerification(self.run_command, "42", self.helper)
+
+    def run_command(self, args, **kwargs):
+        if stream := kwargs.get("stdin"):
+            self.assertEqual(stream.read(), b"dex\n")
+        return self.run(args, **kwargs)
 
     def command(self, args, **kwargs):
         self.commands.append(args)

@@ -9,7 +9,7 @@ import tempfile
 from typing import BinaryIO
 import zipfile
 
-from .guest import attach_command
+from .guest import stream_to_guest
 
 
 MAX_SPLITS = 128
@@ -33,8 +33,8 @@ def install_apks(run, packages: dict[str, BinaryIO], commit=None) -> None:
     try:
         for name, source in packages.items():
             source.seek(0)
-            output = run(attach_command("/system/bin/cmd", "package", "install-write", "-S", str(sizes[name]),
-                                        session, name, "-"), timeout=300, stdin=source)
+            output = stream_to_guest(run, source, "/system/bin/cmd", "package", "install-write",
+                                     "-S", str(sizes[name]), session, name, "-", timeout=300)
             if not any(line == "Success" or line.startswith("Success:") for line in output.splitlines()):
                 raise RuntimeError(output or "PACKAGE_OPERATION_FAILED")
         check_result(commit(session) if commit else run([*command, "install-commit", session], timeout=300))

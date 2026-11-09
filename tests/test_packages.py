@@ -1,5 +1,7 @@
 from contextlib import ExitStack
+import os
 from pathlib import Path
+import stat
 import sys
 import subprocess
 import tempfile
@@ -18,12 +20,16 @@ class PackageSessionTests(unittest.TestCase):
             names = ["base.apk", "config.arm64_v8a.apk"]
             for name in names:
                 (root / name).write_bytes(b"APK")
+                (root / name).chmod(0o640)
             commands = []
             def run(command, **kwargs):
                 args = command[9:] if command[0] == "lxc-attach" else command[4:]
                 commands.append(args)
                 if args[0] == "install-write":
-                    self.assertEqual(kwargs["stdin"].read(), b"APK")
+                    stream = kwargs["stdin"]
+                    self.assertTrue(stat.S_ISFIFO(os.fstat(stream.fileno()).st_mode))
+                    os.fchmod(stream.fileno(), 0o600)
+                    self.assertEqual(stream.read(), b"APK")
                 return "Success: created install session [42]" if args[0] == "install-create" else "Success"
             with ExitStack() as files:
                 install_apks(run, {name: files.enter_context((root / name).open("rb")) for name in names})
@@ -31,6 +37,7 @@ class PackageSessionTests(unittest.TestCase):
             self.assertEqual([command[-2:] for command in commands[1:-1]], [[name, "-"] for name in names])
             self.assertEqual(commands[-1], ["install-commit", "42"])
             self.assertFalse(any(command[0] in {"settings", "install-abandon", "install-multiple"} for command in commands))
+            self.assertTrue(all(stat.S_IMODE((root / name).stat().st_mode) == 0o640 for name in names))
 
     def test_failed_or_timed_out_commit_abandons_only_its_session(self):
         for failure in ("Failure [INSTALL_FAILED_INVALID_APK]", subprocess.TimeoutExpired("pm", 300)):

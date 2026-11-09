@@ -6,6 +6,7 @@ import time
 import uuid
 
 from .container import LXC_PATH
+from .proc import clean_env
 
 
 GUEST_STARTING = "WAYDROID_GUEST_STARTING"
@@ -13,6 +14,20 @@ GUEST_STARTING = "WAYDROID_GUEST_STARTING"
 
 def attach_command(*args: str) -> list[str]:
     return ["lxc-attach", "-P", str(LXC_PATH), "-n", "waydroid", "--clear-env", "--", *args]
+
+
+def stream_to_guest(run, source, *args: str, timeout: int) -> str:
+    # LXC changes stdin ownership and permissions, so pass a pipe instead of the file.
+    with subprocess.Popen(["cat"], stdin=source, stdout=subprocess.PIPE, env=clean_env()) as reader:
+        try:
+            output = run(attach_command(*args), timeout=timeout, stdin=reader.stdout)
+            reader.stdout.close()
+            if reader.wait(timeout=5):
+                raise RuntimeError("Could not read the file sent to Android")
+            return output
+        finally:
+            if reader.poll() is None:
+                reader.kill()
 
 
 def android_user_ready(run) -> bool:
@@ -88,9 +103,11 @@ def run_dex(run, helper: Path, identify, identity, main_class: str, *args: str, 
     path = f"{directory}/helper.dex"
     try:
         with helper.open("rb") as source:
-            run(attach_command("/system/bin/sh", "-c",
-                               'set -e; /system/bin/mkdir -m 755 "$1"; /system/bin/cat > "$1/helper.dex"; /system/bin/chmod 444 "$1/helper.dex"',
-                               "sh", directory), timeout=10, stdin=source)
+            stream_to_guest(
+                run, source, "/system/bin/sh", "-c",
+                'set -e; /system/bin/mkdir -m 755 "$1"; /system/bin/cat > "$1/helper.dex"; /system/bin/chmod 444 "$1/helper.dex"',
+                "sh", directory, timeout=10,
+            )
         if identify() != identity:
             raise RuntimeError("WAYDROID_NOT_RUNNING")
         command = ["waydroid", "shell", *(["--uid", uid] if uid else []), "--", "env",

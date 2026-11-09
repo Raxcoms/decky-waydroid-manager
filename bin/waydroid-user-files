@@ -21,7 +21,11 @@ def main() -> None:
         StateStore(home).save(json.load(sys.stdin))
     elif action == "open":
         path = Path(sys.argv[3])
-        with os.fdopen(os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW), "rb") as source:
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+        except PermissionError:
+            raise SystemExit("PACKAGE_FILE_UNREADABLE") from None
+        with os.fdopen(fd, "rb") as source:
             if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
                 raise RuntimeError("INVALID_PACKAGE_FILE")
             with socket.socket(fileno=int(sys.argv[4])) as sender:
