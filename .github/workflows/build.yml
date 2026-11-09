@@ -80,7 +80,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: inputs.release_version == ''
         with:
-          name: waydroid-manager-${{ steps.version.outputs.version }}-dev
+          name: waydroid-manager-${{ steps.version.outputs.version }}-ci
           path: package
           if-no-files-found: error
       - name: Create release ZIP
