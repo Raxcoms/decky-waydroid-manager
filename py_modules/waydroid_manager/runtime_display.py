@@ -31,6 +31,17 @@ class RuntimeDisplayLease:
             os.fsync(file.fileno())
         temporary.replace(self.manifest)
 
+    def _owns_mount(self, target: Path, index: int) -> bool:
+        if index:
+            source = self.root / f"config-{index - 1}"
+            expected, actual = source.stat(), target.stat()
+            return (expected.st_dev, expected.st_ino) == (actual.st_dev, actual.st_ino)
+        for line in Path("/proc/self/mountinfo").read_text().splitlines():
+            fields, _, filesystem = line.partition(" - ")
+            if fields.split()[4] == str(target) and filesystem.startswith("overlay "):
+                return f"lowerdir={self.root / 'overlay'}:{target}" in filesystem.split()[2].split(",")
+        return False
+
     def acquire(self, files: dict[str, Path], external: Path, run, display: Path) -> None:
         from .session_config import SessionConfigLease
 
@@ -99,10 +110,13 @@ class RuntimeDisplayLease:
                 shutil.rmtree(self.root)
                 return
             mounts = json.loads(self.manifest.read_text())
-            for mount in reversed(mounts):
+            for index in reversed(range(len(mounts))):
+                mount = mounts[index]
                 target = Path(mount["target"])
                 current = self._mount_id(target)
                 if current != mount["previous"]:
+                    if not self._owns_mount(target, index):
+                        raise RuntimeError(f"Waydroid runtime mount changed: {target}")
                     subprocess.run(["umount", str(target)], check=True, timeout=10,
                                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
             self.manifest.unlink()
