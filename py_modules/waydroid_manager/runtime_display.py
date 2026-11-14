@@ -120,12 +120,15 @@ def guard(config: Path, root: Path, backend: int, identity: str, display: str) -
         time.sleep(0.25)
     if not root.exists():
         return
-    status = subprocess.run(["waydroid", "status"], capture_output=True, text=True, timeout=5)
-    if any(line.partition(":")[2].strip() == display for line in status.stdout.splitlines()
-           if line.startswith("Wayland display:")):
-        subprocess.run(["busctl", "--system", "--timeout=20s", "call", "id.waydro.Container",
-                        "/ContainerManager", "id.waydro.ContainerManager", "Stop", "b", "true"],
-                       check=True, timeout=25)
+    running = subprocess.run(["lxc-info", "-P", str(config / "lxc"), "-n", "waydroid", "-pH"],
+                             capture_output=True, text=True, timeout=5)
+    if running.returncode == 0 and running.stdout.strip().isdecimal():
+        status = subprocess.run(["waydroid", "status"], capture_output=True, text=True, timeout=5)
+        if any(line.partition(":")[2].strip() == display for line in status.stdout.splitlines()
+               if line.startswith("Wayland display:")):
+            subprocess.run(["busctl", "--system", "--timeout=20s", "call", "id.waydro.Container",
+                            "/ContainerManager", "id.waydro.ContainerManager", "Stop", "b", "true"],
+                           check=True, timeout=25)
     RuntimeDisplayLease(config, root).recover()
 
 
