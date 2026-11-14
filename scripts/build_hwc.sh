@@ -52,28 +52,24 @@ elif ! git -C hardware/interfaces apply --reverse --check "$adapter_patch"; then
   echo "The composer adapter contains other changes." >&2
   exit 1
 fi
-if [[ -d vendor/waydroid-manager-overlay ]]; then
-  diff -r "$project_dir/android/hwc/overlay" vendor/waydroid-manager-overlay
-else
-  cp -r "$project_dir/android/hwc/overlay" vendor/waydroid-manager-overlay
-fi
-
 jobs="${WAYDROID_MANAGER_BUILD_JOBS:-4}"
 targets=(hwcomposer.waydroid libhwc2on1adapter)
-if [[ -z "${WAYDROID_MANAGER_OVERLAY_APK:-}" ]]; then
-  targets+=(WaydroidManagerExternalDisplay)
-elif [[ ! -f "$WAYDROID_MANAGER_OVERLAY_APK" ]]; then
-  echo "The SDK-built framework overlay is missing." >&2
-  exit 1
-fi
+overlay_apk="${WAYDROID_MANAGER_OVERLAY_APK:-$output/WaydroidManagerExternalDisplay.apk}"
+overlay_dir="$(dirname "$overlay_apk")"
+for file in "$overlay_apk" "$overlay_dir/WaydroidManagerNavigationBar.apk" "$overlay_dir/system-ui.sha256"; do
+  if [[ ! -f "$file" ]]; then
+    echo "Build the resource overlays with scripts/build_framework_overlay.py first: $file" >&2
+    exit 1
+  fi
+done
 m -j"$jobs" "${targets[@]}"
 cp out/target/product/waydroid_arm64/vendor/lib64/hw/hwcomposer.waydroid.so "$output/"
 cp out/target/product/waydroid_arm64/vendor/lib64/libhwc2on1adapter.so "$output/"
-if [[ -z "${WAYDROID_MANAGER_OVERLAY_APK:-}" ]]; then
-  cp out/target/product/waydroid_arm64/system/product/overlay/WaydroidManagerExternalDisplay.apk "$output/"
-elif [[ "$(realpath "$WAYDROID_MANAGER_OVERLAY_APK")" != "$output/WaydroidManagerExternalDisplay.apk" ]]; then
-  cp "$WAYDROID_MANAGER_OVERLAY_APK" "$output/WaydroidManagerExternalDisplay.apk"
-fi
+for file in "$overlay_apk" "$overlay_dir/WaydroidManagerNavigationBar.apk" "$overlay_dir/system-ui.sha256"; do
+  if [[ "$(realpath "$file")" != "$output/$(basename "$file")" ]]; then
+    cp "$file" "$output/"
+  fi
+done
 cp "$project_dir/android/hwc/wayland_tablet.idc" "$output/"
 cp "$project_dir/android/hwc/display_settings.xml" "$output/"
 cp source-manifest.xml "$output/source-manifest.xml"

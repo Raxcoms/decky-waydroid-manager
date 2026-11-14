@@ -17,6 +17,7 @@ class VendorIdentity:
     composer_digest: str
     machine: int
     adapter_digest: str = ""
+    system_ui_digest: str = ""
 
 
 def elf_machine(path: Path) -> int:
@@ -52,7 +53,10 @@ def inspect_vendor(config_dir: Path, run) -> VendorIdentity:
         run(["debugfs", "-R", f"dump /{HWC_PATH} {library}", str(image)], timeout=15)
         adapter = Path(directory) / "adapter.so"
         run(["debugfs", "-R", f"dump /lib64/libhwc2on1adapter.so {adapter}", str(image)], timeout=15)
-        return VendorIdentity(fingerprint, int(sdk), digest(library), elf_machine(library), digest(adapter))
+        system_ui = Path(directory) / "SystemUI.apk"
+        run(["debugfs", "-R", f"dump /system_ext/priv-app/SystemUI/SystemUI.apk {system_ui}",
+             str(image.with_name("system.img"))], timeout=15)
+        return VendorIdentity(fingerprint, int(sdk), digest(library), elf_machine(library), digest(adapter), digest(system_ui))
 
 
 def select_payload(directory: Path, identity: VendorIdentity) -> dict[str, Path]:
@@ -73,6 +77,7 @@ def select_payload(directory: Path, identity: VendorIdentity) -> dict[str, Path]
             "stockComposerSha256": identity.composer_digest,
             "elfMachine": identity.machine,
             "stockAdapterSha256": identity.adapter_digest,
+            "stockSystemUiSha256": identity.system_ui_digest,
         }
         if any(metadata.get(key) != value for key, value in expected.items()):
             continue
@@ -83,6 +88,8 @@ def select_payload(directory: Path, identity: VendorIdentity) -> dict[str, Path]
                 ("WaydroidManagerExternalDisplay.apk", "overlaySha256"),
             "system/usr/idc/wayland_tablet.idc": ("wayland_tablet.idc", "inputConfigSha256"),
             "vendor/etc/display_settings.xml": ("display_settings.xml", "displaySettingsSha256"),
+            "system/product/overlay/WaydroidManagerNavigationBar.apk":
+                ("WaydroidManagerNavigationBar.apk", "navigationOverlaySha256"),
         }
         result = {}
         for target, (name, checksum) in payload_files.items():

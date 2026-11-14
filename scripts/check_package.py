@@ -24,7 +24,7 @@ def check(root: Path) -> None:
     for path in root.rglob("*"):
         if not path.name.lower().endswith((".apk", ".xapk", ".apk.part", ".xapk.part")):
             continue
-        if (path.name != "WaydroidManagerExternalDisplay.apk"
+        if (path.name not in {"WaydroidManagerExternalDisplay.apk", "WaydroidManagerNavigationBar.apk"}
                 or not path.is_relative_to(root / "bin/display-payloads")):
             raise RuntimeError("Android test packages must not be shipped")
     helper = root / "bin/waydroid-verifier.dex"
@@ -49,7 +49,7 @@ def check(root: Path) -> None:
         metadata = json.loads(manifest.read_text(encoding="utf-8"))
         identity = VendorIdentity(metadata["vendorFingerprint"], metadata["sdk"],
                                   metadata["stockComposerSha256"], metadata["elfMachine"],
-                                  metadata["stockAdapterSha256"])
+                                  metadata["stockAdapterSha256"], metadata["stockSystemUiSha256"])
         if identity in identities:
             raise RuntimeError("Multiple payloads target the same Waydroid vendor image")
         identities.add(identity)

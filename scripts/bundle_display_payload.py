@@ -16,6 +16,7 @@ def bundle(build: Path, identity: VendorIdentity, output: Path) -> Path:
         "WaydroidManagerExternalDisplay.apk": "overlaySha256",
         "wayland_tablet.idc": "inputConfigSha256",
         "display_settings.xml": "displaySettingsSha256",
+        "WaydroidManagerNavigationBar.apk": "navigationOverlaySha256",
     }
     metadata = {
         "vendorFingerprint": identity.fingerprint,
@@ -23,7 +24,10 @@ def bundle(build: Path, identity: VendorIdentity, output: Path) -> Path:
         "stockComposerSha256": identity.composer_digest,
         "stockAdapterSha256": identity.adapter_digest,
         "elfMachine": identity.machine,
+        "stockSystemUiSha256": identity.system_ui_digest,
     }
+    if (build / "system-ui.sha256").read_text().strip() != identity.system_ui_digest:
+        raise RuntimeError("The navigation overlay was built against a different System UI")
     for name, checksum in files.items():
         source = build / name
         if not source.is_file() or source.is_symlink():

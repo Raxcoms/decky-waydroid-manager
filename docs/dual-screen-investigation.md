@@ -5,6 +5,9 @@ secondary Wayland output. Android keeps its primary display and starts its own
 secondary launcher on the other screen. Apps that support Android presentations
 can draw their own content there.
 
+The secondary navbar provides Back and Home. Android's standard secondary-display
+policy does not expose Recents there.
+
 ## Enable or disable
 
 1. Open an Android app's menu, or **Waydroid actions** for the full container.
@@ -43,7 +46,7 @@ waydroid/lineage_waydroid_arm64/waydroid_arm64:13/TQ3A.230901.001/aleasto1022121
 ```
 
 Selection also checks the original composer and adapter hashes and the payload's
-architecture and file hashes. A different image needs a separately built and
+architecture, System UI APK hash, and payload file hashes. A different image needs a separately built and
 validated payload. Rebooting cannot resolve an image mismatch.
 
 Display discovery uses the current user's host environment snapshots. Integrators
@@ -78,6 +81,7 @@ Thor testing on November 14, 2026 verified:
 - external Android output at 1240 by 1080, approximately 60 Hz;
 - a distinct Android presentation on the real secondary compositor;
 - Android's secondary launcher through the actual Steam shortcut;
+- visible native Back and Home controls on the secondary output;
 - screen withdrawal returning to the existing KDE mobile session, followed by
   reconnection without restarting Android;
 - the container menu's enable confirmation and subsequent disable action;

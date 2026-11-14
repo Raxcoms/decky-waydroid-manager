@@ -23,6 +23,7 @@ class DisplayPayloadTests(unittest.TestCase):
         self.library.write_bytes(header)
         (self.payload / "libhwc2on1adapter.so").write_bytes(header)
         (self.payload / "WaydroidManagerExternalDisplay.apk").write_bytes(b"test overlay")
+        (self.payload / "WaydroidManagerNavigationBar.apk").write_bytes(b"test navigation overlay")
         (self.payload / "wayland_tablet.idc").write_text("touch.displayId = local:1\n")
         (self.payload / "display_settings.xml").write_text('<displays><display name="local:1" shouldShowSystemDecors="true" /></displays>')
         self.identity = VendorIdentity("test/vendor/fingerprint", 33, "a" * 64, 183)
@@ -33,10 +34,12 @@ class DisplayPayloadTests(unittest.TestCase):
             "elfMachine": 183,
             "composerSha256": digest(self.library),
             "stockAdapterSha256": "",
+            "stockSystemUiSha256": "",
             "adapterSha256": digest(self.payload / "libhwc2on1adapter.so"),
             "overlaySha256": digest(self.payload / "WaydroidManagerExternalDisplay.apk"),
             "inputConfigSha256": digest(self.payload / "wayland_tablet.idc"),
             "displaySettingsSha256": digest(self.payload / "display_settings.xml"),
+            "navigationOverlaySha256": digest(self.payload / "WaydroidManagerNavigationBar.apk"),
         }
         self.write_manifest()
 
@@ -45,7 +48,8 @@ class DisplayPayloadTests(unittest.TestCase):
 
     def test_requires_all_installed_vendor_identifiers(self):
         for field, value in [("vendorFingerprint", "other"), ("sdk", 30),
-                             ("stockComposerSha256", "b" * 64), ("elfMachine", 62)]:
+                             ("stockComposerSha256", "b" * 64), ("elfMachine", 62),
+                             ("stockSystemUiSha256", "different System UI")]:
             with self.subTest(field=field):
                 saved = self.metadata[field]
                 self.metadata[field] = value
@@ -61,6 +65,7 @@ class DisplayPayloadTests(unittest.TestCase):
             "system/product/overlay/WaydroidManagerExternalDisplay.apk": self.payload / "WaydroidManagerExternalDisplay.apk",
             "system/usr/idc/wayland_tablet.idc": self.payload / "wayland_tablet.idc",
             "vendor/etc/display_settings.xml": self.payload / "display_settings.xml",
+            "system/product/overlay/WaydroidManagerNavigationBar.apk": self.payload / "WaydroidManagerNavigationBar.apk",
         })
 
     def test_rejects_modified_library(self):
