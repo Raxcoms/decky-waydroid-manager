@@ -5,8 +5,8 @@ secondary Wayland output. Android keeps its primary display and starts its own
 secondary launcher on the other screen. Apps that support Android presentations
 can draw their own content there.
 
-The secondary navbar provides Back and Home. Android's standard secondary-display
-policy does not expose Recents there.
+The secondary navbar provides Back, Home and Recents. Recents opens the task
+switcher on the primary screen, using Android's native app-switch key.
 
 ## Enable or disable
 
@@ -81,7 +81,7 @@ Thor testing on November 14, 2026 verified:
 - external Android output at 1240 by 1080, approximately 60 Hz;
 - a distinct Android presentation on the real secondary compositor;
 - Android's secondary launcher through the actual Steam shortcut;
-- visible native Back and Home controls on the secondary output;
+- visible native Back, Home and Recents controls on the secondary output;
 - screen withdrawal returning to the existing KDE mobile session, followed by
   reconnection without restarting Android;
 - the container menu's enable confirmation and subsequent disable action;

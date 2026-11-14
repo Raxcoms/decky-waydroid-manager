@@ -43,6 +43,10 @@ views. Without it, Android 13 creates functional buttons with transparent icon
 colors. It uses the target System UI resource table; selection checks that APK's
 hash as well as the native vendor ABI.
 
+Recents uses Android's app-switch key so it also appears on the secondary bar.
+The task switcher opens on the primary display. This keeps the resource overlay
+small and does not add a separate task switcher.
+
 Payload selection checks the original composer and adapter hashes, vendor
 fingerprint, SDK, ELF architecture, and every runtime payload file. A different
 Waydroid image needs its own validated payload. Device detection is not involved.
