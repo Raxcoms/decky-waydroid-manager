@@ -158,7 +158,7 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(shortcut["exe"], str(self.plugin._launcher()))
         self.assertEqual(shortcut["launchOptions"], "app example.app")
 
-    def test_shortcut_repairs_replace_only_default_names_and_exact_old_wrappers(self):
+    def test_shortcut_repairs_preserve_existing_wrappers_and_custom_names(self):
         self.plugin._desktop_entries = lambda **kwargs: [{"package": "example.app", "name": "Example"}]
         write_shortcuts(self.path, {
             "0": (0, {"Exe": (1, str(self.plugin._launcher())), "appid": (2, 123),
@@ -169,7 +169,7 @@ class LibraryTests(unittest.TestCase):
                       "AppName": (1, "waydroid-launcher"), "LaunchOptions": (1, "app example.app")}),
         })
         self.assertEqual(self.plugin._legacy_shortcuts(1), [
-            {"appId": 123, "name": "Example"}, {"appId": 456, "launchOptions": "full"},
+            {"appId": 123, "name": "Example"},
         ])
 
     def test_third_party_packages_are_queried_with_waydroid_argument_separator(self):

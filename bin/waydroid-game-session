@@ -10,6 +10,7 @@ owns_session=0
 export WAYLAND_DISPLAY="$shared_display"
 export GAMESCOPE_WAYLAND_DISPLAY="$shared_display"
 service_helper="$(dirname "$0")/waydroid-service"
+source "$(dirname "$0")/waydroid-runtime-env"
 
 unit_active() {
   timeout 5 systemctl --user is-active --quiet "$session_unit"
@@ -36,6 +37,7 @@ if [ "$lease_owner" = 1 ]; then
   fi
   systemd-run --user --collect --quiet --unit="$session_unit" \
     --property=KillMode=control-group --property=TimeoutStopSec=45s \
+    "${runtime_environment[@]}" \
     --setenv="HOME=$HOME" --setenv="USER=$USER" --setenv="LOGNAME=$LOGNAME" --setenv="PATH=$PATH" \
     --setenv="XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" --setenv="XDG_DATA_HOME=${XDG_DATA_HOME:-$HOME/.local/share}" \
     --setenv="DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" \

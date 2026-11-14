@@ -58,6 +58,7 @@ class GameSessionTests(unittest.TestCase):
                 (directory / name).symlink_to(command)
             runner = directory / RUNNER.name
             runner.write_text(RUNNER.read_text())
+            (directory / "waydroid-runtime-env").write_text(RUNNER.with_name("waydroid-runtime-env").read_text())
             service = directory / "waydroid-service"
             service.write_text(
                 '#!/bin/sh\n'

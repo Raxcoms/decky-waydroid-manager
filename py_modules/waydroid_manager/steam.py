@@ -79,18 +79,6 @@ def shortcut_owners(path: Path, launcher: Path) -> dict[int, str | None]:
     return entries
 
 
-def migrated_launch_options(options: str) -> str | None:
-    # Older shortcuts used Armada's wrapper before running our launcher.
-    try:
-        args = shlex.split(options)
-    except ValueError:
-        return None
-    if args[:2] != ["/usr/libexec/armada/armada-game-launch", "%command%"]:
-        return None
-    action = args[2:]
-    if action == ["full"] or len(action) == 2 and action[0] == "app" and shortcut_key(" ".join(action)):
-        return " ".join(action)
-    return None
 
 
 def steam_roots(home: Path) -> tuple[Path, ...]:

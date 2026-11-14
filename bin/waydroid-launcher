@@ -20,24 +20,9 @@ steam_owner_pid="${WAYDROID_MANAGER_STEAM_OWNER_PID:-}"
 if [[ -z "$steam_owner_pid" && -n "${SteamAppId:-}${SteamGameId:-}" ]]; then
   steam_owner_pid="$PPID"
 fi
-if [[ "${WAYDROID_MANAGER_CLEAN_ENV:-}" != 1 ]]; then
-  exec env -i \
-    WAYDROID_MANAGER_CLEAN_ENV=1 \
-    HOME="$HOME" USER="${USER:-$(id -un)}" LOGNAME="${LOGNAME:-${USER:-$(id -un)}}" \
-    PATH="${PATH:-/usr/local/bin:/usr/bin}" \
-    LANG="${LANG:-C.UTF-8}" \
-    XDG_RUNTIME_DIR="$runtime_dir" \
-    DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}" \
-    DISPLAY="$parent_display" XAUTHORITY="${XAUTHORITY:-}" \
-    GAMESCOPE_WAYLAND_DISPLAY="$parent_wayland" WAYLAND_DISPLAY="$parent_wayland" \
-    SteamAppId="${SteamAppId:-}" SteamGameId="${SteamGameId:-}" \
-    WAYDROID_MANAGER_EXTERNAL_WAYLAND_DISPLAY="${WAYDROID_MANAGER_EXTERNAL_WAYLAND_DISPLAY:-}" \
-    WAYDROID_MANAGER_EXTERNAL_WAYLAND_ENV="${WAYDROID_MANAGER_EXTERNAL_WAYLAND_ENV:-}" \
-    XDG_STATE_HOME="${XDG_STATE_HOME:-}" \
-    XDG_DATA_HOME="$data_home" \
-    WAYDROID_MANAGER_STEAM_OWNER_PID="$steam_owner_pid" \
-    "$0" "$@"
-fi
+export WAYDROID_MANAGER_STEAM_OWNER_PID="$steam_owner_pid"
+export XDG_RUNTIME_DIR="$runtime_dir" XDG_DATA_HOME="$data_home"
+source "$launcher_dir/waydroid-runtime-env"
 
 parent_socket="$parent_wayland"
 if [[ "$parent_socket" != /* ]]; then
@@ -73,6 +58,7 @@ if [[ ! -S "$shared_socket" || ! -f "$shared_ready" ]]; then
     fi
     systemd-run --user --collect --quiet --unit="$shared_unit" \
       --property=KillMode=control-group \
+      "${runtime_environment[@]}" \
       --setenv="XDG_RUNTIME_DIR=$runtime_dir" \
       --setenv="DISPLAY=$parent_display" \
       --setenv="WAYDROID_MANAGER_EXTERNAL_WAYLAND_DISPLAY=${WAYDROID_MANAGER_EXTERNAL_WAYLAND_DISPLAY:-}" \
@@ -95,8 +81,6 @@ export WAYDROID_MANAGER_MODE="$mode"
 export WAYDROID_MANAGER_PACKAGE="$package"
 export WAYDROID_MANAGER_LOG_DIR="$log_dir"
 export WAYDROID_MANAGER_SESSION_RUNNER="$session_runner"
-unset ENABLE_GAMESCOPE_WSI
-export DISABLE_GAMESCOPE_WSI=1
 
 # A private socket keeps Android attached to this Steam launch without rendering it again.
 : >"$log_dir/wayland.log"

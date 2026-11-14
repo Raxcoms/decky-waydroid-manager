@@ -22,7 +22,8 @@ from waydroid_manager.artwork import ARTWORK_TYPES, ARTWORK_VERSION, artwork_att
 from waydroid_manager.metrics import GpuMetrics
 from waydroid_manager.packages import apk_members, stage_apks, install_apks, check_result
 from waydroid_manager.verification import InstallCancelled, InstallVerification, commit_install
-from waydroid_manager.steam import known_accounts, read_shortcuts, shortcuts_path, shortcut_key, shortcut_owners, migrated_launch_options
+from waydroid_manager.steam import known_accounts, read_shortcuts, shortcuts_path, shortcut_key, shortcut_owners
+from waydroid_manager.host import default_launch_options, updated_launch_options
 from waydroid_manager.container import CONFIG_DIR, SERVICE, container_identity, container_pid, registered_guest, session_uses_socket, vendor_overlay_warning
 from waydroid_manager.guest import keep_package_guest_running, run_dex, set_media_volume_max
 from waydroid_manager.image import launcher_packages, owned_directory, require_unmounted, require_unredirected, run_init
@@ -299,7 +300,7 @@ class Plugin:
             "name": name,
             "exe": str(self._launcher()),
             "startDir": str(home),
-            "launchOptions": "full" if package is None else f"app {package}",
+            "launchOptions": default_launch_options("full" if package is None else f"app {package}"),
             "icon": icon,
             "key": WAYDROID_SHORTCUT_KEY if package is None else package,
             "accountId": account_id,
@@ -458,7 +459,7 @@ class Plugin:
             entry = {key.casefold(): value for key, value in entry.items()}
             exe = str(entry.get("exe", (1, ""))[1]).strip('"')
             existing_options = str(entry.get("launchoptions", (1, ""))[1])
-            options = migrated_launch_options(existing_options)
+            options = updated_launch_options(existing_options)
             app_id = entry.get("appid", (2, 0))[1]
             key = shortcut_key(existing_options)
             if Path(exe).resolve() != self._launcher().resolve() or not key or not isinstance(app_id, int) or not app_id:
