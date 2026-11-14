@@ -15,6 +15,7 @@ def bundle(build: Path, identity: VendorIdentity, output: Path) -> Path:
         "libhwc2on1adapter.so": "adapterSha256",
         "WaydroidManagerExternalDisplay.apk": "overlaySha256",
         "wayland_tablet.idc": "inputConfigSha256",
+        "display_settings.xml": "displaySettingsSha256",
     }
     metadata = {
         "vendorFingerprint": identity.fingerprint,
@@ -37,7 +38,7 @@ def bundle(build: Path, identity: VendorIdentity, output: Path) -> Path:
     target = output / identity.composer_digest
     target.mkdir(parents=True, exist_ok=False)
     try:
-        for name in (*files, "source-manifest.xml", "composer-source.patch"):
+        for name in (*files, "source-manifest.xml", "composer-source.patch", "adapter-source.patch", "NOTICE.txt"):
             shutil.copyfile(build / name, target / name)
         (target / "manifest.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
         select_payload(output, identity)

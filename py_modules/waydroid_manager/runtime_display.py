@@ -42,6 +42,17 @@ class RuntimeDisplayLease:
                 return f"lowerdir={self.root / 'overlay'}:{target}" in filesystem.split()[2].split(",")
         return False
 
+    @staticmethod
+    def _display_settings(source: Path, existing: Path) -> bytes:
+        if not existing.exists():
+            return source.read_bytes()
+        if existing.is_symlink() or not existing.is_file() or existing.stat().st_size > 1024 * 1024:
+            raise RuntimeError("Waydroid display settings are not a regular configuration file")
+        from .proc import clean_env
+        # Decky's bundled Python does not include ElementTree.
+        return subprocess.check_output(["/usr/bin/python3", "-I", str(Path(__file__).with_name("display_settings.py")),
+                                        str(existing)], env=clean_env(), timeout=5)
+
     def acquire(self, files: dict[str, Path], external: Path, run, display: Path) -> None:
         from .session_config import SessionConfigLease
 
@@ -58,7 +69,10 @@ class RuntimeDisplayLease:
                     raise RuntimeError("Invalid external display overlay path")
                 target = overlay / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(source, target)
+                if name == "vendor/etc/display_settings.xml":
+                    target.write_bytes(self._display_settings(source, self.config_dir / "overlay" / relative))
+                else:
+                    shutil.copyfile(source, target)
                 target.chmod(0o644)
             installed_overlay = self.config_dir / "overlay"
             if not installed_overlay.is_dir() or installed_overlay.is_symlink():

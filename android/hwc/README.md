@@ -1,25 +1,43 @@
-# External display composer
+# External display payload
 
-This patch is being adapted for Waydroid's Lineage 20 hardware composer at
-`a575cfcc12ab79a122844218f2c6df5bd208cca0`.
+The plugin carries an external-display adaptation for Waydroid's Lineage 20
+composer at `a575cfcc12ab79a122844218f2c6df5bd208cca0`. It connects to a
+host-provided Wayland output; sizes and timing come from that compositor.
+There are no device names, DRM connectors, or panel rules.
 
-It is not yet built or enabled by the plugin. Do not install it into a live vendor
-image until the build and display lifecycle tests pass.
+The starting implementation is adapted from virtudude's external-display work
+in Armada's Lepton sources. The plugin owns and builds this adaptation; the host
+does not need Armada's Android patch. Upstream licenses and bundled library
+notices are included with each payload.
 
-The implementation uses `waydroid.wayland_display_ext` to connect to the external
-Wayland socket supplied for a plugin session. Display sizes come from the host
-compositor. There are no device names, DRM connectors, or panel rules.
+## Build
 
-The starting implementation is adapted from virtudude's external-display patch
-in Armada's Lepton sources. The plugin carries and builds its own adaptation;
-the installed host does not need that patch. Upstream source licenses apply.
+1. Run `scripts/prepare_hwc_build.sh` with a dedicated Linux build directory.
+   Android sources and build outputs need substantial disk space and memory.
+2. Run `scripts/build_hwc.sh ANDROID_SOURCE_DIRECTORY OUTPUT_DIRECTORY`.
+   It checks the pinned composer revision, applies the composer and adapter
+   patches, and builds the native libraries and framework resource overlay.
+3. Inspect the target vendor image with `inspect_vendor` from
+   `py_modules/waydroid_manager/display_payload.py` and save its `VendorIdentity`
+   fields as JSON.
+4. Run `python scripts/bundle_display_payload.py OUTPUT_DIRECTORY IDENTITY.json`.
+   This records hashes, sources, and licenses under `bin/display-payloads`.
+5. Test normal launch, secondary-home presentation, navigation on both displays,
+   release, reconnection, backend exit, and an ordinary Waydroid launch afterward.
 
-## Build workspace
+For a native-only rebuild, `scripts/build_framework_overlay.py` can build the
+resource overlay with Android SDK build tools 35 and the Android 28 platform.
+Pass its APK as `WAYDROID_MANAGER_OVERLAY_APK` to `build_hwc.sh`. The SDK script
+requires an explicit signing key and certificate; never bundle private keys.
 
-Run `scripts/prepare_hwc_build.sh` with a dedicated Linux build directory to fetch
-the Lineage 20 and Waydroid sources. The script records resolved source revisions
-in `source-manifest.xml` after synchronization.
+## Runtime
 
-The completed payload will need to include the compiled library and its source
-manifest. Selection must check Android architecture, vendor ABI, and the original
-composer hash before any overlay is activated.
+The temporary properties select the external socket and control its hotplug
+lifecycle. The framework overlay disables mirroring and enables independent
+display focus. Vendor defaults enable Android's secondary home and local input
+method on the external Android display. Existing vendor-overlay display settings
+are merged into staging and left unchanged on disk.
+
+Payload selection checks the original composer and adapter hashes, vendor
+fingerprint, SDK, ELF architecture, and every runtime payload file. A different
+Waydroid image needs its own validated payload. Device detection is not involved.

@@ -75,7 +75,10 @@ elif [[ "$(realpath "$WAYDROID_MANAGER_OVERLAY_APK")" != "$output/WaydroidManage
   cp "$WAYDROID_MANAGER_OVERLAY_APK" "$output/WaydroidManagerExternalDisplay.apk"
 fi
 cp "$project_dir/android/hwc/wayland_tablet.idc" "$output/"
+cp "$project_dir/android/hwc/display_settings.xml" "$output/"
 cp source-manifest.xml "$output/source-manifest.xml"
 python3 .repo/repo/repo manifest -r -o "$output/patched-source-manifest.xml"
 git -C hardware/waydroid diff --binary > "$output/composer-source.patch"
+cp "$adapter_patch" "$output/adapter-source.patch"
+python3 "$project_dir/scripts/display_notices.py" "$PWD" "$output/NOTICE.txt"
 sha256sum "$output/hwcomposer.waydroid.so"

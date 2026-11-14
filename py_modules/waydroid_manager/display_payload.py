@@ -82,6 +82,7 @@ def select_payload(directory: Path, identity: VendorIdentity) -> dict[str, Path]
             "system/product/overlay/WaydroidManagerExternalDisplay.apk":
                 ("WaydroidManagerExternalDisplay.apk", "overlaySha256"),
             "system/usr/idc/wayland_tablet.idc": ("wayland_tablet.idc", "inputConfigSha256"),
+            "vendor/etc/display_settings.xml": ("display_settings.xml", "displaySettingsSha256"),
         }
         result = {}
         for target, (name, checksum) in payload_files.items():

@@ -1,0 +1,1068 @@
+diff --git a/hwcomposer/gralloc_handler.cpp b/hwcomposer/gralloc_handler.cpp
+index d2b405e..d1ce5c9 100644
+--- a/hwcomposer/gralloc_handler.cpp
++++ b/hwcomposer/gralloc_handler.cpp
+@@ -64,7 +64,7 @@ namespace {
+     }
+ 
+     const wl_buffer_listener buffer_listener {
+-        [](void *, struct wl_buffer *) {}
++        [](void *, struct wl_buffer *wl_buffer) { buffer_released(wl_buffer); }
+     };
+ }
+ std::unique_ptr<buffer> create_shm_wl_buffer(display *display, const buffer_metadata& metadata, buffer_handle_t handle) {
+@@ -94,6 +94,7 @@ std::unique_ptr<buffer> create_shm_wl_buffer(display *display, const buffer_meta
+     struct wl_shm_pool *pool = wl_shm_create_pool(display->shm, fd, size);
+     buf->wl_buffer = wl_shm_pool_create_buffer(pool, 0, metadata.width, metadata.height, shm_stride, shm_format);
+     wl_buffer_add_listener(buf->wl_buffer, &buffer_listener, nullptr);
++    track_buffer_release(buf.get(), display);
+     wl_shm_pool_destroy(pool);
+     close(fd);
+ 
+@@ -185,6 +186,7 @@ std::unique_ptr<buffer> create_dmabuf_wl_buffer(display *display, const buffer_m
+     buf->wl_buffer = zwp_linux_buffer_params_v1_create_immed(params, buf->metadata.width, buf->metadata.height, drm_format, 0);
+     zwp_linux_buffer_params_v1_destroy(params);
+     wl_buffer_add_listener(buf->wl_buffer, &buffer_listener, nullptr);
++    track_buffer_release(buf.get(), display);
+ 
+     return buf;
+ }
+@@ -211,6 +213,7 @@ std::unique_ptr<buffer> create_android_wl_buffer(display *display, const buffer_
+     android_wlegl_handle_destroy(wlegl_handle);
+ 
+     wl_buffer_add_listener(buf->wl_buffer, &buffer_listener, nullptr);
++    track_buffer_release(buf.get(), display);
+ 
+     return buf;
+ }
+@@ -337,4 +340,4 @@ gralloc_handler::update_shm_buffer_func gralloc_handler::select_update_shm_buffe
+ gralloc_handler::gralloc_handler(display *display)
+     : get_buffer_metadata_impl(select_get_buffer_metadata_impl(display->gtype))
+     , create_buffer_impl(select_create_buffer_impl(display, display->gtype))
+-    , update_shm_buffer_impl(select_update_shm_buffer_impl(display->gtype)) { }
+\ No newline at end of file
++    , update_shm_buffer_impl(select_update_shm_buffer_impl(display->gtype)) { }
+diff --git a/hwcomposer/hwcomposer.cpp b/hwcomposer/hwcomposer.cpp
+index d24b035..afe820e 100644
+--- a/hwcomposer/hwcomposer.cpp
++++ b/hwcomposer/hwcomposer.cpp
+@@ -85,14 +85,15 @@ namespace {
+         return src;
+     }
+ 
+-    buffer *find_cached_buffer(waydroid_hwc_composer_device_1 *pdev, const buffer_metadata &metadata, buffer_handle_t handle) {
+-        auto it = pdev->display->buffer_map.find(handle);
+-        if (it != pdev->display->buffer_map.end()) {
++    buffer *find_cached_buffer(display *display, const buffer_metadata &metadata, buffer_handle_t handle) {
++        auto it = display->buffer_map.find(handle);
++        if (it != display->buffer_map.end()) {
+             /* FIXME We can't be sure that our cached buffer actually refers to the buffer corresponding to the given handle
+              * It's possible that a new buffer got the same handle after the old one was destroyed
+              * At least check for the metadata to match. This way this situation is hopefully unlikely */
+             if (it->second->metadata != metadata) {
+-                pdev->display->buffer_map.erase(it);
++                display->retired_buffers.push_back(std::move(it->second));
++                display->buffer_map.erase(it);
+             } else {
+                 return it->second.get();
+             }
+@@ -100,33 +101,33 @@ namespace {
+         return nullptr;
+     }
+ 
+-    buffer *get_wl_buffer(waydroid_hwc_composer_device_1 *pdev, hwc_layer_1_t *layer, size_t pos) {
++    buffer *get_wl_buffer(waydroid_hwc_composer_device_1 *pdev, hwc_layer_1_t *layer, size_t pos, display *display) {
+         if (!layer->handle) {
+             ALOGE("cannot create a wayland buffer for a null handle");
+             return nullptr;
+         }
+ 
+         const auto& gralloc_handler = pdev->gralloc_handler;
+-        auto metadata = gralloc_handler.get_buffer_metadata(pdev->display, layer, pos);
+-        buffer *buf = find_cached_buffer(pdev, metadata, layer->handle);
++        auto metadata = gralloc_handler.get_buffer_metadata(display, layer, pos);
++        buffer *buf = find_cached_buffer(display, metadata, layer->handle);
+ 
+         if (!buf) {
+             std::unique_ptr<buffer> result;
+             if (layer->flags & HWC_IS_CURSOR_LAYER)
+-                result = pdev->display->cursor_handler->create_buffer(pdev, metadata, layer);
++                result = display->cursor_handler->create_buffer(pdev, metadata, layer);
+             else
+-                result = gralloc_handler.create_buffer(pdev->display, metadata, layer->handle);
++                result = gralloc_handler.create_buffer(display, metadata, layer->handle);
+             if (!result) {
+                 ALOGE("failed to create a wayland buffer");
+                 return nullptr;
+             }
+-            auto emplace_result = pdev->display->buffer_map.emplace(layer->handle, std::move(result));
++            auto emplace_result = display->buffer_map.emplace(layer->handle, std::move(result));
+             assert(emplace_result.second);
+             buf = emplace_result.first->second.get();
+         }
+ 
+         if (buf->isShm)
+-            gralloc_handler.update_shm_buffer(pdev->display, buf);
++            gralloc_handler.update_shm_buffer(display, buf);
+         return buf;
+     }
+ 
+@@ -195,6 +196,15 @@ static int hwc_prepare(hwc_composer_device_1_t* dev,
+     hwc_display_contents_1_t *contents = displays[HWC_DISPLAY_PRIMARY];
+     assert(contents);
+ 
++    // SurfaceFlinger composites the external display; only its target is presented
++    if (pdev->ext_display && numDisplays > HWC_DISPLAY_EXTERNAL && displays[HWC_DISPLAY_EXTERNAL]) {
++        hwc_display_contents_1_t *ext = displays[HWC_DISPLAY_EXTERNAL];
++        for (size_t i = 0; i < ext->numHwLayers; i++) {
++            if (ext->hwLayers[i].compositionType != HWC_FRAMEBUFFER_TARGET)
++                ext->hwLayers[i].compositionType = HWC_FRAMEBUFFER;
++        }
++    }
++
+     pdev->selected_mode = select_mode(pdev, contents);
+     if (pdev->selected_mode->setup_prepare(pdev, contents) != 0) {
+         return -1;
+@@ -237,6 +247,8 @@ static void* hwc_vsync_thread(void* data) {
+               __FILE__, __LINE__, strerror(errno));
+     }
+     bool vsync_enabled = false;
++    uint64_t primary_tick = 0;
++    uint64_t external_tick = 0;
+ 
+     struct timespec wait_time;
+     wait_time.tv_sec = 0;
+@@ -255,21 +267,36 @@ static void* hwc_vsync_thread(void* data) {
+         }
+ 
+         vsync_enabled = pdev->vsync_callback_enabled;
++        bool external_vsync = pdev->ext_display && pdev->ext_display->connected &&
++                              pdev->ext_active && pdev->ext_vsync_enabled;
++        if (pdev->ext_display && !pdev->ext_display->connected && pdev->ext_announced.exchange(false))
++            pdev->procs->hotplug(pdev->procs, HWC_DISPLAY_EXTERNAL, 0);
+ 
+         if (clock_gettime(CLOCK_MONOTONIC, &rt) == -1) {
+             ALOGE("%s:%d error in vsync thread clock_gettime: %s",
+                   __FILE__, __LINE__, strerror(errno));
+         }
+ 
+-        wait_time.tv_nsec = time_to_sleep_to_next_vsync(&rt, pdev->last_vsync_ns, pdev->vsync_period_ns);
++        int32_t period = external_vsync ? std::min(pdev->vsync_period_ns, pdev->ext_vsync_period_ns)
++                                       : pdev->vsync_period_ns;
++        wait_time.tv_nsec = time_to_sleep_to_next_vsync(&rt, pdev->last_vsync_ns, period);
+ 
+-        if (!vsync_enabled || !pdev->procs || !pdev->procs->vsync) {
++        if ((!vsync_enabled && !external_vsync) || !pdev->procs || !pdev->procs->vsync) {
+             ATRACE_END();
+             continue;
+         }
+ 
+         int64_t timestamp = (uint64_t)rt.tv_sec * 1e9 + rt.tv_nsec;
+-        pdev->procs->vsync(pdev->procs, 0, timestamp);
++        uint64_t current_primary_tick = uint64_t(timestamp) / pdev->vsync_period_ns;
++        uint64_t current_external_tick = uint64_t(timestamp) / pdev->ext_vsync_period_ns;
++        if (vsync_enabled && current_primary_tick != primary_tick) {
++            pdev->procs->vsync(pdev->procs, HWC_DISPLAY_PRIMARY, timestamp);
++            primary_tick = current_primary_tick;
++        }
++        if (external_vsync && current_external_tick != external_tick) {
++            pdev->procs->vsync(pdev->procs, HWC_DISPLAY_EXTERNAL, timestamp);
++            external_tick = current_external_tick;
++        }
+         ATRACE_END();
+     }
+ 
+@@ -337,30 +364,42 @@ static void apply_surface_damage(hwc_layer_1 *hwc_layer, surface_context &surfac
+     });
+ }
+ 
+-static int apply_hwc_layer_to_surface_context(waydroid_hwc_composer_device_1 *pdev, hwc_layer_1 *hwc_layer, size_t hwc_layer_index, surface_context &surface_context, buffer *buf = nullptr) {
++static int apply_hwc_layer_to_surface_context(waydroid_hwc_composer_device_1 *pdev, hwc_layer_1 *hwc_layer, size_t hwc_layer_index, surface_context &surface_context, buffer *buf = nullptr, display *display = nullptr) {
+     constexpr int acquireWarningMS = 100;
+     int res = -1;
+ 
++    if (!display)
++        display = pdev->display;
++
+     if (!buf) {
+-        buf = get_wl_buffer(pdev, hwc_layer, hwc_layer_index);
++        buf = get_wl_buffer(pdev, hwc_layer, hwc_layer_index, display);
+         if (!buf) {
+             ALOGE("Failed to get wayland buffer");
+             goto out;
+         }
+     }
+ 
+-    // TODO: Implement per-hwc_layer explicit synchronization
+-    hwc_layer->releaseFenceFd = -1;
+-
+-    surface_context.attach_buffer(*buf);
+-    apply_surface_damage(hwc_layer, surface_context);
++    if (surface_context.attached == buf->id && buf->in_use()) {
++        // Attaching again could pair this use with a release event already queued
++        hwc_layer->releaseFenceFd = buf->current_release_fence();
++    } else {
++        hwc_layer->releaseFenceFd = buf->next_release_fence();
++        surface_context.attach_buffer(*buf);
++        apply_surface_damage(hwc_layer, surface_context);
++    }
++    if (hwc_layer->compositionType == HWC_FRAMEBUFFER_TARGET) {
++        // hwc2on1adapter hands this back one set later, for the previous target
++        if (display->retire_fence >= 0)
++            close(display->retire_fence);
++        display->retire_fence = hwc_layer->releaseFenceFd >= 0 ? dup(hwc_layer->releaseFenceFd) : -1;
++    }
+     surface_context.set_buffer_transform(hwc_transform_to_buffer_transform(hwc_layer->transform));
+     // Scaling can only be supported correctly with wp_viewport
+     if (surface_context.viewport) {
+         surface_context.set_crop(rect_apply_transform(hwc_layer->sourceCropf, hwc_layer->transform));
+-        surface_context.set_display_frame(hwc_layer->displayFrame, pdev->display->scale);
++        surface_context.set_display_frame(hwc_layer->displayFrame, display->scale);
+     } else {
+-        surface_context.set_buffer_scale(pdev->display->scale);
++        surface_context.set_buffer_scale(display->scale);
+     }
+ 
+     // TODO: Implement explicit synchronization
+@@ -384,7 +423,7 @@ out:
+ }
+ 
+ int apply_hwc_layer_to_window(waydroid_hwc_composer_device_1 *pdev, hwc_layer_1 *hwc_layer, size_t hwc_layer_index, window *window) {
+-    buffer *buf = get_wl_buffer(pdev, hwc_layer, hwc_layer_index);
++    buffer *buf = get_wl_buffer(pdev, hwc_layer, hwc_layer_index, pdev->display);
+     if (!buf) {
+         ALOGE("Failed to get wayland buffer");
+         if (hwc_layer->acquireFenceFd != -1) {
+@@ -435,6 +474,66 @@ static void reset_per_commit_state_window(waydroid_hwc_composer_device_1 *pdev)
+     }
+ }
+ 
++// The enabled launch holds this output until its last display lease ends.
++static bool show_external(waydroid_hwc_composer_device_1 *pdev, bool content) {
++    window *win = pdev->ext_window.get();
++
++    if (!content) {
++        if (!pdev->ext_hidden) {
++            win->unmap();
++            pdev->ext_hidden = true;
++        }
++        return false;
++    }
++    if (pdev->ext_hidden) {
++        if (!win->xdg_surface)
++            win->request_map();
++        if (!win->configured)
++            return false;
++        wl_surface_attach(win->surface, win->bg_buffer, 0, 0);
++        wl_surface_damage(win->surface, 0, 0, INT32_MAX, INT32_MAX);
++        pdev->ext_hidden = false;
++    }
++    return true;
++}
++
++static void set_external(waydroid_hwc_composer_device_1 *pdev, hwc_display_contents_1_t *contents) {
++    struct display *d = pdev->ext_display;
++    window *win = pdev->ext_window.get();
++
++    purge_retired_buffers(d);
++    if (contents->flags & HWC_GEOMETRY_CHANGED)
++        retire_buffers(d);
++
++    bool shown = d->connected && show_external(pdev, pdev->ext_active);
++
++    for (size_t i = 0; i < contents->numHwLayers; i++) {
++        hwc_layer_1_t *layer = &contents->hwLayers[i];
++        layer->releaseFenceFd = -1;
++
++        if (shown && layer->compositionType == HWC_FRAMEBUFFER_TARGET && layer->handle) {
++            win->reset_per_set_state();
++            // closes the acquire fence
++            apply_hwc_layer_to_surface_context(pdev, layer, i, win->get_next_layer(), nullptr, d);
++            wl_surface_commit(win->surface);
++        } else if (layer->acquireFenceFd != -1) {
++            close(layer->acquireFenceFd);
++        }
++        layer->acquireFenceFd = -1;
++    }
++    if (d->connected)
++        wl_display_flush(d->display);
++}
++
++// Without a framebuffer target this set's timeline point stands in.
++static int take_retire_fence(waydroid_hwc_composer_device_1 *pdev, struct display *d) {
++    int fence = d->retire_fence;
++    d->retire_fence = -1;
++    if (fence < 0)
++        fence = sw_sync_fence_create(pdev->timeline_fd, "hwc_contents_release", pdev->next_sync_point);
++    return fence;
++}
++
+ static int hwc_set(struct hwc_composer_device_1* dev,size_t numDisplays,
+                    hwc_display_contents_1_t** displays) {
+     if (HWC_DISPLAY_PRIMARY >= numDisplays || !displays)
+@@ -442,11 +541,23 @@ static int hwc_set(struct hwc_composer_device_1* dev,size_t numDisplays,
+ 
+     auto *pdev = static_cast<waydroid_hwc_composer_device_1 *>(dev);
+ 
++    hwc_display_contents_1_t *ext = nullptr;
++    {
++        std::lock_guard<std::mutex> lock(pdev->ext_mutex);
++        if (pdev->ext_display && !pdev->ext_active && !pdev->ext_hidden)
++            show_external(pdev, false);
++        if (pdev->ext_display && numDisplays > HWC_DISPLAY_EXTERNAL)
++            ext = displays[HWC_DISPLAY_EXTERNAL];
++        if (ext)
++            set_external(pdev, ext);
++    }
++
+     hwc_display_contents_1_t* contents = displays[HWC_DISPLAY_PRIMARY];
+     assert(contents);
+ 
+-    if (pdev->should_compose && contents->flags & HWC_GEOMETRY_CHANGED) {
+-        pdev->display->buffer_map.clear();
++    purge_retired_buffers(pdev->display);
++    if (contents->flags & HWC_GEOMETRY_CHANGED) {
++        retire_buffers(pdev->display);
+     }
+ 
+     auto& mode = pdev->selected_mode;
+@@ -482,7 +593,10 @@ static int hwc_set(struct hwc_composer_device_1* dev,size_t numDisplays,
+     wl_display_flush(pdev->display->display);
+ 
+     sw_sync_timeline_inc(pdev->timeline_fd, 1);
+-    contents->retireFenceFd = sw_sync_fence_create(pdev->timeline_fd, "hwc_contents_release", ++pdev->next_sync_point);
++    ++pdev->next_sync_point;
++    contents->retireFenceFd = take_retire_fence(pdev, pdev->display);
++    if (ext)
++        ext->retireFenceFd = take_retire_fence(pdev, pdev->ext_display);
+ 
+     if (pdev->display->needHotplug && pdev->procs && pdev->procs->hotplug) {
+         pdev->procs->hotplug(pdev->procs, 0, 1);
+@@ -502,6 +616,8 @@ static int hwc_event_control(struct hwc_composer_device_1* dev, int disp,
+     }
+ 
+     if (disp != HWC_DISPLAY_PRIMARY) {
++        if (disp == HWC_DISPLAY_EXTERNAL && event == HWC_EVENT_VSYNC)
++            pdev->ext_vsync_enabled = enabled;
+         return 0;
+     }
+ 
+@@ -520,14 +636,15 @@ static int hwc_set_power_move(struct hwc_composer_device_1 *dev __unused, int di
+     return 0;
+ }
+ 
+-static int hwc_query(struct hwc_composer_device_1 *, int what, int *value) {
++static int hwc_query(struct hwc_composer_device_1 *dev, int what, int *value) {
++    auto *pdev = static_cast<waydroid_hwc_composer_device_1 *>(dev);
+     switch (what) {
+         case HWC_BACKGROUND_LAYER_SUPPORTED:
+             // TODO: Support background layer
+             *value = 0;
+             break;
+         case HWC_DISPLAY_TYPES_SUPPORTED:
+-            *value = HWC_DISPLAY_PRIMARY;
++            *value = HWC_DISPLAY_PRIMARY_BIT | (pdev->ext_display ? HWC_DISPLAY_EXTERNAL_BIT : 0);
+             break;
+         default:
+             // unsupported query
+@@ -545,13 +662,17 @@ static void hwc_register_procs(struct hwc_composer_device_1* dev,
+     pdev->display->procs = procs;
+ }
+ 
+-static int hwc_get_display_configs(struct hwc_composer_device_1* dev __unused,
++static bool is_external(struct hwc_composer_device_1* dev, int disp) {
++    return disp == HWC_DISPLAY_EXTERNAL && static_cast<waydroid_hwc_composer_device_1 *>(dev)->ext_display;
++}
++
++static int hwc_get_display_configs(struct hwc_composer_device_1* dev,
+                                    int disp, uint32_t* configs, size_t* numConfigs) {
+     if (*numConfigs == 0) {
+         return 0;
+     }
+ 
+-    if (disp == HWC_DISPLAY_PRIMARY) {
++    if (disp == HWC_DISPLAY_PRIMARY || is_external(dev, disp)) {
+         configs[0] = 0;
+         *numConfigs = 1;
+         return 0;
+@@ -602,7 +723,25 @@ static int hwc_get_display_attributes(struct hwc_composer_device_1* dev,
+                                       const uint32_t* attributes, int32_t* values) {
+     auto *pdev = static_cast<waydroid_hwc_composer_device_1 *>(dev);
+     for (int i = 0; attributes[i] != HWC_DISPLAY_NO_ATTRIBUTE; i++) {
+-        if (disp == HWC_DISPLAY_PRIMARY) {
++        if (is_external(dev, disp)) {
++            struct display *d = pdev->ext_display;
++            switch (attributes[i]) {
++                case HWC_DISPLAY_VSYNC_PERIOD:
++                    values[i] = pdev->ext_vsync_period_ns;
++                    break;
++                case HWC_DISPLAY_WIDTH:
++                    values[i] = floor(d->width * d->scale);
++                    break;
++                case HWC_DISPLAY_HEIGHT:
++                    values[i] = floor(d->height * d->scale);
++                    break;
++                default:
++                    values[i] = hwc_attribute(pdev, attributes[i]);
++            }
++            if (values[i] == -EINVAL) {
++                return -EINVAL;
++            }
++        } else if (disp == HWC_DISPLAY_PRIMARY) {
+             values[i] = hwc_attribute(pdev, attributes[i]);
+             if (values[i] == -EINVAL) {
+                 return -EINVAL;
+@@ -616,14 +755,14 @@ static int hwc_get_display_attributes(struct hwc_composer_device_1* dev,
+     return 0;
+ }
+ 
+-static int hwc_get_active_config(struct hwc_composer_device_1* dev __unused, int disp) {
+-    if (disp == HWC_DISPLAY_PRIMARY)
++static int hwc_get_active_config(struct hwc_composer_device_1* dev, int disp) {
++    if (disp == HWC_DISPLAY_PRIMARY || is_external(dev, disp))
+         return 0;
+     return -EINVAL;
+ }
+ 
+-static int hwc_set_active_config(struct hwc_composer_device_1* dev __unused, int disp, int index) {
+-    if (disp == HWC_DISPLAY_PRIMARY && index == 0)
++static int hwc_set_active_config(struct hwc_composer_device_1* dev, int disp, int index) {
++    if ((disp == HWC_DISPLAY_PRIMARY || is_external(dev, disp)) && index == 0)
+         return 0;
+     return -EINVAL;
+ }
+@@ -697,6 +836,33 @@ shutdown:
+     return NULL;
+ }
+ 
++static void* hwc_ext_hotplug_thread(void* data) {
++    auto *pdev = static_cast<waydroid_hwc_composer_device_1 *>(data);
++
++    while (pdev->ext_display->connected) {
++        if (pdev->procs && pdev->procs->hotplug && property_get_bool("sys.boot_completed", false)) {
++            bool active = property_get_bool("waydroid.external_display_active", false);
++            {
++                std::lock_guard<std::mutex> lock(pdev->ext_mutex);
++                pdev->ext_active = active;
++                // Display removal may not produce another frame on an idle primary.
++                if (!active && !pdev->ext_hidden) {
++                    show_external(pdev, false);
++                    wl_display_flush(pdev->ext_display->display);
++                }
++            }
++            if (active != pdev->ext_announced) {
++                pdev->procs->hotplug(pdev->procs, HWC_DISPLAY_EXTERNAL, active);
++                pdev->ext_announced = active;
++                if (pdev->procs->invalidate)
++                    pdev->procs->invalidate(pdev->procs);
++            }
++        }
++        usleep(100 * 1000);
++    }
++    return NULL;
++}
++
+ static int hwc_open(const struct hw_module_t* module, const char* name,
+                     struct hw_device_t** device) {
+     int ret = 0;
+@@ -790,6 +956,31 @@ static int hwc_open(const struct hw_module_t* module, const char* name,
+         first_window.reset();
+     }
+ 
++    if (property_get("waydroid.wayland_display_ext", property, nullptr) > 0) {
++        const char *primary = getenv("WAYLAND_DISPLAY");
++        std::string primary_socket = primary ? primary : "";
++        setenv("WAYLAND_DISPLAY", property, 1);
++        pdev->ext_display = create_display(property_get_string("ro.hardware.gralloc", "default").c_str(), true);
++        if (primary)
++            setenv("WAYLAND_DISPLAY", primary_socket.c_str(), 1);
++        else
++            unsetenv("WAYLAND_DISPLAY");
++        if (pdev->ext_display) {
++            if (pdev->ext_display->refresh > 1000 && pdev->ext_display->refresh < 1000000)
++                pdev->ext_vsync_period_ns = 1000000000000LL / pdev->ext_display->refresh;
++            pdev->ext_display->ext_abs_width = floor(pdev->display->width * pdev->display->scale);
++            pdev->ext_display->ext_abs_height = floor(pdev->display->height * pdev->display->scale);
++            pdev->ext_window = window::create(pdev->ext_display, false, "Waydroid", "none", {0, 0, 0, 255});
++            pdev->ext_window->unmap();
++            pdev->ext_hidden = true;
++            ALOGI("external display %dx%d scale %f", pdev->ext_display->width, pdev->ext_display->height, pdev->ext_display->scale);
++            if (pthread_create(&pdev->ext_hotplug_thread, NULL, hwc_ext_hotplug_thread, pdev))
++                ALOGE("waydroid_hw_composer could not start the external hotplug thread");
++        } else {
++            ALOGE("external display: no compositor at %s", property);
++        }
++    }
++
+     pdev->vsync_callback_enabled = true;
+     if (pdev->display->refresh > 1000 && pdev->display->refresh < 1000000)
+         pdev->vsync_period_ns = 1000 * 1000 * 1000 / (pdev->display->refresh / 1000);
+@@ -840,7 +1031,7 @@ void subsurface_cursor_handler::clear_previous_subsurface_if_needed(waydroid_hwc
+ 
+         assert(window_it->second->layers.size() == 2);
+         auto &last_layer = window_it->second->layers[window_it->second->layers.size() - 1];
+-        wl_surface_attach(last_layer.surface, nullptr, 0, 0);
++        last_layer.detach();
+         wl_surface_commit(last_layer.surface);
+     }
+     window_key = {};
+diff --git a/hwcomposer/hwcomposer.h b/hwcomposer/hwcomposer.h
+index b147f38..0803a57 100644
+--- a/hwcomposer/hwcomposer.h
++++ b/hwcomposer/hwcomposer.h
+@@ -79,6 +79,16 @@ struct waydroid_hwc_composer_device_1 : hwc_composer_device_1_t {
+     bool multi_windows;
+ 
+     std::unique_ptr<waydroid_mode> selected_mode;
++
++    struct display *ext_display {};
++    std::unique_ptr<window> ext_window;
++    bool ext_hidden = false;
++    std::mutex ext_mutex;
++    pthread_t ext_hotplug_thread;
++    std::atomic<bool> ext_announced {false};
++    std::atomic<bool> ext_active {false};
++    std::atomic<bool> ext_vsync_enabled {false};
++    int32_t ext_vsync_period_ns = 1000000000 / 60;
+ };
+ 
+ int apply_hwc_layer_to_window(waydroid_hwc_composer_device_1 *pdev, hwc_layer_1 *hwc_layer, size_t hwc_layer_index, window *window);
+diff --git a/hwcomposer/wayland-hwc.cpp b/hwcomposer/wayland-hwc.cpp
+index c75d93c..42b1ab2 100644
+--- a/hwcomposer/wayland-hwc.cpp
++++ b/hwcomposer/wayland-hwc.cpp
+@@ -84,8 +84,84 @@ using ::android::hardware::hidl_string;
+ 
+ struct buffer;
+ 
++// Release events arrive on the display thread while the composer thread may be
++// destroying the buffer, so they find it by proxy under this lock.
++static std::mutex release_mutex;
++static std::unordered_map<struct wl_buffer *, buffer *> released_buffers;
++
++void track_buffer_release(buffer *buf, struct display *owner) {
++    static unsigned next_id;
++    std::lock_guard<std::mutex> lock(release_mutex);
++    buf->id = ++next_id;
++    buf->owner = owner;
++    buf->release_timeline = sw_sync_timeline_create();
++    released_buffers[buf->wl_buffer] = buf;
++}
++
++void buffer_released(struct wl_buffer *wl_buffer) {
++    std::lock_guard<std::mutex> lock(release_mutex);
++    auto it = released_buffers.find(wl_buffer);
++    if (it == released_buffers.end())
++        return;
++    buffer *buf = it->second;
++    if (buf->released_point < buf->release_point) {
++        sw_sync_timeline_inc(buf->release_timeline, buf->release_point - buf->released_point);
++        buf->released_point = buf->release_point;
++    }
++}
++
++int buffer::next_release_fence() {
++    std::lock_guard<std::mutex> lock(release_mutex);
++    if (release_timeline < 0 || (owner && !owner->connected))
++        return -1;
++    return sw_sync_fence_create(release_timeline, "wl_buffer_release", ++release_point);
++}
++
++int buffer::current_release_fence() {
++    std::lock_guard<std::mutex> lock(release_mutex);
++    if (release_timeline < 0)
++        return -1;
++    return sw_sync_fence_create(release_timeline, "wl_buffer_release", release_point);
++}
++
++bool buffer::in_use() {
++    std::lock_guard<std::mutex> lock(release_mutex);
++    return released_point < release_point;
++}
++
++void release_display_buffers(struct display *owner) {
++    std::lock_guard<std::mutex> lock(release_mutex);
++    for (auto &[proxy, buf] : released_buffers) {
++        if (buf->owner == owner && buf->released_point < buf->release_point) {
++            sw_sync_timeline_inc(buf->release_timeline, buf->release_point - buf->released_point);
++            buf->released_point = buf->release_point;
++        }
++    }
++}
++
++// Destroying a buffer would signal its fences while it may still be on screen
++void retire_buffers(struct display *d) {
++    for (auto &[handle, buf] : d->buffer_map)
++        d->retired_buffers.push_back(std::move(buf));
++    d->buffer_map.clear();
++}
++
++void purge_retired_buffers(struct display *d) {
++    auto &retired = d->retired_buffers;
++    retired.erase(std::remove_if(retired.begin(), retired.end(),
++                                 [](const std::unique_ptr<buffer> &buf) { return !buf->in_use(); }),
++                  retired.end());
++}
++
+ buffer::~buffer() {
++    {
++        std::lock_guard<std::mutex> lock(release_mutex);
++        released_buffers.erase(wl_buffer);
++    }
+     wl_buffer_destroy(wl_buffer);
++    // Closing the timeline signals any fence still pending on it
++    if (release_timeline >= 0)
++        close(release_timeline);
+     if (isShm)
+         munmap(shm_data, size);
+ }
+@@ -113,7 +189,7 @@ void snapshot_inactive_app_window(struct display *display, struct window *window
+ 
+     egl_render_to_pixels(display, window->snapshot_buffer.get());
+ 
+-    wl_surface_attach(surface, window->snapshot_buffer->wl_buffer, 0, 0);
++    window->layers[0].attach_buffer(*window->snapshot_buffer);
+     wl_surface_damage(surface, 0, 0, INT32_MAX, INT32_MAX);
+     wl_surface_commit(surface);
+ 
+@@ -125,7 +201,11 @@ xdg_surface_handle_configure(void *data, struct xdg_surface *surface,
+                  uint32_t serial)
+ {
+     auto window = static_cast<struct window *>(data);
++    std::lock_guard<std::mutex> lock(window->role_mutex);
+ 
++    // A configure for a role that has since been dropped
++    if (surface != window->xdg_surface)
++        return;
+     xdg_surface_ack_configure(surface, serial);
+ 
+     window->configured = true;
+@@ -332,6 +412,12 @@ BufferTransform hwc_transform_to_buffer_transform(uint32_t hwc_transform) {
+ 
+ void surface_context::attach_buffer(buffer& buf) {
+     wl_surface_attach(surface, buf.wl_buffer, 0, 0);
++    attached = buf.id;
++}
++
++void surface_context::detach() {
++    wl_surface_attach(surface, nullptr, 0, 0);
++    attached = 0;
+ }
+ 
+ void surface_context::damage_surface(int32_t x, int32_t y, int32_t width, int32_t height) {
+@@ -434,6 +520,35 @@ void window::minimize() {
+     }
+ }
+ 
++// A null buffer alone would leave the window geometry on an empty surface, which wlroots rejects.
++void window::unmap() {
++    std::lock_guard<std::mutex> lock(role_mutex);
++    // Detached so the compositor releases the buffers they hold
++    for (auto &layer : layers) {
++        layer.detach();
++        wl_surface_commit(layer.surface);
++    }
++    xdg_toplevel_destroy(xdg_toplevel);
++    xdg_toplevel = nullptr;
++    xdg_surface_destroy(xdg_surface);
++    xdg_surface = nullptr;
++    wl_surface_attach(surface, nullptr, 0, 0);
++    wl_surface_commit(surface);
++}
++
++void window::request_map() {
++    std::lock_guard<std::mutex> lock(role_mutex);
++    configured = false;
++    xdg_surface = xdg_wm_base_get_xdg_surface(display->wm_base, surface);
++    xdg_surface_add_listener(xdg_surface, &xdg_surface_listener, this);
++    xdg_toplevel = xdg_surface_get_toplevel(xdg_surface);
++    xdg_toplevel_add_listener(xdg_toplevel, &xdg_toplevel_listener, this);
++    xdg_toplevel_set_fullscreen(xdg_toplevel, nullptr);
++    set_app_id(appID);
++    wl_surface_commit(surface);
++    wl_display_flush(display->display);
++}
++
+ window::~window() {
+     if (xdg_toplevel)
+         xdg_toplevel_destroy(xdg_toplevel);
+@@ -528,7 +643,9 @@ window::create(struct display *display, bool use_subsurfaces, std::string appID,
+         abort();
+     }
+ 
+-    if (display->isMaximized || calibrating) {
++    if (display->secondary && window->xdg_toplevel) {
++        xdg_toplevel_set_fullscreen(window->xdg_toplevel, nullptr);
++    } else if (display->isMaximized || calibrating) {
+         window->set_maximize(true);
+     }
+     // Set title
+@@ -562,12 +679,15 @@ window::create(struct display *display, bool use_subsurfaces, std::string appID,
+         // See: https://github.com/swaywm/sway/issues/2176
+         // Some other compositors may refine the window size after a buffer is attached (Hyprland)
+         // Try second configure event, with buffer attached
+-        struct wl_buffer *buf = wl_shm_pool_create_buffer(pool, 0, 1, 1, 4, WL_SHM_FORMAT_ARGB8888);
+-        wl_surface_attach(window->surface, buf, 0, 0);
+-        if (window->viewport && display->req_width && display->req_height)
+-            wp_viewport_set_destination(window->viewport, display->req_width, display->req_height);
+-        wl_surface_commit(window->surface);
+-        wl_display_roundtrip(display->display);
++        // The second display stays unmapped until an app presents there
++        if (!display->secondary) {
++            struct wl_buffer *buf = wl_shm_pool_create_buffer(pool, 0, 1, 1, 4, WL_SHM_FORMAT_ARGB8888);
++            wl_surface_attach(window->surface, buf, 0, 0);
++            if (window->viewport && display->req_width && display->req_height)
++                wp_viewport_set_destination(window->viewport, display->req_width, display->req_height);
++            wl_surface_commit(window->surface);
++            wl_display_roundtrip(display->display);
++        }
+ 
+         if (fs) {
+             wp_fractional_scale_v1_destroy(fs);
+@@ -626,11 +746,13 @@ window::create(struct display *display, bool use_subsurfaces, std::string appID,
+     window->bg_buffer = wl_shm_pool_create_buffer(pool, 0, 1, 1, 4, WL_SHM_FORMAT_ARGB8888);
+     wl_shm_pool_destroy(pool);
+ 
+-    wl_surface_attach(window->surface, window->bg_buffer, 0, 0);
+-    wl_surface_damage(window->surface, 0, 0, INT32_MAX, INT32_MAX);
+     wp_viewport_set_source(window->viewport, wl_fixed_from_int(0), wl_fixed_from_int(0), wl_fixed_from_int(1), wl_fixed_from_int(1));
+     wp_viewport_set_destination(window->viewport, display->width, display->height);
+-    wl_surface_commit(window->surface);
++    if (!display->secondary) {
++        wl_surface_attach(window->surface, window->bg_buffer, 0, 0);
++        wl_surface_damage(window->surface, 0, 0, INT32_MAX, INT32_MAX);
++        wl_surface_commit(window->surface);
++    }
+ 
+     return window;
+ }
+@@ -642,9 +764,11 @@ surface_context::~surface_context() {
+     if (surface)
+         wl_surface_destroy(surface);
+ }
+-surface_context::surface_context(surface_context&& other) : surface(other.surface), viewport(other.viewport) {
++surface_context::surface_context(surface_context&& other)
++    : surface(other.surface), viewport(other.viewport), attached(other.attached) {
+     other.surface = nullptr;
+     other.viewport = nullptr;
++    other.attached = 0;
+ }
+ surface_context& surface_context::operator=(surface_context&& rhs) {
+     if (viewport)
+@@ -655,8 +779,11 @@ surface_context& surface_context::operator=(surface_context&& rhs) {
+     surface = rhs.surface;
+     viewport = rhs.viewport;
+ 
++    attached = rhs.attached;
++
+     rhs.surface = nullptr;
+     rhs.viewport = nullptr;
++    rhs.attached = 0;
+ 
+     return *this;
+ }
+@@ -1350,6 +1477,136 @@ static const struct xdg_wm_base_listener xdg_wm_base_listener = {
+     xdg_wm_base_ping,
+ };
+ 
++// The external display's touch goes out through the tablet pipe as a single
++// touch point. The reader associates that device with the external display,
++// and scales the pipe's axis range (the primary display's size) onto it.
++static void
++ext_touch_write(struct display *d, wl_fixed_t x_w, wl_fixed_t y_w, int contact)
++{
++    struct input_event event[6];
++    struct timespec rt;
++    unsigned int res, n = 0;
++
++    if (ensure_pipe(d, INPUT_TABLET))
++        return;
++
++    if (clock_gettime(CLOCK_MONOTONIC, &rt) == -1) {
++        ALOGE("%s:%d error in touch clock_gettime: %s",
++              __FILE__, __LINE__, strerror(errno));
++    }
++
++    if (contact) {
++        int x = wl_fixed_to_double(x_w) * d->ext_abs_width / std::max(d->width, 1);
++        int y = wl_fixed_to_double(y_w) * d->ext_abs_height / std::max(d->height, 1);
++        ADD_EVENT(EV_ABS, ABS_X, std::clamp(x, 0, d->ext_abs_width));
++        ADD_EVENT(EV_ABS, ABS_Y, std::clamp(y, 0, d->ext_abs_height));
++    }
++    if (contact != 2) {
++        ADD_EVENT(EV_ABS, ABS_PRESSURE, contact ? 255 : 0);
++        ADD_EVENT(EV_KEY, BTN_TOOL_FINGER, contact);
++        ADD_EVENT(EV_KEY, BTN_TOUCH, contact);
++    }
++    ADD_EVENT(EV_SYN, SYN_REPORT, 0);
++
++    res = write(d->input_fd[INPUT_TABLET], &event, n * sizeof(event[0]));
++    if (res < n * sizeof(event[0]))
++        ALOGE("Failed to write event for InputFlinger: %s", strerror(errno));
++}
++
++static void
++ext_touch_handle_down(void *data, struct wl_touch *, uint32_t, uint32_t,
++                      struct wl_surface *, int32_t id, wl_fixed_t x_w, wl_fixed_t y_w)
++{
++    struct display *d = (struct display *)data;
++    if (d->ext_touch_id != -1)
++        return;
++    d->ext_touch_id = id;
++    ext_touch_write(d, x_w, y_w, 1);
++}
++
++static void
++ext_touch_handle_up(void *data, struct wl_touch *, uint32_t, uint32_t, int32_t id)
++{
++    struct display *d = (struct display *)data;
++    if (d->ext_touch_id != id)
++        return;
++    d->ext_touch_id = -1;
++    ext_touch_write(d, 0, 0, 0);
++}
++
++static void
++ext_touch_handle_motion(void *data, struct wl_touch *, uint32_t, int32_t id,
++                        wl_fixed_t x_w, wl_fixed_t y_w)
++{
++    struct display *d = (struct display *)data;
++    if (d->ext_touch_id != id)
++        return;
++    ext_touch_write(d, x_w, y_w, 2);
++}
++
++static void
++ext_touch_handle_frame(void *, struct wl_touch *)
++{
++}
++
++static void
++ext_touch_handle_cancel(void *data, struct wl_touch *)
++{
++    struct display *d = (struct display *)data;
++    if (d->ext_touch_id == -1)
++        return;
++    d->ext_touch_id = -1;
++    ext_touch_write(d, 0, 0, 0);
++}
++
++static void
++ext_touch_handle_shape(void *, struct wl_touch *, int32_t, wl_fixed_t, wl_fixed_t)
++{
++}
++
++static void
++ext_touch_handle_orientation(void *, struct wl_touch *, int32_t, wl_fixed_t)
++{
++}
++
++static const struct wl_touch_listener ext_touch_listener = {
++    ext_touch_handle_down,
++    ext_touch_handle_up,
++    ext_touch_handle_motion,
++    ext_touch_handle_frame,
++    ext_touch_handle_cancel,
++    ext_touch_handle_shape,
++    ext_touch_handle_orientation,
++};
++
++static void
++ext_seat_handle_capabilities(void *data, struct wl_seat *seat, uint32_t wl_caps)
++{
++    struct display *d = (struct display *)data;
++
++    if ((wl_caps & WL_SEAT_CAPABILITY_TOUCH) && !d->touch) {
++        d->touch = wl_seat_get_touch(seat);
++        d->input_fd[INPUT_TABLET] = -1;
++        d->ext_touch_id = -1;
++        mkfifo(INPUT_PIPE_NAME[INPUT_TABLET], S_IRWXO | S_IRWXG | S_IRWXU);
++        chown(INPUT_PIPE_NAME[INPUT_TABLET], 1000, 1000);
++        wl_touch_add_listener(d->touch, &ext_touch_listener, d);
++    } else if (!(wl_caps & WL_SEAT_CAPABILITY_TOUCH) && d->touch) {
++        wl_touch_destroy(d->touch);
++        d->touch = NULL;
++    }
++}
++
++static void
++ext_seat_handle_name(void *, struct wl_seat *, const char *)
++{
++}
++
++static const struct wl_seat_listener ext_seat_listener = {
++    ext_seat_handle_capabilities,
++    ext_seat_handle_name,
++};
++
+ static void
+ seat_handle_capabilities(void *data, struct wl_seat *seat, uint32_t wl_caps)
+ {
+@@ -1909,6 +2166,10 @@ registry_handle_global(void *data, struct wl_registry *registry,
+     } else if(strcmp(interface, "wl_shell") == 0) {
+         d->shell = (struct wl_shell *)wl_registry_bind(
+                 registry, id, &wl_shell_interface, 1);
++    } else if (strcmp(interface, "wl_seat") == 0 && d->secondary) {
++        d->seat = (struct wl_seat*)wl_registry_bind(registry, id,
++                &wl_seat_interface, std::min(version, (uint32_t)WL_POINTER_AXIS_SOURCE_SINCE_VERSION));
++        wl_seat_add_listener(d->seat, &ext_seat_listener, d);
+     } else if (strcmp(interface, "wl_seat") == 0) {
+         d->seat = (struct wl_seat*)wl_registry_bind(registry, id,
+                 &wl_seat_interface, std::min(version, (uint32_t)WL_POINTER_AXIS_SOURCE_SINCE_VERSION));
+@@ -1950,7 +2211,7 @@ registry_handle_global(void *data, struct wl_registry *registry,
+     } else if (strcmp(interface, "zwp_tablet_manager_v2") == 0) {
+         d->tablet_manager = (struct zwp_tablet_manager_v2 *)wl_registry_bind(registry, id,
+                 &zwp_tablet_manager_v2_interface, 1);
+-        if (d->tablet_manager && d->seat)
++        if (d->tablet_manager && d->seat && !d->secondary)
+             add_tablet_seat(d);
+     } else if (strcmp(interface, "zwp_pointer_constraints_v1") == 0) {
+         d->pointer_constraints = (struct zwp_pointer_constraints_v1 *)wl_registry_bind(
+@@ -1967,7 +2228,7 @@ registry_handle_global(void *data, struct wl_registry *registry,
+     } else if (strcmp(interface, wl_data_device_manager_interface.name) == 0) {
+         d->data_device_manager = (struct wl_data_device_manager *)wl_registry_bind(registry, id,
+                 &wl_data_device_manager_interface, std::min(version,  3U));
+-        if (d->data_device_manager && d->seat)
++        if (d->data_device_manager && d->seat && !d->secondary)
+             d->data_device = wl_data_device_manager_get_data_device(d->data_device_manager, d->seat);
+     } else if (strcmp(interface, "gtk_shell1") == 0) {
+         if (version < 6)
+@@ -2055,7 +2316,8 @@ void open_windows::erase(const key_type& key) {
+ }
+ 
+ static void* hwc_wayland_thread(void* data) {
+-    auto* display = static_cast<struct wl_display*>(data);
++    auto* context = static_cast<struct display*>(data);
++    auto* display = context->display;
+     int ret = 0;
+ 
+     setpriority(PRIO_PROCESS, 0, HAL_PRIORITY_URGENT_DISPLAY);
+@@ -2079,6 +2341,11 @@ static void* hwc_wayland_thread(void* data) {
+         snprintf(msg, sizeof(msg), "socket error: %s", strerror(err));
+     }
+     ALOGE("*** %s: Wayland client was disconnected: %s", __PRETTY_FUNCTION__, msg);
++    if (context->secondary) {
++        context->connected = false;
++        release_display_buffers(context);
++        return nullptr;
++    }
+ 
+     FILE *f = fopen("/data/waydroid_hwc_wayland_error.txt", "a");
+     if (f) {
+@@ -2092,9 +2359,10 @@ static void* hwc_wayland_thread(void* data) {
+ }
+ 
+ struct display *
+-create_display(const char *gralloc)
++create_display(const char *gralloc, bool secondary)
+ {
+     struct display *display = new struct display();
++    display->secondary = secondary;
+     if (display == NULL) {
+         ALOGE("out of memory");
+         return NULL;
+@@ -2125,7 +2393,7 @@ create_display(const char *gralloc)
+                  &registry_listener, display);
+     wl_display_roundtrip(display->display);
+ 
+-    if (pthread_create(&display->wayland_thread, nullptr, hwc_wayland_thread, display->display) != 0) {
++    if (pthread_create(&display->wayland_thread, nullptr, hwc_wayland_thread, display) != 0) {
+         ALOGE("Couldn't create wayland thread");
+         wl_display_disconnect(display->display);
+         sem_destroy(&display->egl_go);
+diff --git a/hwcomposer/wayland-hwc.h b/hwcomposer/wayland-hwc.h
+index 82ebbd5..c94cbec 100644
+--- a/hwcomposer/wayland-hwc.h
++++ b/hwcomposer/wayland-hwc.h
+@@ -28,6 +28,7 @@
+ 
+ #pragma once
+ 
++#include <mutex>
+ #include <cutils/native_handle.h>
+ 
+ #include <stdint.h>
+@@ -131,9 +132,25 @@ struct buffer {
+     void *shm_data;
+     int size;
+ 
++    // Android waits on these before reusing the buffer; they signal on wl_buffer.release
++    int release_timeline = -1;
++    unsigned release_point = 0;
++    unsigned released_point = 0;
++    unsigned id = 0;
++    struct display *owner = nullptr;
++    int next_release_fence();
++    int current_release_fence();
++    bool in_use();
++
+     ~buffer();
+ };
+ 
++void track_buffer_release(buffer *buf, struct display *owner);
++void release_display_buffers(struct display *owner);
++void buffer_released(struct wl_buffer *wl_buffer);
++void retire_buffers(struct display *d);
++void purge_retired_buffers(struct display *d);
++
+ enum class BufferTransform : int32_t {
+     Normal = WL_OUTPUT_TRANSFORM_NORMAL,
+     Rot_90 = WL_OUTPUT_TRANSFORM_90,
+@@ -159,6 +176,9 @@ struct surface_context {
+     surface_context &operator=(surface_context &&rhs);
+ 
+     void attach_buffer(buffer& buf);
++    void detach();
++    // Id of the attached buffer
++    unsigned attached = 0;
+     void damage_surface(int32_t x, int32_t y, int32_t width, int32_t height);
+     void set_buffer_transform(BufferTransform transform);
+     void set_buffer_scale(double scale);
+@@ -206,6 +226,8 @@ struct window {
+     std::string taskID;
+ 
+     std::atomic<bool> configured;
++    // Held while the xdg role is replaced and while a configure is acknowledged
++    std::mutex role_mutex;
+ 
+     // Reset every hwc_set cycle
+     struct wl_region* input_region;
+@@ -221,6 +243,8 @@ struct window {
+     void reset_per_set_state();
+ 
+     void minimize();
++    void unmap();
++    void request_map();
+     void set_maximize(bool enabled);
+     void set_title(const char *title);
+     void set_app_id(std::string appID);
+@@ -300,6 +324,11 @@ struct cursor_handler {
+ };
+ 
+ struct display {
++    bool secondary = false;
++    std::atomic<bool> connected {true};
++    int ext_abs_width = 0;
++    int ext_abs_height = 0;
++    int ext_touch_id = -1;
+     pthread_t wayland_thread; // constant after init
+ 
+     struct wl_display *display;
+@@ -377,6 +406,9 @@ struct display {
+     std::map<uint32_t, struct handleExt> layer_handles_ext;
+     struct handleExt target_layer_handle_ext;
+     std::unordered_map<buffer_handle_t, std::unique_ptr<buffer>> buffer_map;
++    // Replaced buffers the compositor has not released yet
++    std::vector<std::unique_ptr<buffer>> retired_buffers;
++    int retire_fence = -1;
+     std::array<uint8_t, 239> keysDown;
+ 
+     std::unique_ptr<cursor_handler> cursor_handler;
+@@ -398,6 +430,6 @@ void
+ snapshot_inactive_app_window(struct display *display, struct window *window);
+ 
+ struct display *
+-create_display(const char* gralloc);
++create_display(const char* gralloc, bool secondary = false);
+ void
+ destroy_display(struct display *display);

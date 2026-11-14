@@ -1,0 +1,14 @@
+diff --git a/graphics/composer/2.1/utils/hwc2on1adapter/HWC2On1Adapter.cpp b/graphics/composer/2.1/utils/hwc2on1adapter/HWC2On1Adapter.cpp
+--- a/graphics/composer/2.1/utils/hwc2on1adapter/HWC2On1Adapter.cpp
++++ b/graphics/composer/2.1/utils/hwc2on1adapter/HWC2On1Adapter.cpp
+@@ -1272,7 +1272,9 @@ bool HWC2On1Adapter::Display::hasChanges() const {
+ Error HWC2On1Adapter::Display::set(hwc_display_contents_1& hwcContents) {
+     std::unique_lock<std::recursive_mutex> lock(mStateMutex);
+ 
+-    if (!mChanges || (mChanges->getNumTypes() > 0)) {
++    // SurfaceFlinger presents each display separately. The other display
++    // keeps its previous target until it accepts its own type changes.
++    if (!mChanges) {
+         ALOGE("[%" PRIu64 "] set failed: not validated", mId);
+         return Error::NotValidated;
+     }
