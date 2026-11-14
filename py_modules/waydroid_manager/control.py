@@ -30,7 +30,7 @@ class Launch:
 
     @property
     def unit(self) -> str:
-        return f"waydroid-manager-session-{self.process[0]}"
+        return "waydroid-manager-shared-session"
 
 
 @dataclass
@@ -150,7 +150,7 @@ class ServiceControl:
                 else:
                     raise RuntimeError("Waydroid Manager control is already running")
             self.path.unlink()
-        self.server = await asyncio.start_unix_server(self.handle, str(self.path), limit=256)
+        self.server = await asyncio.start_unix_server(self.handle, str(self.path), limit=8192)
         self.path.chmod(0o600)
         os.chown(self.path, self.uid, -1)
         self.inode = self.path.lstat().st_ino
@@ -175,6 +175,8 @@ class ServiceControl:
                     host = self.identify_launch(pid, Path(os.fsdecode(command[5:-1])))
                     self.host = host
                 elif command.startswith(b"LAUNCH ") and command.endswith(b"\n"):
+                    if self.release_task is not None:
+                        raise RuntimeError("Waydroid launch is closing. Try again after it stops.")
                     if self.host is None:
                         raise RuntimeError("The shared Waydroid relay is not ready")
                     owner = not self.launches
@@ -200,7 +202,9 @@ class ServiceControl:
                         await self.on_launch(launch)
                 result = {"ok": True}
                 if launch:
-                    result.update(owner=owner, display=str(self.host.display))
+                    if self.host is None or launch.process not in self.launches:
+                        raise RuntimeError("The shared Waydroid relay stopped during startup")
+                    result.update(owner=owner, display=str(launch.display))
             except (RuntimeError, OSError, ValueError, asyncio.TimeoutError, subprocess.SubprocessError) as error:
                 result = {"ok": False, "error": str(error) or "Waydroid service start timed out"}
             writer.write((json.dumps(result) + "\n").encode())
@@ -225,7 +229,7 @@ class ServiceControl:
                             await self.on_release(launches[0])
                     except (RuntimeError, OSError, subprocess.SubprocessError) as error:
                         logging.getLogger(__name__).warning("Could not stop the lost Waydroid relay: %s", error)
-            if not self.launches:
+            if not self.launches and self.release_task is not None and self.release_task.done():
                 self.release_task = None
             self.clients.discard(task)
             writer.close()
