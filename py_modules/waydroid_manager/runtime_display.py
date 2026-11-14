@@ -89,6 +89,7 @@ class RuntimeDisplayLease:
             identity = Path(f"/proc/{backend}/stat").read_text().rsplit(")", 1)[1].split()[19]
             unit = f"waydroid-manager-display-guard-{backend}-{time.monotonic_ns()}"
             run(["systemd-run", "--quiet", "--collect", f"--unit={unit}",
+                 "--property=Restart=on-failure", "--property=RestartSec=1s", "--property=StartLimitIntervalSec=0",
                  "/usr/bin/python3", "-I", str(guard), str(self.config_dir), str(self.root),
                  str(backend), identity, str(display)], timeout=10)
             run(["mount", "-t", "overlay", "overlay", "-o",

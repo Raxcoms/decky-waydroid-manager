@@ -23,6 +23,7 @@ class DisplayPayloadTests(unittest.TestCase):
         self.library.write_bytes(header)
         (self.payload / "libhwc2on1adapter.so").write_bytes(header)
         (self.payload / "WaydroidManagerExternalDisplay.apk").write_bytes(b"test overlay")
+        (self.payload / "wayland_tablet.idc").write_text("touch.displayId = local:1\n")
         self.identity = VendorIdentity("test/vendor/fingerprint", 33, "a" * 64, 183)
         self.metadata = {
             "vendorFingerprint": self.identity.fingerprint,
@@ -33,6 +34,7 @@ class DisplayPayloadTests(unittest.TestCase):
             "stockAdapterSha256": "",
             "adapterSha256": digest(self.payload / "libhwc2on1adapter.so"),
             "overlaySha256": digest(self.payload / "WaydroidManagerExternalDisplay.apk"),
+            "inputConfigSha256": digest(self.payload / "wayland_tablet.idc"),
         }
         self.write_manifest()
 
@@ -55,6 +57,7 @@ class DisplayPayloadTests(unittest.TestCase):
             "vendor/lib64/hw/hwcomposer.waydroid.so": self.library,
             "vendor/lib64/libhwc2on1adapter.so": self.payload / "libhwc2on1adapter.so",
             "system/product/overlay/WaydroidManagerExternalDisplay.apk": self.payload / "WaydroidManagerExternalDisplay.apk",
+            "system/usr/idc/wayland_tablet.idc": self.payload / "wayland_tablet.idc",
         })
 
     def test_rejects_modified_library(self):

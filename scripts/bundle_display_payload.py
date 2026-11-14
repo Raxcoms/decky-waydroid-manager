@@ -14,6 +14,7 @@ def bundle(build: Path, identity: VendorIdentity, output: Path) -> Path:
         "hwcomposer.waydroid.so": "composerSha256",
         "libhwc2on1adapter.so": "adapterSha256",
         "WaydroidManagerExternalDisplay.apk": "overlaySha256",
+        "wayland_tablet.idc": "inputConfigSha256",
     }
     metadata = {
         "vendorFingerprint": identity.fingerprint,

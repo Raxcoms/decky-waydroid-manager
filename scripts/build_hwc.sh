@@ -63,6 +63,7 @@ m -j2 hwcomposer.waydroid libhwc2on1adapter WaydroidManagerExternalDisplay
 cp out/target/product/waydroid_arm64/vendor/lib64/hw/hwcomposer.waydroid.so "$output/"
 cp out/target/product/waydroid_arm64/vendor/lib64/libhwc2on1adapter.so "$output/"
 cp out/target/product/waydroid_arm64/system/product/overlay/WaydroidManagerExternalDisplay.apk "$output/"
+cp "$project_dir/android/hwc/wayland_tablet.idc" "$output/"
 cp source-manifest.xml "$output/source-manifest.xml"
 python3 .repo/repo/repo manifest -r -o "$output/patched-source-manifest.xml"
 git -C hardware/waydroid diff --binary > "$output/composer-source.patch"
