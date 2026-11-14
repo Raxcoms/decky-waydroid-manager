@@ -157,6 +157,12 @@ class Plugin:
             else:
                 self._run([*command, "stop", "--no-block", launch.unit], timeout=5)
             self._run([*command, "stop", "--no-block", "waydroid-manager-shared-relay"], timeout=5)
+            deadline = time.monotonic() + 15
+            while container_pid() is not None and time.monotonic() < deadline:
+                time.sleep(0.1)
+            if container_pid() is None:
+                self._session_config.recover()
+                self._overlay.recover()
 
     def _prepare_guest_presentation(self, launch: Launch, mode: str) -> None:
         if not session_uses_socket(launch.display):
@@ -857,7 +863,7 @@ class Plugin:
         if not self._initialized():
             raise RuntimeError("WAYDROID_NOT_INSTALLED")
         if self._overlay.manifest.exists() or self._session_config.manifest.exists():
-            if self._service_running() or container_pid() is not None:
+            if container_pid() is not None:
                 raise RuntimeError("Waydroid has a pending second-screen transaction. Stop Waydroid before launching it again.")
             await asyncio.to_thread(self._session_config.recover)
             await asyncio.to_thread(self._overlay.recover)
