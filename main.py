@@ -29,6 +29,8 @@ from waydroid_manager.image import launcher_packages, owned_directory, require_u
 from waydroid_manager.control import Launch, ServiceControl, control_path
 from waydroid_manager.overlay import OverlayLease
 from waydroid_manager.session_config import SessionConfigLease
+from waydroid_manager.second_screen import discover_external_display
+from waydroid_manager.display_payload import inspect_vendor, select_payload
 from waydroid_manager.state import StateStore
 from waydroid_manager.user_files import open_as_user, run_as_user
 
@@ -49,6 +51,7 @@ class Plugin:
         self._control = None
         self._overlay = OverlayLease(WAYDROID_DIR)
         self._session_config = SessionConfigLease(WAYDROID_DIR)
+        self._session_second_screen: bool | None = None
 
     @contextmanager
     def _edit_state(self, home: Path):
@@ -131,11 +134,43 @@ class Plugin:
         except (OSError, RuntimeError, subprocess.SubprocessError) as error:
             decky.logger.warning("Waydroid controller bridge unavailable: %s", error)
 
+    async def _start_registered_launch(self, launch: Launch, owner: bool) -> None:
+        async with self._launch_lock:
+            _, uid, home = self._user()
+            request = launch.request
+            if request is None:
+                raise RuntimeError("The Waydroid launch request is missing")
+            enabled = StateStore.second_screen_enabled(self._load_state(home), request.package)
+            if not owner:
+                if self._session_second_screen is None or enabled != self._session_second_screen:
+                    raise RuntimeError("Close the running Waydroid shortcuts before changing second-screen mode")
+                return
+            await self._ensure_service()
+            if enabled:
+                if container_pid() is not None:
+                    raise RuntimeError("Close the running Waydroid session before enabling its second screen")
+                external = discover_external_display(uid)
+                if external is None:
+                    raise RuntimeError("The host has no available external Wayland display")
+                identity = await asyncio.to_thread(inspect_vendor, WAYDROID_DIR, self._run)
+                files = select_payload(Path(decky.DECKY_PLUGIN_DIR) / "bin/display-payloads", identity)
+                await asyncio.to_thread(self._overlay.acquire, files)
+                try:
+                    await asyncio.to_thread(self._session_config.acquire, external.socket)
+                except Exception:
+                    await asyncio.to_thread(self._overlay.recover)
+                    raise
+            self._session_second_screen = enabled
+
     async def _launch_policy(self, launch: Launch, mode: str) -> None:
         await asyncio.to_thread(self._prepare_guest_presentation, launch, mode)
 
     async def _release_launch(self, launch: Launch) -> None:
-        await asyncio.to_thread(self._stop_launch, launch)
+        async with self._launch_lock:
+            try:
+                await asyncio.to_thread(self._stop_launch, launch)
+            finally:
+                self._session_second_screen = None
 
     def _stop_launch(self, launch: Launch) -> None:
         user, uid, home = self._user()
@@ -1004,10 +1039,11 @@ class Plugin:
         self._metrics_error = None
         self._runtime_lock = asyncio.Lock()
         self._package_lock = asyncio.Lock()
+        self._launch_lock = asyncio.Lock()
         _, uid, _ = self._user()
         relay = Path(decky.DECKY_PLUGIN_DIR).resolve() / "bin/waydroid-wayland-relay"
         self._control = ServiceControl(control_path(uid), uid, self._ensure_service, relay, self._prepare_launch,
-                                       self._launch_policy, self._release_launch)
+                                       self._launch_policy, self._release_launch, self._start_registered_launch)
         await self._control.open()
         decky.logger.info("Waydroid Manager loaded")
 

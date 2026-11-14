@@ -77,13 +77,15 @@ class ServiceControl:
     def __init__(self, path: Path, uid: int, start: Callable[[], Awaitable[None]],
                  relay: Path | None = None, on_launch: Callable[[Launch], Awaitable[None]] | None = None,
                  on_policy: Callable[[Launch, str], Awaitable[None]] | None = None,
-                 on_release: Callable[[Launch], Awaitable[None]] | None = None):
+                 on_release: Callable[[Launch], Awaitable[None]] | None = None,
+                 start_launch: Callable[[Launch, bool], Awaitable[None]] | None = None):
         self.path, self.uid, self.start_service = path, uid, start
         self.server = None
         self.inode = None
         self.clients = set()
         self.relay, self.on_launch = relay, on_launch
         self.on_policy, self.on_release = on_policy, on_release
+        self.start_launch = start_launch
         self.host: Launch | None = None
         self.launches: dict[tuple[int, str], Launch] = {}
         self.release_task: asyncio.Task | None = None
@@ -197,7 +199,10 @@ class ServiceControl:
                 elif command != b"START\n":
                     raise RuntimeError("Invalid Waydroid Manager service request")
                 if launch or command == b"START\n":
-                    await asyncio.wait_for(self.start_service(), 30)
+                    if launch and self.start_launch:
+                        await asyncio.wait_for(self.start_launch(launch, owner), 30)
+                    else:
+                        await asyncio.wait_for(self.start_service(), 30)
                     if launch and owner and self.on_launch:
                         await self.on_launch(launch)
                 result = {"ok": True}
