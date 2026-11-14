@@ -43,7 +43,7 @@ index d2b405e..d1ce5c9 100644
 \ No newline at end of file
 +    , update_shm_buffer_impl(select_update_shm_buffer_impl(display->gtype)) { }
 diff --git a/hwcomposer/hwcomposer.cpp b/hwcomposer/hwcomposer.cpp
-index d24b035..e8dffa0 100644
+index d24b035..5b6951b 100644
 --- a/hwcomposer/hwcomposer.cpp
 +++ b/hwcomposer/hwcomposer.cpp
 @@ -85,14 +85,15 @@ namespace {
@@ -123,16 +123,56 @@ index d24b035..e8dffa0 100644
      pdev->selected_mode = select_mode(pdev, contents);
      if (pdev->selected_mode->setup_prepare(pdev, contents) != 0) {
          return -1;
-@@ -255,6 +265,8 @@ static void* hwc_vsync_thread(void* data) {
+@@ -237,6 +247,8 @@ static void* hwc_vsync_thread(void* data) {
+               __FILE__, __LINE__, strerror(errno));
+     }
+     bool vsync_enabled = false;
++    uint64_t primary_tick = 0;
++    uint64_t external_tick = 0;
+ 
+     struct timespec wait_time;
+     wait_time.tv_sec = 0;
+@@ -255,21 +267,36 @@ static void* hwc_vsync_thread(void* data) {
          }
  
          vsync_enabled = pdev->vsync_callback_enabled;
++        bool external_vsync = pdev->ext_display && pdev->ext_display->connected &&
++                              pdev->ext_active && pdev->ext_vsync_enabled;
 +        if (pdev->ext_display && !pdev->ext_display->connected && pdev->ext_announced.exchange(false))
 +            pdev->procs->hotplug(pdev->procs, HWC_DISPLAY_EXTERNAL, 0);
  
          if (clock_gettime(CLOCK_MONOTONIC, &rt) == -1) {
              ALOGE("%s:%d error in vsync thread clock_gettime: %s",
-@@ -337,30 +349,42 @@ static void apply_surface_damage(hwc_layer_1 *hwc_layer, surface_context &surfac
+                   __FILE__, __LINE__, strerror(errno));
+         }
+ 
+-        wait_time.tv_nsec = time_to_sleep_to_next_vsync(&rt, pdev->last_vsync_ns, pdev->vsync_period_ns);
++        int32_t period = external_vsync ? std::min(pdev->vsync_period_ns, pdev->ext_vsync_period_ns)
++                                       : pdev->vsync_period_ns;
++        wait_time.tv_nsec = time_to_sleep_to_next_vsync(&rt, pdev->last_vsync_ns, period);
+ 
+-        if (!vsync_enabled || !pdev->procs || !pdev->procs->vsync) {
++        if ((!vsync_enabled && !external_vsync) || !pdev->procs || !pdev->procs->vsync) {
+             ATRACE_END();
+             continue;
+         }
+ 
+         int64_t timestamp = (uint64_t)rt.tv_sec * 1e9 + rt.tv_nsec;
+-        pdev->procs->vsync(pdev->procs, 0, timestamp);
++        uint64_t current_primary_tick = uint64_t(timestamp) / pdev->vsync_period_ns;
++        uint64_t current_external_tick = uint64_t(timestamp) / pdev->ext_vsync_period_ns;
++        if (vsync_enabled && current_primary_tick != primary_tick) {
++            pdev->procs->vsync(pdev->procs, HWC_DISPLAY_PRIMARY, timestamp);
++            primary_tick = current_primary_tick;
++        }
++        if (external_vsync && current_external_tick != external_tick) {
++            pdev->procs->vsync(pdev->procs, HWC_DISPLAY_EXTERNAL, timestamp);
++            external_tick = current_external_tick;
++        }
+         ATRACE_END();
+     }
+ 
+@@ -337,30 +364,42 @@ static void apply_surface_damage(hwc_layer_1 *hwc_layer, surface_context &surfac
      });
  }
  
@@ -184,7 +224,7 @@ index d24b035..e8dffa0 100644
      }
  
      // TODO: Implement explicit synchronization
-@@ -384,7 +408,7 @@ out:
+@@ -384,7 +423,7 @@ out:
  }
  
  int apply_hwc_layer_to_window(waydroid_hwc_composer_device_1 *pdev, hwc_layer_1 *hwc_layer, size_t hwc_layer_index, window *window) {
@@ -193,7 +233,7 @@ index d24b035..e8dffa0 100644
      if (!buf) {
          ALOGE("Failed to get wayland buffer");
          if (hwc_layer->acquireFenceFd != -1) {
-@@ -435,6 +459,72 @@ static void reset_per_commit_state_window(waydroid_hwc_composer_device_1 *pdev)
+@@ -435,6 +474,72 @@ static void reset_per_commit_state_window(waydroid_hwc_composer_device_1 *pdev)
      }
  }
  
@@ -266,7 +306,7 @@ index d24b035..e8dffa0 100644
  static int hwc_set(struct hwc_composer_device_1* dev,size_t numDisplays,
                     hwc_display_contents_1_t** displays) {
      if (HWC_DISPLAY_PRIMARY >= numDisplays || !displays)
-@@ -442,11 +532,20 @@ static int hwc_set(struct hwc_composer_device_1* dev,size_t numDisplays,
+@@ -442,11 +547,20 @@ static int hwc_set(struct hwc_composer_device_1* dev,size_t numDisplays,
  
      auto *pdev = static_cast<waydroid_hwc_composer_device_1 *>(dev);
  
@@ -289,7 +329,7 @@ index d24b035..e8dffa0 100644
      }
  
      auto& mode = pdev->selected_mode;
-@@ -482,7 +581,10 @@ static int hwc_set(struct hwc_composer_device_1* dev,size_t numDisplays,
+@@ -482,7 +596,10 @@ static int hwc_set(struct hwc_composer_device_1* dev,size_t numDisplays,
      wl_display_flush(pdev->display->display);
  
      sw_sync_timeline_inc(pdev->timeline_fd, 1);
@@ -301,7 +341,16 @@ index d24b035..e8dffa0 100644
  
      if (pdev->display->needHotplug && pdev->procs && pdev->procs->hotplug) {
          pdev->procs->hotplug(pdev->procs, 0, 1);
-@@ -520,14 +622,15 @@ static int hwc_set_power_move(struct hwc_composer_device_1 *dev __unused, int di
+@@ -502,6 +619,8 @@ static int hwc_event_control(struct hwc_composer_device_1* dev, int disp,
+     }
+ 
+     if (disp != HWC_DISPLAY_PRIMARY) {
++        if (disp == HWC_DISPLAY_EXTERNAL && event == HWC_EVENT_VSYNC)
++            pdev->ext_vsync_enabled = enabled;
+         return 0;
+     }
+ 
+@@ -520,14 +639,15 @@ static int hwc_set_power_move(struct hwc_composer_device_1 *dev __unused, int di
      return 0;
  }
  
@@ -319,7 +368,7 @@ index d24b035..e8dffa0 100644
              break;
          default:
              // unsupported query
-@@ -545,13 +648,17 @@ static void hwc_register_procs(struct hwc_composer_device_1* dev,
+@@ -545,13 +665,17 @@ static void hwc_register_procs(struct hwc_composer_device_1* dev,
      pdev->display->procs = procs;
  }
  
@@ -339,7 +388,7 @@ index d24b035..e8dffa0 100644
          configs[0] = 0;
          *numConfigs = 1;
          return 0;
-@@ -602,7 +709,22 @@ static int hwc_get_display_attributes(struct hwc_composer_device_1* dev,
+@@ -602,7 +726,25 @@ static int hwc_get_display_attributes(struct hwc_composer_device_1* dev,
                                        const uint32_t* attributes, int32_t* values) {
      auto *pdev = static_cast<waydroid_hwc_composer_device_1 *>(dev);
      for (int i = 0; attributes[i] != HWC_DISPLAY_NO_ATTRIBUTE; i++) {
@@ -347,6 +396,9 @@ index d24b035..e8dffa0 100644
 +        if (is_external(dev, disp)) {
 +            struct display *d = pdev->ext_display;
 +            switch (attributes[i]) {
++                case HWC_DISPLAY_VSYNC_PERIOD:
++                    values[i] = pdev->ext_vsync_period_ns;
++                    break;
 +                case HWC_DISPLAY_WIDTH:
 +                    values[i] = floor(d->width * d->scale);
 +                    break;
@@ -363,7 +415,7 @@ index d24b035..e8dffa0 100644
              values[i] = hwc_attribute(pdev, attributes[i]);
              if (values[i] == -EINVAL) {
                  return -EINVAL;
-@@ -616,14 +738,14 @@ static int hwc_get_display_attributes(struct hwc_composer_device_1* dev,
+@@ -616,14 +758,14 @@ static int hwc_get_display_attributes(struct hwc_composer_device_1* dev,
      return 0;
  }
  
@@ -382,7 +434,7 @@ index d24b035..e8dffa0 100644
          return 0;
      return -EINVAL;
  }
-@@ -697,6 +819,25 @@ shutdown:
+@@ -697,6 +839,25 @@ shutdown:
      return NULL;
  }
  
@@ -408,7 +460,7 @@ index d24b035..e8dffa0 100644
  static int hwc_open(const struct hw_module_t* module, const char* name,
                      struct hw_device_t** device) {
      int ret = 0;
-@@ -790,6 +931,29 @@ static int hwc_open(const struct hw_module_t* module, const char* name,
+@@ -790,6 +951,31 @@ static int hwc_open(const struct hw_module_t* module, const char* name,
          first_window.reset();
      }
  
@@ -422,6 +474,8 @@ index d24b035..e8dffa0 100644
 +        else
 +            unsetenv("WAYLAND_DISPLAY");
 +        if (pdev->ext_display) {
++            if (pdev->ext_display->refresh > 1000 && pdev->ext_display->refresh < 1000000)
++                pdev->ext_vsync_period_ns = 1000000000000LL / pdev->ext_display->refresh;
 +            pdev->ext_display->ext_abs_width = floor(pdev->display->width * pdev->display->scale);
 +            pdev->ext_display->ext_abs_height = floor(pdev->display->height * pdev->display->scale);
 +            pdev->ext_window = window::create(pdev->ext_display, false, "Waydroid", "none", {0, 0, 0, 255});
@@ -438,7 +492,7 @@ index d24b035..e8dffa0 100644
      pdev->vsync_callback_enabled = true;
      if (pdev->display->refresh > 1000 && pdev->display->refresh < 1000000)
          pdev->vsync_period_ns = 1000 * 1000 * 1000 / (pdev->display->refresh / 1000);
-@@ -840,7 +1004,7 @@ void subsurface_cursor_handler::clear_previous_subsurface_if_needed(waydroid_hwc
+@@ -840,7 +1026,7 @@ void subsurface_cursor_handler::clear_previous_subsurface_if_needed(waydroid_hwc
  
          assert(window_it->second->layers.size() == 2);
          auto &last_layer = window_it->second->layers[window_it->second->layers.size() - 1];
@@ -448,10 +502,10 @@ index d24b035..e8dffa0 100644
      }
      window_key = {};
 diff --git a/hwcomposer/hwcomposer.h b/hwcomposer/hwcomposer.h
-index b147f38..484c375 100644
+index b147f38..d573c35 100644
 --- a/hwcomposer/hwcomposer.h
 +++ b/hwcomposer/hwcomposer.h
-@@ -79,6 +79,13 @@ struct waydroid_hwc_composer_device_1 : hwc_composer_device_1_t {
+@@ -79,6 +79,15 @@ struct waydroid_hwc_composer_device_1 : hwc_composer_device_1_t {
      bool multi_windows;
  
      std::unique_ptr<waydroid_mode> selected_mode;
@@ -462,6 +516,8 @@ index b147f38..484c375 100644
 +    pthread_t ext_hotplug_thread;
 +    std::atomic<bool> ext_announced {false};
 +    std::atomic<bool> ext_active {false};
++    std::atomic<bool> ext_vsync_enabled {false};
++    int32_t ext_vsync_period_ns = 1000000000 / 60;
  };
  
  int apply_hwc_layer_to_window(waydroid_hwc_composer_device_1 *pdev, hwc_layer_1 *hwc_layer, size_t hwc_layer_index, window *window);

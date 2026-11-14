@@ -175,13 +175,21 @@ class Plugin:
 
     async def _depart_launch(self, launch: Launch) -> None:
         async with self._launch_lock:
+            registered = launch.process in self._display_requests
             self._display_requests.pop(launch.process, None)
-            if launch.process not in self._display_users:
-                return
-            self._display_users.remove(launch.process)
-            if not self._display_users and session_uses_socket(launch.display):
-                await asyncio.to_thread(self._run, ["waydroid", "shell", "--", "setprop",
-                                                   "waydroid.external_display_active", "0"])
+            try:
+                request = launch.request
+                if registered and request and request.package and self._control and session_uses_socket(launch.display):
+                    shared = any(active.request and active.request.package == request.package
+                                 for active in self._control.launches.values())
+                    if not shared:
+                        await asyncio.to_thread(self._run, ["waydroid", "shell", "--", "am", "force-stop", request.package])
+            finally:
+                if launch.process in self._display_users:
+                    self._display_users.remove(launch.process)
+                    if not self._display_users and session_uses_socket(launch.display):
+                        await asyncio.to_thread(self._run, ["waydroid", "shell", "--", "setprop",
+                                                           "waydroid.external_display_active", "0"])
 
     async def _launch_policy(self, launch: Launch, mode: str) -> None:
         async with self._launch_lock:

@@ -59,10 +59,21 @@ else
 fi
 
 jobs="${WAYDROID_MANAGER_BUILD_JOBS:-4}"
-m -j"$jobs" hwcomposer.waydroid libhwc2on1adapter WaydroidManagerExternalDisplay
+targets=(hwcomposer.waydroid libhwc2on1adapter)
+if [[ -z "${WAYDROID_MANAGER_OVERLAY_APK:-}" ]]; then
+  targets+=(WaydroidManagerExternalDisplay)
+elif [[ ! -f "$WAYDROID_MANAGER_OVERLAY_APK" ]]; then
+  echo "The SDK-built framework overlay is missing." >&2
+  exit 1
+fi
+m -j"$jobs" "${targets[@]}"
 cp out/target/product/waydroid_arm64/vendor/lib64/hw/hwcomposer.waydroid.so "$output/"
 cp out/target/product/waydroid_arm64/vendor/lib64/libhwc2on1adapter.so "$output/"
-cp out/target/product/waydroid_arm64/system/product/overlay/WaydroidManagerExternalDisplay.apk "$output/"
+if [[ -z "${WAYDROID_MANAGER_OVERLAY_APK:-}" ]]; then
+  cp out/target/product/waydroid_arm64/system/product/overlay/WaydroidManagerExternalDisplay.apk "$output/"
+elif [[ "$(realpath "$WAYDROID_MANAGER_OVERLAY_APK")" != "$output/WaydroidManagerExternalDisplay.apk" ]]; then
+  cp "$WAYDROID_MANAGER_OVERLAY_APK" "$output/WaydroidManagerExternalDisplay.apk"
+fi
 cp "$project_dir/android/hwc/wayland_tablet.idc" "$output/"
 cp source-manifest.xml "$output/source-manifest.xml"
 python3 .repo/repo/repo manifest -r -o "$output/patched-source-manifest.xml"
