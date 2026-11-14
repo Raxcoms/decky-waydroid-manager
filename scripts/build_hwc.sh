@@ -58,8 +58,8 @@ else
   cp -r "$project_dir/android/hwc/overlay" vendor/waydroid-manager-overlay
 fi
 
-export SOONG_UI_NINJA_ARGS="-j2"
-m -j2 hwcomposer.waydroid libhwc2on1adapter WaydroidManagerExternalDisplay
+jobs="${WAYDROID_MANAGER_BUILD_JOBS:-4}"
+m -j"$jobs" hwcomposer.waydroid libhwc2on1adapter WaydroidManagerExternalDisplay
 cp out/target/product/waydroid_arm64/vendor/lib64/hw/hwcomposer.waydroid.so "$output/"
 cp out/target/product/waydroid_arm64/vendor/lib64/libhwc2on1adapter.so "$output/"
 cp out/target/product/waydroid_arm64/system/product/overlay/WaydroidManagerExternalDisplay.apk "$output/"

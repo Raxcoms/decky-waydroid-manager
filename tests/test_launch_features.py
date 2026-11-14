@@ -33,6 +33,28 @@ class LaunchFeatureTests(unittest.IsolatedAsyncioTestCase):
         self.plugin._ensure_service.assert_not_called()
         self.plugin._runtime_display.acquire.assert_not_called()
 
+    async def test_plain_app_can_join_a_display_capable_session(self):
+        self.plugin._session_second_screen = True
+        await self.plugin._start_registered_launch(self.launch, False)
+        self.assertFalse(self.plugin._display_requests[self.launch.process])
+        self.plugin._ensure_service.assert_not_called()
+
+    async def test_last_enabled_app_withdraws_display_while_plain_apps_remain(self):
+        self.plugin._display_requests[self.launch.process] = True
+        self.plugin._display_users.add(self.launch.process)
+        self.plugin._run = Mock()
+        with patch.object(backend, "session_uses_socket", return_value=True):
+            await self.plugin._depart_launch(self.launch)
+        self.plugin._run.assert_called_once_with([
+            "waydroid", "shell", "--", "setprop", "waydroid.external_display_active", "0",
+        ])
+
+    async def test_one_enabled_app_leaving_keeps_the_other_display_lease(self):
+        self.plugin._display_users.update({self.launch.process, (2, "other")})
+        self.plugin._run = Mock()
+        await self.plugin._depart_launch(self.launch)
+        self.plugin._run.assert_not_called()
+
     async def test_missing_payload_does_not_stage_files(self):
         self.state["secondScreen"]["container"] = True
         with (patch.object(backend, "container_pid", return_value=None),

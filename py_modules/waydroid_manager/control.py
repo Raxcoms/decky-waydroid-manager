@@ -78,7 +78,8 @@ class ServiceControl:
                  relay: Path | None = None, on_launch: Callable[[Launch], Awaitable[None]] | None = None,
                  on_policy: Callable[[Launch, str], Awaitable[None]] | None = None,
                  on_release: Callable[[Launch], Awaitable[None]] | None = None,
-                 start_launch: Callable[[Launch, bool], Awaitable[None]] | None = None):
+                 start_launch: Callable[[Launch, bool], Awaitable[None]] | None = None,
+                 on_departure: Callable[[Launch], Awaitable[None]] | None = None):
         self.path, self.uid, self.start_service = path, uid, start
         self.server = None
         self.inode = None
@@ -86,6 +87,7 @@ class ServiceControl:
         self.relay, self.on_launch = relay, on_launch
         self.on_policy, self.on_release = on_policy, on_release
         self.start_launch = start_launch
+        self.on_departure = on_departure
         self.host: Launch | None = None
         self.launches: dict[tuple[int, str], Launch] = {}
         self.release_task: asyncio.Task | None = None
@@ -98,12 +100,21 @@ class ServiceControl:
         return next((launch for launch in self.launches.values() if descends_from(pid, launch.process)), None)
 
     async def release(self, launch: Launch) -> None:
-        if self.launches.pop(launch.process, None) is None or self.launches:
+        if self.launches.pop(launch.process, None) is None:
             return
-        if not self.on_release:
+        if self.launches:
+            if self.on_departure:
+                await self.on_departure(launch)
             return
+        async def finish():
+            try:
+                if self.on_departure:
+                    await self.on_departure(launch)
+            finally:
+                if self.on_release:
+                    await self.on_release(launch)
         if self.release_task is None:
-            self.release_task = asyncio.create_task(self.on_release(launch))
+            self.release_task = asyncio.create_task(finish())
         await asyncio.shield(self.release_task)
 
     def identify_launch(self, pid: int, display: Path) -> Launch:

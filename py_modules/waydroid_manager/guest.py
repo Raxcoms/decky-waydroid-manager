@@ -111,7 +111,8 @@ class LaunchPolicy:
         if mode == "app":
             multiwindow = self.android("getprop", "persist.waydroid.multi_windows") or "false"
             expected = "immersive.status=*" if multiwindow == "false" else "immersive.full=*"
-        self.saved = identity, self.current(), expected
+        previous = self.saved[1] if self.saved is not None and self.saved[0] == identity else self.current()
+        self.saved = identity, previous, expected
 
     def restore(self) -> None:
         if self.saved is None:

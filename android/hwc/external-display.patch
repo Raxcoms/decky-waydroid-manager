@@ -43,7 +43,7 @@ index d2b405e..d1ce5c9 100644
 \ No newline at end of file
 +    , update_shm_buffer_impl(select_update_shm_buffer_impl(display->gtype)) { }
 diff --git a/hwcomposer/hwcomposer.cpp b/hwcomposer/hwcomposer.cpp
-index d24b035..9a9f84f 100644
+index d24b035..e8dffa0 100644
 --- a/hwcomposer/hwcomposer.cpp
 +++ b/hwcomposer/hwcomposer.cpp
 @@ -85,14 +85,15 @@ namespace {
@@ -234,7 +234,7 @@ index d24b035..9a9f84f 100644
 +        if (contents->hwLayers[i].compositionType != HWC_FRAMEBUFFER_TARGET && contents->hwLayers[i].handle)
 +            content = true;
 +    }
-+    bool shown = d->connected && show_external(pdev, content);
++    bool shown = d->connected && show_external(pdev, content && pdev->ext_active);
 +
 +    for (size_t i = 0; i < contents->numHwLayers; i++) {
 +        hwc_layer_1_t *layer = &contents->hwLayers[i];
@@ -266,11 +266,13 @@ index d24b035..9a9f84f 100644
  static int hwc_set(struct hwc_composer_device_1* dev,size_t numDisplays,
                     hwc_display_contents_1_t** displays) {
      if (HWC_DISPLAY_PRIMARY >= numDisplays || !displays)
-@@ -442,11 +532,18 @@ static int hwc_set(struct hwc_composer_device_1* dev,size_t numDisplays,
+@@ -442,11 +532,20 @@ static int hwc_set(struct hwc_composer_device_1* dev,size_t numDisplays,
  
      auto *pdev = static_cast<waydroid_hwc_composer_device_1 *>(dev);
  
 +    hwc_display_contents_1_t *ext = nullptr;
++    if (pdev->ext_display && !pdev->ext_active && !pdev->ext_hidden)
++        show_external(pdev, false);
 +    if (pdev->ext_display && numDisplays > HWC_DISPLAY_EXTERNAL)
 +        ext = displays[HWC_DISPLAY_EXTERNAL];
 +    if (ext)
@@ -287,7 +289,7 @@ index d24b035..9a9f84f 100644
      }
  
      auto& mode = pdev->selected_mode;
-@@ -482,7 +579,10 @@ static int hwc_set(struct hwc_composer_device_1* dev,size_t numDisplays,
+@@ -482,7 +581,10 @@ static int hwc_set(struct hwc_composer_device_1* dev,size_t numDisplays,
      wl_display_flush(pdev->display->display);
  
      sw_sync_timeline_inc(pdev->timeline_fd, 1);
@@ -299,7 +301,7 @@ index d24b035..9a9f84f 100644
  
      if (pdev->display->needHotplug && pdev->procs && pdev->procs->hotplug) {
          pdev->procs->hotplug(pdev->procs, 0, 1);
-@@ -520,14 +620,15 @@ static int hwc_set_power_move(struct hwc_composer_device_1 *dev __unused, int di
+@@ -520,14 +622,15 @@ static int hwc_set_power_move(struct hwc_composer_device_1 *dev __unused, int di
      return 0;
  }
  
@@ -317,7 +319,7 @@ index d24b035..9a9f84f 100644
              break;
          default:
              // unsupported query
-@@ -545,13 +646,17 @@ static void hwc_register_procs(struct hwc_composer_device_1* dev,
+@@ -545,13 +648,17 @@ static void hwc_register_procs(struct hwc_composer_device_1* dev,
      pdev->display->procs = procs;
  }
  
@@ -337,7 +339,7 @@ index d24b035..9a9f84f 100644
          configs[0] = 0;
          *numConfigs = 1;
          return 0;
-@@ -602,7 +707,22 @@ static int hwc_get_display_attributes(struct hwc_composer_device_1* dev,
+@@ -602,7 +709,22 @@ static int hwc_get_display_attributes(struct hwc_composer_device_1* dev,
                                        const uint32_t* attributes, int32_t* values) {
      auto *pdev = static_cast<waydroid_hwc_composer_device_1 *>(dev);
      for (int i = 0; attributes[i] != HWC_DISPLAY_NO_ATTRIBUTE; i++) {
@@ -361,7 +363,7 @@ index d24b035..9a9f84f 100644
              values[i] = hwc_attribute(pdev, attributes[i]);
              if (values[i] == -EINVAL) {
                  return -EINVAL;
-@@ -616,14 +736,14 @@ static int hwc_get_display_attributes(struct hwc_composer_device_1* dev,
+@@ -616,14 +738,14 @@ static int hwc_get_display_attributes(struct hwc_composer_device_1* dev,
      return 0;
  }
  
@@ -380,29 +382,33 @@ index d24b035..9a9f84f 100644
          return 0;
      return -EINVAL;
  }
-@@ -697,6 +817,21 @@ shutdown:
+@@ -697,6 +819,25 @@ shutdown:
      return NULL;
  }
  
 +static void* hwc_ext_hotplug_thread(void* data) {
 +    auto *pdev = static_cast<waydroid_hwc_composer_device_1 *>(data);
 +
-+    // After boot, once framework overlays are applied, so the display never starts out mirroring
-+    while (pdev->ext_display->connected &&
-+           (!pdev->procs || !pdev->procs->hotplug || !property_get_bool("sys.boot_completed", false)))
++    while (pdev->ext_display->connected) {
++        if (pdev->procs && pdev->procs->hotplug && property_get_bool("sys.boot_completed", false)) {
++            bool active = property_get_bool("waydroid.external_display_active", false);
++            pdev->ext_active = active;
++            if (active != pdev->ext_announced) {
++                pdev->procs->hotplug(pdev->procs, HWC_DISPLAY_EXTERNAL, active);
++                pdev->ext_announced = active;
++                if (pdev->procs->invalidate)
++                    pdev->procs->invalidate(pdev->procs);
++            }
++        }
 +        usleep(100 * 1000);
-+    if (!pdev->ext_display->connected)
-+        return nullptr;
-+    ALOGI("external display: hotplug");
-+    pdev->procs->hotplug(pdev->procs, HWC_DISPLAY_EXTERNAL, 1);
-+    pdev->ext_announced = true;
++    }
 +    return NULL;
 +}
 +
  static int hwc_open(const struct hw_module_t* module, const char* name,
                      struct hw_device_t** device) {
      int ret = 0;
-@@ -790,6 +925,29 @@ static int hwc_open(const struct hw_module_t* module, const char* name,
+@@ -790,6 +931,29 @@ static int hwc_open(const struct hw_module_t* module, const char* name,
          first_window.reset();
      }
  
@@ -432,7 +438,7 @@ index d24b035..9a9f84f 100644
      pdev->vsync_callback_enabled = true;
      if (pdev->display->refresh > 1000 && pdev->display->refresh < 1000000)
          pdev->vsync_period_ns = 1000 * 1000 * 1000 / (pdev->display->refresh / 1000);
-@@ -840,7 +998,7 @@ void subsurface_cursor_handler::clear_previous_subsurface_if_needed(waydroid_hwc
+@@ -840,7 +1004,7 @@ void subsurface_cursor_handler::clear_previous_subsurface_if_needed(waydroid_hwc
  
          assert(window_it->second->layers.size() == 2);
          auto &last_layer = window_it->second->layers[window_it->second->layers.size() - 1];
@@ -442,10 +448,10 @@ index d24b035..9a9f84f 100644
      }
      window_key = {};
 diff --git a/hwcomposer/hwcomposer.h b/hwcomposer/hwcomposer.h
-index b147f38..c09edf3 100644
+index b147f38..484c375 100644
 --- a/hwcomposer/hwcomposer.h
 +++ b/hwcomposer/hwcomposer.h
-@@ -79,6 +79,12 @@ struct waydroid_hwc_composer_device_1 : hwc_composer_device_1_t {
+@@ -79,6 +79,13 @@ struct waydroid_hwc_composer_device_1 : hwc_composer_device_1_t {
      bool multi_windows;
  
      std::unique_ptr<waydroid_mode> selected_mode;
@@ -455,6 +461,7 @@ index b147f38..c09edf3 100644
 +    bool ext_hidden = false;
 +    pthread_t ext_hotplug_thread;
 +    std::atomic<bool> ext_announced {false};
++    std::atomic<bool> ext_active {false};
  };
  
  int apply_hwc_layer_to_window(waydroid_hwc_composer_device_1 *pdev, hwc_layer_1 *hwc_layer, size_t hwc_layer_index, window *window);
