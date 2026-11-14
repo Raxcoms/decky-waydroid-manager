@@ -21,6 +21,8 @@ class DisplayPayloadTests(unittest.TestCase):
         header[:6] = b"\x7fELF\x02\x01"
         struct.pack_into("<H", header, 18, 183)
         self.library.write_bytes(header)
+        (self.payload / "libhwc2on1adapter.so").write_bytes(header)
+        (self.payload / "WaydroidManagerExternalDisplay.apk").write_bytes(b"test overlay")
         self.identity = VendorIdentity("test/vendor/fingerprint", 33, "a" * 64, 183)
         self.metadata = {
             "vendorFingerprint": self.identity.fingerprint,
@@ -28,6 +30,9 @@ class DisplayPayloadTests(unittest.TestCase):
             "stockComposerSha256": self.identity.composer_digest,
             "elfMachine": 183,
             "composerSha256": digest(self.library),
+            "stockAdapterSha256": "",
+            "adapterSha256": digest(self.payload / "libhwc2on1adapter.so"),
+            "overlaySha256": digest(self.payload / "WaydroidManagerExternalDisplay.apk"),
         }
         self.write_manifest()
 
@@ -48,6 +53,8 @@ class DisplayPayloadTests(unittest.TestCase):
     def test_selects_validated_library_for_vendor_overlay(self):
         self.assertEqual(select_payload(self.root, self.identity), {
             "vendor/lib64/hw/hwcomposer.waydroid.so": self.library,
+            "vendor/lib64/libhwc2on1adapter.so": self.payload / "libhwc2on1adapter.so",
+            "system/product/overlay/WaydroidManagerExternalDisplay.apk": self.payload / "WaydroidManagerExternalDisplay.apk",
         })
 
     def test_rejects_modified_library(self):

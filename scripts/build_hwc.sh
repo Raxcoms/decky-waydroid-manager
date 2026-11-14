@@ -24,6 +24,19 @@ elif ! git -C hardware/waydroid apply --reverse --check "$patch"; then
   echo "The composer source contains other changes. Preserve them before building." >&2
   exit 1
 fi
+adapter_patch="$project_dir/android/hwc/adapter.patch"
+if git -C hardware/interfaces diff --quiet; then
+  git -C hardware/interfaces apply --check "$adapter_patch"
+  git -C hardware/interfaces apply "$adapter_patch"
+elif ! git -C hardware/interfaces apply --reverse --check "$adapter_patch"; then
+  echo "The composer adapter contains other changes." >&2
+  exit 1
+fi
+if [[ -d vendor/waydroid-manager-overlay ]]; then
+  diff -r "$project_dir/android/hwc/overlay" vendor/waydroid-manager-overlay
+else
+  cp -r "$project_dir/android/hwc/overlay" vendor/waydroid-manager-overlay
+fi
 
 set +u
 source build/envsetup.sh
@@ -31,8 +44,10 @@ apply-waydroid-patches
 lunch lineage_waydroid_arm64-userdebug
 set -u
 export SOONG_UI_NINJA_ARGS="-j2"
-m -j2 hwcomposer.waydroid
+m -j2 hwcomposer.waydroid libhwc2on1adapter WaydroidManagerExternalDisplay
 cp out/target/product/waydroid_arm64/vendor/lib64/hw/hwcomposer.waydroid.so "$output/"
+cp out/target/product/waydroid_arm64/vendor/lib64/libhwc2on1adapter.so "$output/"
+cp out/target/product/waydroid_arm64/system/product/overlay/WaydroidManagerExternalDisplay.apk "$output/"
 python3 .repo/repo/repo manifest -r -o "$output/source-manifest.xml"
 git -C hardware/waydroid diff --binary > "$output/composer-source.patch"
 sha256sum "$output/hwcomposer.waydroid.so"

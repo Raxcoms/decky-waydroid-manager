@@ -1,0 +1,6 @@
+runtime_resource_overlay {
+    name: "WaydroidManagerExternalDisplay",
+    product_specific: true,
+    // The framework value is not overlayable, so this uses the pre-Q policy.
+    sdk_version: "28",
+}

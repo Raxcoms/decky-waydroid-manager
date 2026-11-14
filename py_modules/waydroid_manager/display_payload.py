@@ -16,6 +16,7 @@ class VendorIdentity:
     sdk: int
     composer_digest: str
     machine: int
+    adapter_digest: str = ""
 
 
 def elf_machine(path: Path) -> int:
@@ -49,7 +50,9 @@ def inspect_vendor(config_dir: Path, run) -> VendorIdentity:
     with tempfile.TemporaryDirectory(prefix="waydroid-manager-vendor-") as directory:
         library = Path(directory) / "composer.so"
         run(["debugfs", "-R", f"dump /{HWC_PATH} {library}", str(image)], timeout=15)
-        return VendorIdentity(fingerprint, int(sdk), digest(library), elf_machine(library))
+        adapter = Path(directory) / "adapter.so"
+        run(["debugfs", "-R", f"dump /lib64/libhwc2on1adapter.so {adapter}", str(image)], timeout=15)
+        return VendorIdentity(fingerprint, int(sdk), digest(library), elf_machine(library), digest(adapter))
 
 
 def select_payload(directory: Path, identity: VendorIdentity) -> dict[str, Path]:
@@ -69,13 +72,22 @@ def select_payload(directory: Path, identity: VendorIdentity) -> dict[str, Path]
             "sdk": identity.sdk,
             "stockComposerSha256": identity.composer_digest,
             "elfMachine": identity.machine,
+            "stockAdapterSha256": identity.adapter_digest,
         }
         if any(metadata.get(key) != value for key, value in expected.items()):
             continue
-        library = manifest.parent / "hwcomposer.waydroid.so"
-        if (library.is_symlink() or not library.is_file()
-                or elf_machine(library) != identity.machine
-                or digest(library) != metadata.get("composerSha256")):
-            raise RuntimeError("The bundled external display composer failed validation")
-        return {f"vendor/{HWC_PATH}": library}
+        payload_files = {
+            f"vendor/{HWC_PATH}": ("hwcomposer.waydroid.so", "composerSha256"),
+            "vendor/lib64/libhwc2on1adapter.so": ("libhwc2on1adapter.so", "adapterSha256"),
+            "system/product/overlay/WaydroidManagerExternalDisplay.apk":
+                ("WaydroidManagerExternalDisplay.apk", "overlaySha256"),
+        }
+        result = {}
+        for target, (name, checksum) in payload_files.items():
+            source = manifest.parent / name
+            if (source.is_symlink() or not source.is_file() or digest(source) != metadata.get(checksum)
+                    or (name.endswith(".so") and elf_machine(source) != identity.machine)):
+                raise RuntimeError("The bundled external display payload failed validation")
+            result[target] = source
+        return result
     raise RuntimeError("No compatible external display payload is bundled for this Waydroid image")
