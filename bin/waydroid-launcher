@@ -3,6 +3,11 @@ set -euo pipefail
 
 mode="${1:-full}"
 package="${2:-}"
+case "$mode" in
+  full) [[ -z "$package" ]] || { echo "Full Waydroid launch does not accept an app package." >&2; exit 2; } ;;
+  app) [[ "$package" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$ ]] || { echo "Invalid Android package name." >&2; exit 2; } ;;
+  *) echo "Usage: waydroid-launcher [full|app PACKAGE]" >&2; exit 2 ;;
+esac
 runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 data_home="${XDG_DATA_HOME:-}"
 [[ "$data_home" == /* ]] || data_home="$HOME/.local/share"

@@ -19,13 +19,14 @@ class ServiceControlTests(unittest.TestCase):
             root = Path(directory)
             relay = root / "relay"
             relay.write_text(
-                "import socket, sys\n"
+                "import json, socket, sys\n"
                 "display = socket.socket(socket.AF_UNIX)\n"
                 "display.bind(sys.argv[2])\n"
                 "display.listen()\n"
                 "with socket.socket(socket.AF_UNIX) as control:\n"
                 "    control.connect(sys.argv[1])\n"
-                "    control.sendall(sys.argv[3].encode() + b' ' + sys.argv[2].encode() + b'\\n')\n"
+                "    command = sys.argv[3].encode() + b' ' + (sys.argv[2].encode() if sys.argv[3] == 'HOST' else json.dumps({'display': sys.argv[2], 'mode': 'app', 'package': 'example.app'}).encode()) + b'\\n'\n"
+                "    control.sendall(command)\n"
                 "    print(control.recv(4096).decode().strip(), flush=True)\n"
                 "    sys.stdin.read()\n"
             )
@@ -52,6 +53,7 @@ class ServiceControlTests(unittest.TestCase):
                 self.assertEqual(json.loads(response)["ok"], True)
                 self.assertEqual(control.launch.process[0], child.pid)
                 self.assertEqual(control.launch.display, root / "host-wayland")
+                self.assertEqual(control.launch.request.package, "example.app")
                 with self.assertRaisesRegex(RuntimeError, "Invalid Waydroid launch"):
                     control.identify_launch(os.getpid(), root / "wayland")
             finally:

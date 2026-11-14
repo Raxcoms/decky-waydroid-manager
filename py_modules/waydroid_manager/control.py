@@ -10,15 +10,23 @@ import socket
 import stat
 import struct
 import subprocess
+import re
 from typing import Awaitable, Callable
 
 from .proc import descends_from, process_identity
 
 
 @dataclass(frozen=True)
+class LaunchRequest:
+    mode: str
+    package: str | None
+
+
+@dataclass(frozen=True)
 class Launch:
     process: tuple[int, str]
     display: Path
+    request: LaunchRequest | None = None
 
     @property
     def unit(self) -> str:
@@ -112,6 +120,22 @@ class ServiceControl:
                 raise RuntimeError("The Waydroid relay does not own its registered socket")
         return Launch(identity, display)
 
+    @staticmethod
+    def _launch_request(command: bytes) -> tuple[Path, LaunchRequest]:
+        try:
+            value = json.loads(command[7:-1])
+            display = Path(value["display"])
+            mode = value["mode"]
+            package = value.get("package")
+        except (KeyError, TypeError, ValueError) as error:
+            raise RuntimeError("Invalid Waydroid launch request") from error
+        if mode == "full" and package is None:
+            return display, LaunchRequest(mode, None)
+        if (mode == "app" and isinstance(package, str)
+                and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,254}", package)):
+            return display, LaunchRequest(mode, package)
+        raise RuntimeError("Invalid Waydroid launch request")
+
     async def open(self) -> None:
         if self.path.exists() or self.path.is_symlink():
             if not stat.S_ISSOCK(self.path.lstat().st_mode):
@@ -154,8 +178,9 @@ class ServiceControl:
                     if self.host is None:
                         raise RuntimeError("The shared Waydroid relay is not ready")
                     owner = not self.launches
-                    registered = self.identify_launch(pid, Path(os.fsdecode(command[7:-1])))
-                    launch = Launch(registered.process, self.host.display)
+                    display, request = self._launch_request(command)
+                    registered = self.identify_launch(pid, display)
+                    launch = Launch(registered.process, self.host.display, request)
                     self.launches[launch.process] = launch
                 elif command in {b"POLICY full\n", b"POLICY app\n", b"RELEASE\n"}:
                     active = self._launch_for_pid(pid)
