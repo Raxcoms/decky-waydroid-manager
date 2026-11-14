@@ -95,11 +95,16 @@ jobs:
           pattern: display-native-*
           path: out/display-native
           merge-multiple: true
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: display-tools-*
+          path: out/display-tools
+          merge-multiple: true
       - name: Package plugin
         env:
           BUILD_REVISION: ${{ needs.build.outputs.revision }}
         run: |
-          args=(package --native out/display-native)
+          args=(package --native out/display-native --runtime-tools out/display-tools)
           if [[ -n "$BUILD_REVISION" ]]; then
             args+=(--revision "$BUILD_REVISION")
           fi

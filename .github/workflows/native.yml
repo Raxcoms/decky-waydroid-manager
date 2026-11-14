@@ -12,12 +12,15 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       profiles: ${{ steps.profiles.outputs.value }}
+      tools: ${{ steps.profiles.outputs.tools }}
     steps:
       - uses: actions/checkout@v7
       - id: profiles
         run: |
           profiles=$(python3 -c 'import json,pathlib; print(json.dumps([p.stem for p in sorted(pathlib.Path("android/native/profiles").glob("*.json"))]))')
           echo "value=$profiles" >> "$GITHUB_OUTPUT"
+          tools=$(python3 -c 'import json,pathlib; print(json.dumps(json.loads(pathlib.Path("android/native/runtime-tools.json").read_text())))')
+          echo "tools=$tools" >> "$GITHUB_OUTPUT"
 
   native:
     needs: profiles
@@ -73,4 +76,36 @@ jobs:
         with:
           name: display-native-${{ matrix.profile }}
           path: out/display-native
+          if-no-files-found: error
+
+  runtime-tools:
+    needs: profiles
+    strategy:
+      matrix:
+        tool: ${{ fromJSON(needs.profiles.outputs.tools) }}
+    runs-on: ${{ matrix.tool.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/cache/restore@v6
+        id: tools-cache
+        with:
+          path: out/display-tools
+          key: display-tools-${{ matrix.tool.runner }}-${{ hashFiles('scripts/bundle_runtime_tools.py', 'android/native/runtime-tools.json') }}
+      - name: Package offline resource compiler
+        if: steps.tools-cache.outputs.cache-hit != 'true'
+        env:
+          MACHINE: ${{ matrix.tool.machine }}
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends aapt
+          python3 scripts/bundle_runtime_tools.py out/display-tools --machine "$MACHINE"
+      - uses: actions/cache/save@v6
+        if: steps.tools-cache.outputs.cache-hit != 'true'
+        with:
+          path: out/display-tools
+          key: ${{ steps.tools-cache.outputs.cache-primary-key }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: display-tools-${{ matrix.tool.machine }}
+          path: out/display-tools
           if-no-files-found: error
