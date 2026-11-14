@@ -8,10 +8,25 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from native_dependencies import extract, fetch
+from native_dependencies import archive_digest, extract, fetch
 
 
 class NativeDependencyTests(unittest.TestCase):
+    def test_content_verification_ignores_archive_packaging_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = [Path(directory) / name for name in ("first.tar.gz", "second.tar.gz")]
+            for index, path in enumerate(paths):
+                with tarfile.open(path, "w:gz") as archive:
+                    entry = tarfile.TarInfo("source.cpp")
+                    entry.mtime, entry.uid, entry.size = index, index, 4
+                    archive.addfile(entry, io.BytesIO(b"code"))
+            self.assertNotEqual(paths[0].read_bytes(), paths[1].read_bytes())
+            self.assertEqual(archive_digest(paths[0]), archive_digest(paths[1]))
+            entry = {"name": "source", "url": "https://upstream.example/source.tar.gz",
+                     "treeSha256": archive_digest(paths[0])}
+            with patch("native_dependencies.urllib.request.urlopen", return_value=io.BytesIO(paths[1].read_bytes())):
+                self.assertEqual(archive_digest(fetch(entry, Path(directory) / "cache")), entry["treeSha256"])
+
     def test_download_is_verified_and_cached_by_content(self):
         content = b"pinned upstream input"
         entry = {"name": "source", "url": "https://upstream.example/source.tar.gz",

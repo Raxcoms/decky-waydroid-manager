@@ -14,7 +14,13 @@ permissions:
   contents: read
 
 jobs:
+  native:
+    uses: ./.github/workflows/native.yml
+
   build:
+    outputs:
+      revision: ${{ steps.version.outputs.revision }}
+      version: ${{ steps.version.outputs.version }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -67,11 +73,33 @@ jobs:
           for script in bin/waydroid-launcher bin/waydroid-game-session bin/waydroid-session; do
             bash -n "$script"
           done
+      - uses: actions/upload-artifact@v7
+        with:
+          name: plugin-runtime
+          path: |
+            dist
+            bin/waydroid-verifier.dex
+          if-no-files-found: error
+
+  package:
+    needs: [build, native]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: plugin-runtime
+          path: .
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: display-native-*
+          path: out/display-native
+          merge-multiple: true
       - name: Package plugin
         env:
-          BUILD_REVISION: ${{ steps.version.outputs.revision }}
+          BUILD_REVISION: ${{ needs.build.outputs.revision }}
         run: |
-          args=(package)
+          args=(package --native out/display-native)
           if [[ -n "$BUILD_REVISION" ]]; then
             args+=(--revision "$BUILD_REVISION")
           fi
@@ -80,7 +108,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: inputs.release_version == ''
         with:
-          name: waydroid-manager-${{ steps.version.outputs.version }}-ci
+          name: waydroid-manager-${{ needs.build.outputs.version }}-ci
           path: package
           if-no-files-found: error
       - name: Create release ZIP

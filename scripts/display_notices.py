@@ -6,14 +6,15 @@ import sys
 
 def collect(source: Path, output: Path) -> None:
     notices = []
-    for path in sorted((source / "hardware/waydroid/hwcomposer").rglob("*")):
-        if path.suffix not in {".h", ".cpp"}:
-            continue
-        content = path.read_text(encoding="utf-8")
-        if content.startswith("/*"):
-            header = content[:content.index("*/") + 2]
-            if header not in notices:
-                notices.append(header)
+    for directory in ("hardware/waydroid/hwcomposer", "hardware/waydroid/interfaces", "system/core/libsync"):
+        for path in sorted((source / directory).rglob("*")):
+            if path.suffix not in {".h", ".cpp", ".c", ".hal"}:
+                continue
+            content = path.read_text(encoding="utf-8")
+            if content.startswith("/*"):
+                header = content[:content.index("*/") + 2]
+                if header not in notices:
+                    notices.append(header)
     for name in (
         "hardware/interfaces/NOTICE", "external/wayland/COPYING",
         "external/wayland-protocols/freedesktop.org/COPYING",

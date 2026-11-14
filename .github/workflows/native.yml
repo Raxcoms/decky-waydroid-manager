@@ -1,22 +1,6 @@
 name: Build native display extension
 
 on:
-  push:
-    paths:
-      - 'android/native/**'
-      - 'android/hwc/*.patch'
-      - 'scripts/build_native.py'
-      - 'scripts/native_*.py'
-      - 'scripts/display_notices.py'
-      - '.github/workflows/native.yml'
-  pull_request:
-    paths:
-      - 'android/native/**'
-      - 'android/hwc/*.patch'
-      - 'scripts/build_native.py'
-      - 'scripts/native_*.py'
-      - 'scripts/display_notices.py'
-      - '.github/workflows/native.yml'
   workflow_dispatch:
   workflow_call:
 
@@ -43,11 +27,25 @@ jobs:
         profile: ${{ fromJSON(needs.profiles.outputs.profiles) }}
     steps:
       - uses: actions/checkout@v7
+      - name: Identify native recipe
+        id: recipe
+        env:
+          PROFILE: ${{ matrix.profile }}
+        run: |
+          digest=$(PYTHONPATH=scripts python3 -c 'import os,pathlib; from build_native import recipe_digest; print(recipe_digest(pathlib.Path("android/native/profiles")/(os.environ["PROFILE"]+".json")))')
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v6
+        id: native-cache
+        with:
+          path: out/display-native
+          key: display-native-${{ runner.os }}-${{ matrix.profile }}-${{ steps.recipe.outputs.digest }}
       - uses: android-actions/setup-android@v4
+        if: steps.native-cache.outputs.cache-hit != 'true'
         with:
           accept-android-sdk-licenses: false
           packages: ''
       - name: Install native build tools
+        if: steps.native-cache.outputs.cache-hit != 'true'
         env:
           PROFILE: ${{ matrix.profile }}
         run: |
@@ -57,13 +55,20 @@ jobs:
           android --sdk="$ANDROID_HOME" sdk install "ndk/$ndk"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ndk" >> "$GITHUB_ENV"
       - uses: actions/cache@v6
+        if: steps.native-cache.outputs.cache-hit != 'true'
         with:
           path: ~/.cache/waydroid-manager-native/archives
           key: native-sources-${{ runner.os }}-${{ hashFiles('android/native/profiles/*.json') }}
       - name: Build native display libraries
+        if: steps.native-cache.outputs.cache-hit != 'true'
         env:
           PROFILE: ${{ matrix.profile }}
         run: python3 scripts/build_native.py "android/native/profiles/$PROFILE.json" out/display-native
+      - uses: actions/cache/save@v6
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        with:
+          path: out/display-native
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
       - uses: actions/upload-artifact@v7
         with:
           name: display-native-${{ matrix.profile }}

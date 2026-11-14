@@ -18,12 +18,29 @@ def file_digest(path: Path) -> str:
     return checksum.hexdigest()
 
 
+def archive_digest(path: Path) -> str:
+    checksum = hashlib.sha256()
+    with tarfile.open(path) as archive:
+        for member in sorted(archive.getmembers(), key=lambda entry: entry.name):
+            metadata = [member.name, member.type.decode("ascii"), member.mode & 0o777, member.linkname]
+            checksum.update(json.dumps(metadata, separators=(",", ":")).encode() + b"\n")
+            if member.isfile():
+                content = hashlib.sha256()
+                with archive.extractfile(member) as file:
+                    for block in iter(lambda: file.read(1024 * 1024), b""):
+                        content.update(block)
+                checksum.update(content.digest())
+    return checksum.hexdigest()
+
+
 def fetch(entry: dict, cache: Path) -> Path:
+    expected = entry.get("treeSha256", entry.get("sha256", ""))
+    digest = archive_digest if "treeSha256" in entry else file_digest
     if (not re.fullmatch(r"[a-zA-Z0-9_-]+", entry["name"])
-            or not re.fullmatch(r"[0-9a-f]{64}", entry.get("sha256", ""))
+            or not re.fullmatch(r"[0-9a-f]{64}", expected)
             or not entry["url"].startswith("https://")):
         raise RuntimeError("Invalid pinned dependency")
-    archive = cache / f"{entry['name']}-{entry['sha256'][:16]}.tar.gz"
+    archive = cache / f"{entry['name']}-{expected[:16]}.tar.gz"
     cache.mkdir(parents=True, exist_ok=True)
     if not archive.exists():
         with tempfile.NamedTemporaryFile(dir=cache, suffix=".part", delete=False) as file:
@@ -32,12 +49,12 @@ def fetch(entry: dict, cache: Path) -> Path:
             with urllib.request.urlopen(entry["url"], timeout=60) as response, temporary.open("wb") as output:
                 while block := response.read(1024 * 1024):
                     output.write(block)
-            if file_digest(temporary) != entry["sha256"]:
+            if digest(temporary) != expected:
                 raise RuntimeError(f"Dependency checksum mismatch: {entry['name']}")
             temporary.replace(archive)
         finally:
             temporary.unlink(missing_ok=True)
-    if file_digest(archive) != entry["sha256"]:
+    if digest(archive) != expected:
         raise RuntimeError(f"Dependency checksum mismatch: {entry['name']}")
     return archive
 
@@ -75,18 +92,19 @@ def _extract(archive: Path, root: Path, strip_root: bool, exclude: tuple[str, ..
 def prepare(profile: Path, cache: Path, output: Path) -> dict:
     metadata = json.loads(profile.read_text())
     for entry in metadata["dependencies"]:
+        checksum = entry.get("treeSha256", entry.get("sha256"))
         target = output / entry["path"]
         if not target.resolve().is_relative_to(output.resolve()):
             raise RuntimeError("Dependency source path escapes the build directory")
         if target.exists():
             marker = target / ".waydroid-dependency"
-            if target.is_symlink() or not marker.is_file() or marker.read_text().strip() != entry["sha256"]:
+            if target.is_symlink() or not marker.is_file() or marker.read_text().strip() != checksum:
                 raise RuntimeError(f"Dependency directory is not a verified cache entry: {entry['name']}")
             continue
         print(f"Fetching {entry['name']}", flush=True)
         archive = fetch(entry, cache)
         extract(archive, target, entry.get("stripRoot", False), tuple(entry.get("exclude", [])))
-        (target / ".waydroid-dependency").write_text(entry["sha256"] + "\n")
+        (target / ".waydroid-dependency").write_text(checksum + "\n")
     return metadata
 
 

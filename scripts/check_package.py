@@ -42,6 +42,9 @@ def check(root: Path) -> None:
     backend = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(backend)
     backend.Plugin()
+    from waydroid_manager.native_payload import NativePayload
+    for manifest in (root / "bin/display-native").glob("*/manifest.json"):
+        NativePayload.load(manifest.parent)
     from waydroid_manager.display_payload import VendorIdentity, digest, select_payload
     payloads = root / "bin/display-payloads"
     identities = set()

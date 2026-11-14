@@ -11,7 +11,7 @@
       "exclude": [
         ".clang-format"
       ],
-      "sha256": "9d55c7aea84f10094e56a033fdbe9877bb04752ac3bc592ab67285462be2af88"
+      "treeSha256": "b372e8e2d62e64722bcd897513dd46bbf2fe75e3d03048956c29d78d380169de"
     },
     {
       "name": "wayland-protocols",
@@ -21,7 +21,7 @@
       "exclude": [
         ".clang-format"
       ],
-      "sha256": "f1d64ea22bbeb93b6f675ff0e8f2833172359b7c001f3cb5ff248e52daf87ca7"
+      "treeSha256": "ace43ad49b7ac45f5fd0a74aeac171f1cca0746cb9295b3c9ee1e2302157b71f"
     },
     {
       "name": "libffi",
@@ -31,7 +31,7 @@
       "exclude": [
         ".clang-format"
       ],
-      "sha256": "255aaacc38caa8618167873633797ea4915df53bc19432cf9f1461061d43e475"
+      "treeSha256": "d7b7196348cd31c3c66c5c4aa36ea77807d6f4607f33d475c7073482dda2c20c"
     },
     {
       "name": "libxkbcommon",
@@ -41,7 +41,7 @@
       "exclude": [
         ".clang-format"
       ],
-      "sha256": "5b5747dca950c4514b10e59c5986577293ae4b09947d6bef11c1299428c9ba01"
+      "treeSha256": "a7f5c5a3dc6eaf4b67a61a15b4ffe07a788e48b036c599699feb538525691244"
     },
     {
       "name": "vndk",
@@ -51,7 +51,7 @@
       "exclude": [
         ".clang-format"
       ],
-      "sha256": "dd926db3c35bed5161333c018e26011d2db1c9c317879633b1301360621f16ce"
+      "treeSha256": "d332b0d32dad66824f12875be192e702a77bae0ab7883d11a28365d01dc51371"
     },
     {
       "name": "waydroid",
@@ -62,7 +62,7 @@
       "exclude": [
         ".clang-format"
       ],
-      "sha256": "ccd0bc13dcf15a0d3752e15a2a7e90c65118b3c040701288c8d0ed99dde43b09"
+      "treeSha256": "d223d6f410c607c49d3cda33794fb8189ee408af744774e87c2455f038d7c8c7"
     },
     {
       "name": "interfaces",
@@ -73,7 +73,7 @@
       "exclude": [
         ".clang-format"
       ],
-      "sha256": "dda6dad00d2f2127709924bfa4143e694ea456c5098b9d81b575902b3c0adbe4"
+      "treeSha256": "7def922d2349dd9b922e53bb3bdd9d8086d158642b826f15a21400010b15d094"
     },
     {
       "name": "minigbm",
@@ -84,7 +84,7 @@
       "exclude": [
         ".clang-format"
       ],
-      "sha256": "b500e25c8916dd5076d3c650e2ff132199173237000ec810690b226058dc617c"
+      "treeSha256": "dc4a88393ee606d8eaf28a0024c243f582413b5716ee2fcb3ff1c41c3149d5cf"
     },
     {
       "name": "libhidl",
@@ -95,7 +95,7 @@
       "exclude": [
         ".clang-format"
       ],
-      "sha256": "56eae6a75d963f81b9861b40f07312ce8d9e9948e1ffce750bbc03df6ebb91f8"
+      "treeSha256": "b600ff614338bc03ac2b2e6b1573a7f85b4426917e60519227e268aa766ad144"
     },
     {
       "name": "libdrm",
@@ -106,7 +106,7 @@
       "exclude": [
         ".clang-format"
       ],
-      "sha256": "7c116d6219a4862fad0878bbde55d4cf8e6a1d4fc9977f04d5f14adc783477ac"
+      "treeSha256": "1b9b14b381f3eb99c0ae90ef7c693a7f21792579394383fedbe18bc20da9f63c"
     },
     {
       "name": "waydroid-patches",
@@ -117,7 +117,7 @@
       "exclude": [
         ".clang-format"
       ],
-      "sha256": "98f27ff6fdb66d48ce90b7266b04a36d21e81ae9a447dbe8b184eb36cf6f4842"
+      "treeSha256": "7951007355cd928f6b84e7f6bd6438d40e1d70ecbe4c4b0c5431684175495a38"
     },
     {
       "name": "hidl-generator",
@@ -127,7 +127,7 @@
       "exclude": [
         ".clang-format"
       ],
-      "sha256": "182ccb8e9c45a5aabe0e82229cf3ee6858be040cde481e81e56f51707f96fca5"
+      "treeSha256": "8b37a7ae1c75a3f34b0a5ac9c58a201d52b60c1e0ed89eafca4d2ea7fe27d753"
     },
     {
       "name": "libbase",
@@ -138,7 +138,7 @@
       "exclude": [
         ".clang-format"
       ],
-      "sha256": "986e01d3d35a878ada7b9b1369b56367c7a0905bbb5d2f61d71449ed33445f4b"
+      "treeSha256": "19defd8a4be576a97af16a5246d969bd30d204ed121ea373893f69d80ae2705e"
     },
     {
       "name": "libsync",
@@ -148,7 +148,7 @@
       "exclude": [
         ".clang-format"
       ],
-      "sha256": "02a20435ea8aa7a0be9d0df2946c02ae2858ce41334c1b6218315106c5ba8308"
+      "treeSha256": "0729dade2105ed19584894cc4002d9ddd8460062a1585c4d5c1c46150e3db00a"
     }
   ],
   "schemaVersion": 1,
