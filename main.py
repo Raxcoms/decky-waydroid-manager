@@ -28,6 +28,7 @@ from waydroid_manager.guest import GUEST_STARTING, LaunchPolicy, android_user_re
 from waydroid_manager.image import launcher_packages, owned_directory, require_unmounted, require_unredirected, run_init
 from waydroid_manager.control import Launch, ServiceControl, control_path
 from waydroid_manager.overlay import OverlayLease
+from waydroid_manager.session_config import SessionConfigLease
 from waydroid_manager.state import StateStore
 from waydroid_manager.user_files import open_as_user, run_as_user
 
@@ -47,6 +48,7 @@ class Plugin:
         self._install_confirmation = None
         self._control = None
         self._overlay = OverlayLease(WAYDROID_DIR)
+        self._session_config = SessionConfigLease(WAYDROID_DIR)
 
     @contextmanager
     def _edit_state(self, home: Path):
@@ -854,9 +856,10 @@ class Plugin:
     async def _ensure_service(self) -> None:
         if not self._initialized():
             raise RuntimeError("WAYDROID_NOT_INSTALLED")
-        if self._overlay.manifest.exists():
+        if self._overlay.manifest.exists() or self._session_config.manifest.exists():
             if self._service_running() or container_pid() is not None:
-                raise RuntimeError("Waydroid has a pending overlay transaction. Stop Waydroid before launching it again.")
+                raise RuntimeError("Waydroid has a pending second-screen transaction. Stop Waydroid before launching it again.")
+            await asyncio.to_thread(self._session_config.recover)
             await asyncio.to_thread(self._overlay.recover)
         await self.start_service()
 
