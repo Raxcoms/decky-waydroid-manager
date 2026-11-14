@@ -31,6 +31,7 @@ from waydroid_manager.overlay import OverlayLease
 from waydroid_manager.session_config import SessionConfigLease
 from waydroid_manager.second_screen import discover_external_display
 from waydroid_manager.display_payload import inspect_vendor, select_payload
+from waydroid_manager.runtime_display import RuntimeDisplayLease
 from waydroid_manager.state import StateStore
 from waydroid_manager.user_files import open_as_user, run_as_user
 
@@ -51,6 +52,7 @@ class Plugin:
         self._control = None
         self._overlay = OverlayLease(WAYDROID_DIR)
         self._session_config = SessionConfigLease(WAYDROID_DIR)
+        self._runtime_display = RuntimeDisplayLease(WAYDROID_DIR)
         self._session_second_screen: bool | None = None
 
     @contextmanager
@@ -130,7 +132,7 @@ class Plugin:
 
     async def _prepare_launch(self, launch: Launch) -> None:
         try:
-            await asyncio.to_thread(self._start_input_sync, launch)
+            await asyncio.to_thread(self._start_input_sync, self._control.host or launch)
         except (OSError, RuntimeError, subprocess.SubprocessError) as error:
             decky.logger.warning("Waydroid controller bridge unavailable: %s", error)
 
@@ -154,12 +156,7 @@ class Plugin:
                     raise RuntimeError("The host has no available external Wayland display")
                 identity = await asyncio.to_thread(inspect_vendor, WAYDROID_DIR, self._run)
                 files = select_payload(Path(decky.DECKY_PLUGIN_DIR) / "bin/display-payloads", identity)
-                await asyncio.to_thread(self._overlay.acquire, files)
-                try:
-                    await asyncio.to_thread(self._session_config.acquire, external.socket)
-                except Exception:
-                    await asyncio.to_thread(self._overlay.recover)
-                    raise
+                await asyncio.to_thread(self._runtime_display.acquire, files, external.socket, self._run, launch.display)
             self._session_second_screen = enabled
 
     async def _launch_policy(self, launch: Launch, mode: str) -> None:
@@ -196,6 +193,7 @@ class Plugin:
             while container_pid() is not None and time.monotonic() < deadline:
                 time.sleep(0.1)
             if container_pid() is None:
+                self._runtime_display.recover()
                 self._session_config.recover()
                 self._overlay.recover()
 
@@ -897,6 +895,10 @@ class Plugin:
     async def _ensure_service(self) -> None:
         if not self._initialized():
             raise RuntimeError("WAYDROID_NOT_INSTALLED")
+        if self._runtime_display.root.exists():
+            if container_pid() is not None:
+                raise RuntimeError("A previous second-screen session is still closing")
+            await asyncio.to_thread(self._runtime_display.recover)
         if self._overlay.manifest.exists() or self._session_config.manifest.exists():
             if container_pid() is not None:
                 raise RuntimeError("Waydroid has a pending second-screen transaction. Stop Waydroid before launching it again.")
