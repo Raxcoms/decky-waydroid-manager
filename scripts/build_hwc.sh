@@ -7,10 +7,30 @@ project_dir="$(cd "$(dirname "$0")/.." && pwd)"
 mkdir -p "$output"
 output="$(cd "$output" && pwd)"
 cd "$source_dir"
+export PATH="$PWD/.repo/repo:$PATH"
+export GIT_COMMITTER_NAME=Raxcoms
+export GIT_COMMITTER_EMAIL=mpaulo968@gmail.com
 if [[ ! -f build/envsetup.sh ]]; then
   echo "Run prepare_hwc_build.sh first." >&2
   exit 1
 fi
+for entry in hardware/waydroid:external-display hardware/interfaces:adapter; do
+  project="${entry%%:*}"
+  patch_file="$project_dir/android/hwc/${entry#*:}.patch"
+  if git -C "$project" apply --reverse --check "$patch_file" 2>/dev/null; then
+    git -C "$project" apply --reverse "$patch_file"
+  fi
+done
+set +u
+source build/envsetup.sh
+if [[ ! -f .waydroid-manager-upstream-patches ]]; then
+  if ! python3 "$project_dir/scripts/verify_waydroid_patches.py" "$PWD"; then
+    apply-waydroid-patches
+    python3 "$project_dir/scripts/verify_waydroid_patches.py" "$PWD"
+  fi
+  touch .waydroid-manager-upstream-patches
+fi
+lunch lineage_waydroid_arm64-userdebug
 expected=a575cfcc12ab79a122844218f2c6df5bd208cca0
 if [[ "$(git -C hardware/waydroid rev-parse HEAD)" != "$expected" ]]; then
   echo "The composer source revision does not match the plugin patch." >&2
@@ -38,16 +58,12 @@ else
   cp -r "$project_dir/android/hwc/overlay" vendor/waydroid-manager-overlay
 fi
 
-set +u
-source build/envsetup.sh
-apply-waydroid-patches
-lunch lineage_waydroid_arm64-userdebug
-set -u
 export SOONG_UI_NINJA_ARGS="-j2"
 m -j2 hwcomposer.waydroid libhwc2on1adapter WaydroidManagerExternalDisplay
 cp out/target/product/waydroid_arm64/vendor/lib64/hw/hwcomposer.waydroid.so "$output/"
 cp out/target/product/waydroid_arm64/vendor/lib64/libhwc2on1adapter.so "$output/"
 cp out/target/product/waydroid_arm64/system/product/overlay/WaydroidManagerExternalDisplay.apk "$output/"
-python3 .repo/repo/repo manifest -r -o "$output/source-manifest.xml"
+cp source-manifest.xml "$output/source-manifest.xml"
+python3 .repo/repo/repo manifest -r -o "$output/patched-source-manifest.xml"
 git -C hardware/waydroid diff --binary > "$output/composer-source.patch"
 sha256sum "$output/hwcomposer.waydroid.so"
