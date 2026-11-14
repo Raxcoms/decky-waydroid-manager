@@ -2,9 +2,9 @@
 
 ## Status
 
-The preferences, shared launch registration, external socket discovery, and reversible configuration helpers are implemented. Payload activation is not connected yet. The current Waydroid hardware composer exposes one Android display, so there is no safe configuration switch that can add an external display.
+The preferences, shared launch registration, external socket discovery, payload validation, and temporary mount lifecycle are implemented. The plugin-owned Android payload is being built and has not passed display presentation tests yet.
 
-The external-display HWC, image compatibility checks, and surface request/return lifecycle still need implementation and hardware validation. The settings currently save a preference only; rebooting does not yet enable a second Android display.
+The enabled launch path requires a matching bundled payload. Until one is available, disable second-screen support to use the standard launch path. Rebooting alone cannot supply a missing payload.
 
 The eventual feature must make Android behave as though a USB-C monitor is connected. Moving a Waydroid app window to another host output is not enough because Android still reports one display to the app.
 
@@ -22,16 +22,19 @@ Waydroid already supports rootfs overlays. It mounts `/var/lib/waydroid/overlay`
 
 The overlay is global while Waydroid is running, so the launch path must still own its lifecycle:
 
-- stage only a matching, primary-display-compatible HWC in the vendor overlay;
+- compose a matching HWC and adapter ahead of the existing vendor overlay using a temporary overlay mount;
+- add a temporary framework resource overlay that disables automatic external display mirroring;
 - discover a host-provided external Wayland socket and bind it into the container as `wayland-1` before Waydroid starts;
 - add `waydroid.wayland_display_ext=wayland-1` only to the generated properties for that launch;
-- remove the staged HWC and temporary mount when the plugin launch ends.
+- remove the temporary mounts when the final compatible plugin launch ends.
 
 The launcher must never acquire, hold, or release a DRM lease. The host compositor owns its lease and arbitrates it with its existing applications. The plugin requests use by mapping its external Wayland surface only for a second-screen session. When the final eligible Waydroid app exits, the HWC closes that surface, returning presentation to the compositor and its previous user.
 
 The HWC extension is owned by this plugin and has no device, connector, panel, or touch-controller rules. Its only host input is the external Wayland socket supplied for that session. A host integration may expose the socket through an environment file, a launcher, or an explicit plugin setting, but it remains responsible for lease policy. On Thor, the existing secondary Gamescope is one example of this contract: it holds a yielded DRM lease and exposes a socket for normal client applications. It is a validation fixture, not a runtime dependency.
 
-An interrupted cleanup must leave a normal launch safe. The staged HWC therefore has to retain the stock primary path and treat a missing `wayland-1` socket as no external display. Disabling the feature removes the plugin overlay and temporary configuration, restoring the stock HWC on the next container start. Do not alter `/var/lib/waydroid/images` or the host's DRM-lease service.
+Runtime files live under `/run`. Temporary bind mounts expose the configuration only for the plugin session, leaving the original files intact. A separate root guard stops the owned session and removes those mounts if the backend exits. Rebooting removes the mounts automatically. The HWC retains the stock primary path and treats a missing `wayland-1` socket as no external display. The installed images and host lease service are unchanged.
+
+Apps can share an active session when their second-screen settings match. A launch that requests a different setting asks the user to close the existing shortcuts before switching the global container configuration.
 
 ## Hardware composer work
 
@@ -76,3 +79,5 @@ The feature is not ready for release until the private runtime path and at least
 ### Linux helper validation
 
 The focused suite passed all 24 tests on Thor on November 14, 2026. This covers socket discovery, authenticated launch registration, shared launch release accounting, cancellation during cleanup, overlay restoration, and configuration recovery. Tests used temporary files and sockets, which were removed afterward. This does not validate Android display presentation or returning the physical screen to an existing application.
+
+The full Python suite passes 193 tests under Linux. Thor also passed a mount integration test that checked both normal release and a backend process crash: the independent guard restored the original fixture files and overlays. The test did not modify the installed plugin or Waydroid configuration.
