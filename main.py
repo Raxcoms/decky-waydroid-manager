@@ -151,7 +151,7 @@ class Plugin:
             if enabled:
                 if container_pid() is not None:
                     raise RuntimeError("Close the running Waydroid session before enabling its second screen")
-                external = discover_external_display(uid)
+                external = discover_external_display(uid, primary=steam_wayland_socket(uid))
                 if external is None:
                     raise RuntimeError("The host has no available external Wayland display")
                 identity = await asyncio.to_thread(inspect_vendor, WAYDROID_DIR, self._run)

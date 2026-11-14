@@ -28,11 +28,17 @@ def _display_path(value: str, runtime: Path) -> Path | None:
         return None
 
 
-def _environment_display(path: Path) -> str | None:
+def _environment_display(path: Path, uid: int) -> str | None:
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        with os.fdopen(os.open(path, flags), "r", encoding="utf-8") as file:
+            info = os.fstat(file.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != uid or info.st_size > 65536:
+                return None
+            lines = file.read(65537).splitlines()
     except (OSError, UnicodeError):
         return None
+    result = None
     for line in lines:
         name, separator, value = line.partition("=")
         if name != "WAYLAND_DISPLAY" or not separator:
@@ -42,8 +48,8 @@ def _environment_display(path: Path) -> str | None:
         except ValueError:
             return None
         if len(values) == 1:
-            return values[0]
-    return None
+            result = values[0]
+    return result
 
 
 def _socket(path: Path, uid: int) -> ExternalDisplay | None:
@@ -57,7 +63,7 @@ def _socket(path: Path, uid: int) -> ExternalDisplay | None:
 
 
 def discover_external_display(uid: int, environment: dict[str, str] | None = None,
-                              runtime: Path | None = None) -> ExternalDisplay | None:
+                              runtime: Path | None = None, primary: Path | None = None) -> ExternalDisplay | None:
     """Find a host-provided secondary Wayland socket without identifying a device."""
     environment = os.environ if environment is None else environment
     runtime = runtime or Path(f"/run/user/{uid}")
@@ -67,7 +73,7 @@ def discover_external_display(uid: int, environment: dict[str, str] | None = Non
 
     if environment_file := environment.get(ENVIRONMENT_VARIABLE):
         path = Path(environment_file)
-        if display := _environment_display(path):
+        if display := _environment_display(path, uid):
             candidates.append(display)
 
     # Host integrations can publish an environment snapshot for their output.
@@ -76,11 +82,13 @@ def discover_external_display(uid: int, environment: dict[str, str] | None = Non
     except OSError:
         environment_files = []
     for path in environment_files:
-        if display := _environment_display(path):
+        if display := _environment_display(path, uid):
             candidates.append(display)
 
     for value in candidates:
         if path := _display_path(value, runtime):
+            if primary is not None and path == primary.resolve():
+                continue
             if display := _socket(path, uid):
                 return display
     return None

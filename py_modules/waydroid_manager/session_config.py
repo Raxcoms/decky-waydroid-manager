@@ -136,7 +136,7 @@ class SessionConfigLease:
     @staticmethod
     def _fragment_config(socket: Path) -> bytes:
         value = socket.as_posix()
-        if any(character.isspace() for character in value) or "\n" in value or "\r" in value:
+        if any(character.isspace() for character in value) or "\\" in value or "\x00" in value:
             raise RuntimeError("Waydroid external display socket has an invalid path")
         return f"lxc.mount.entry = {value} run/xdg/wayland-1 none rbind,create=file 0 0\n".encode()
 

@@ -15,6 +15,22 @@ from waydroid_manager.second_screen import (
 
 @unittest.skipUnless(hasattr(socket, "AF_UNIX") and hasattr(os, "getuid"), "Requires Unix sockets")
 class ExternalDisplayTests(unittest.TestCase):
+    def test_ignores_non_regular_environment_snapshots(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = Path(directory)
+            os.mkfifo(runtime / "unrelated-env")
+            self.assertIsNone(discover_external_display(os.getuid(), {}, runtime))
+
+    def test_does_not_reuse_the_primary_display_as_external(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = Path(directory)
+            path = runtime / "primary"
+            with socket.socket(socket.AF_UNIX) as listener:
+                listener.bind(str(path))
+                self.assertIsNone(discover_external_display(
+                    os.getuid(), {DISPLAY_VARIABLE: "primary"}, runtime, primary=path,
+                ))
+
     def test_uses_an_explicit_socket(self):
         with tempfile.TemporaryDirectory() as directory:
             runtime = Path(directory)
