@@ -1,0 +1,178 @@
+{
+  "sdk": 33,
+  "abi": "arm64-v8a",
+  "vndkArch": "arch-arm64-armv8-a",
+  "dependencies": [
+    {
+      "name": "wayland",
+      "path": "external/wayland",
+      "url": "https://android.googlesource.com/platform/external/wayland/+archive/21f44c8186caa56b3e01a99554f22ab1aa74094d.tar.gz",
+      "revision": "21f44c8186caa56b3e01a99554f22ab1aa74094d",
+      "exclude": [
+        ".clang-format"
+      ],
+      "sha256": "9d55c7aea84f10094e56a033fdbe9877bb04752ac3bc592ab67285462be2af88"
+    },
+    {
+      "name": "wayland-protocols",
+      "path": "external/wayland-protocols",
+      "url": "https://android.googlesource.com/platform/external/wayland-protocols/+archive/3a0e5d628e797f39e56bebc5554de8fac61f4311.tar.gz",
+      "revision": "3a0e5d628e797f39e56bebc5554de8fac61f4311",
+      "exclude": [
+        ".clang-format"
+      ],
+      "sha256": "f1d64ea22bbeb93b6f675ff0e8f2833172359b7c001f3cb5ff248e52daf87ca7"
+    },
+    {
+      "name": "libffi",
+      "path": "external/libffi",
+      "url": "https://android.googlesource.com/platform/external/libffi/+archive/a8011b453bea48ac68b8c37545b4f04aaf6a9ffc.tar.gz",
+      "revision": "a8011b453bea48ac68b8c37545b4f04aaf6a9ffc",
+      "exclude": [
+        ".clang-format"
+      ],
+      "sha256": "255aaacc38caa8618167873633797ea4915df53bc19432cf9f1461061d43e475"
+    },
+    {
+      "name": "libxkbcommon",
+      "path": "external/libxkbcommon",
+      "url": "https://android.googlesource.com/platform/external/libxkbcommon/+archive/1edee3451aba6b841f02b8074a10c4c98121a02a.tar.gz",
+      "revision": "1edee3451aba6b841f02b8074a10c4c98121a02a",
+      "exclude": [
+        ".clang-format"
+      ],
+      "sha256": "5b5747dca950c4514b10e59c5986577293ae4b09947d6bef11c1299428c9ba01"
+    },
+    {
+      "name": "vndk",
+      "path": "vndk",
+      "url": "https://android.googlesource.com/platform/prebuilts/vndk/v33/+archive/d79ad875113d34c9665a65b8a33dcf7a4fb7dcf1/arm64.tar.gz",
+      "revision": "d79ad875113d34c9665a65b8a33dcf7a4fb7dcf1",
+      "exclude": [
+        ".clang-format"
+      ],
+      "sha256": "dd926db3c35bed5161333c018e26011d2db1c9c317879633b1301360621f16ce"
+    },
+    {
+      "name": "waydroid",
+      "path": "hardware/waydroid",
+      "url": "https://codeload.github.com/WayDroid/android_hardware_waydroid/tar.gz/a575cfcc12ab79a122844218f2c6df5bd208cca0",
+      "revision": "a575cfcc12ab79a122844218f2c6df5bd208cca0",
+      "stripRoot": true,
+      "exclude": [
+        ".clang-format"
+      ],
+      "sha256": "ccd0bc13dcf15a0d3752e15a2a7e90c65118b3c040701288c8d0ed99dde43b09"
+    },
+    {
+      "name": "interfaces",
+      "path": "hardware/interfaces",
+      "url": "https://codeload.github.com/LineageOS/android_hardware_interfaces/tar.gz/91fa300c9e17925cd9e6a422f2590eb475d695a0",
+      "revision": "91fa300c9e17925cd9e6a422f2590eb475d695a0",
+      "stripRoot": true,
+      "exclude": [
+        ".clang-format"
+      ],
+      "sha256": "dda6dad00d2f2127709924bfa4143e694ea456c5098b9d81b575902b3c0adbe4"
+    },
+    {
+      "name": "minigbm",
+      "path": "external/minigbm",
+      "url": "https://codeload.github.com/WayDroid/android_external_minigbm/tar.gz/e5a7769a4892cd1b6c61c56a8bedfc9b93584704",
+      "revision": "e5a7769a4892cd1b6c61c56a8bedfc9b93584704",
+      "stripRoot": true,
+      "exclude": [
+        ".clang-format"
+      ],
+      "sha256": "b500e25c8916dd5076d3c650e2ff132199173237000ec810690b226058dc617c"
+    },
+    {
+      "name": "libhidl",
+      "path": "system/libhidl",
+      "url": "https://codeload.github.com/LineageOS/android_system_libhidl/tar.gz/e4f4132ed6926d07d1945495deb732a79950c50a",
+      "revision": "e4f4132ed6926d07d1945495deb732a79950c50a",
+      "stripRoot": true,
+      "exclude": [
+        ".clang-format"
+      ],
+      "sha256": "56eae6a75d963f81b9861b40f07312ce8d9e9948e1ffce750bbc03df6ebb91f8"
+    },
+    {
+      "name": "libdrm",
+      "path": "external/libdrm",
+      "url": "https://codeload.github.com/WayDroid/android_external_libdrm/tar.gz/6bfcfc725fbe0ece0918535556d61ee567b1ffff",
+      "revision": "6bfcfc725fbe0ece0918535556d61ee567b1ffff",
+      "stripRoot": true,
+      "exclude": [
+        ".clang-format"
+      ],
+      "sha256": "7c116d6219a4862fad0878bbde55d4cf8e6a1d4fc9977f04d5f14adc783477ac"
+    },
+    {
+      "name": "waydroid-patches",
+      "path": "vendor/extra",
+      "url": "https://codeload.github.com/WayDroid/android_vendor_waydroid/tar.gz/4dced17d9528ba07f6a6eab11b78a8ed38a36067",
+      "revision": "4dced17d9528ba07f6a6eab11b78a8ed38a36067",
+      "stripRoot": true,
+      "exclude": [
+        ".clang-format"
+      ],
+      "sha256": "98f27ff6fdb66d48ce90b7266b04a36d21e81ae9a447dbe8b184eb36cf6f4842"
+    },
+    {
+      "name": "hidl-generator",
+      "path": "system/tools/hidl",
+      "url": "https://android.googlesource.com/platform/system/tools/hidl/+archive/77f69ca4a1011dd79d9ce3a9637384bb218bc664.tar.gz",
+      "revision": "77f69ca4a1011dd79d9ce3a9637384bb218bc664",
+      "exclude": [
+        ".clang-format"
+      ],
+      "sha256": "182ccb8e9c45a5aabe0e82229cf3ee6858be040cde481e81e56f51707f96fca5"
+    },
+    {
+      "name": "libbase",
+      "path": "system/libbase",
+      "revision": "8436e04cfaa6c21be86b37e9599184d77c67faef",
+      "url": "https://android.googlesource.com/platform/system/libbase/+archive/8436e04cfaa6c21be86b37e9599184d77c67faef.tar.gz",
+      "stripRoot": false,
+      "exclude": [
+        ".clang-format"
+      ],
+      "sha256": "986e01d3d35a878ada7b9b1369b56367c7a0905bbb5d2f61d71449ed33445f4b"
+    },
+    {
+      "name": "libsync",
+      "path": "system/core/libsync",
+      "url": "https://android.googlesource.com/platform/system/core/+archive/2522744341869220b36240eb2232e07daff4d46a/libsync.tar.gz",
+      "revision": "2522744341869220b36240eb2232e07daff4d46a",
+      "exclude": [
+        ".clang-format"
+      ],
+      "sha256": "02a20435ea8aa7a0be9d0df2946c02ae2858ce41334c1b6218315106c5ba8308"
+    }
+  ],
+  "schemaVersion": 1,
+  "ndkVersion": "25.2.9519653",
+  "elfMachine": 183,
+  "vndkVersion": "33",
+  "ffiArch": "aarch64",
+  "ffiConfig": "arm64",
+  "upstreamPatchProjects": [
+    "hardware/interfaces",
+    "external/wayland-protocols"
+  ],
+  "patches": [
+    {
+      "project": "hardware/waydroid",
+      "file": "android/hwc/external-display.patch"
+    },
+    {
+      "project": "hardware/interfaces",
+      "file": "android/hwc/adapter.patch"
+    },
+    {
+      "project": "system/tools/hidl",
+      "file": "android/native/host-tools.patch"
+    }
+  ]
+}

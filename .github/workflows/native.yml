@@ -1,0 +1,71 @@
+name: Build native display extension
+
+on:
+  push:
+    paths:
+      - 'android/native/**'
+      - 'android/hwc/*.patch'
+      - 'scripts/build_native.py'
+      - 'scripts/native_*.py'
+      - 'scripts/display_notices.py'
+      - '.github/workflows/native.yml'
+  pull_request:
+    paths:
+      - 'android/native/**'
+      - 'android/hwc/*.patch'
+      - 'scripts/build_native.py'
+      - 'scripts/native_*.py'
+      - 'scripts/display_notices.py'
+      - '.github/workflows/native.yml'
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  profiles:
+    runs-on: ubuntu-24.04
+    outputs:
+      profiles: ${{ steps.profiles.outputs.value }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: profiles
+        run: |
+          profiles=$(python3 -c 'import json,pathlib; print(json.dumps([p.stem for p in sorted(pathlib.Path("android/native/profiles").glob("*.json"))]))')
+          echo "value=$profiles" >> "$GITHUB_OUTPUT"
+
+  native:
+    needs: profiles
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        profile: ${{ fromJSON(needs.profiles.outputs.profiles) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: android-actions/setup-android@v4
+        with:
+          accept-android-sdk-licenses: false
+          packages: ''
+      - name: Install native build tools
+        env:
+          PROFILE: ${{ matrix.profile }}
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends cmake ninja-build bison flex libexpat1-dev android-libbase-dev libjsoncpp-dev libssl-dev
+          ndk=$(python3 -c 'import json,os,pathlib; print(json.loads((pathlib.Path("android/native/profiles")/(os.environ["PROFILE"]+".json")).read_text())["ndkVersion"])')
+          android --sdk="$ANDROID_HOME" sdk install "ndk/$ndk"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ndk" >> "$GITHUB_ENV"
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/waydroid-manager-native/archives
+          key: native-sources-${{ runner.os }}-${{ hashFiles('android/native/profiles/*.json') }}
+      - name: Build native display libraries
+        env:
+          PROFILE: ${{ matrix.profile }}
+        run: python3 scripts/build_native.py "android/native/profiles/$PROFILE.json" out/display-native
+      - uses: actions/upload-artifact@v7
+        with:
+          name: display-native-${{ matrix.profile }}
+          path: out/display-native
+          if-no-files-found: error

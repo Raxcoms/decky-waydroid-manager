@@ -1,0 +1,22 @@
+diff --git a/Coordinator.cpp b/Coordinator.cpp
+--- a/Coordinator.cpp
++++ b/Coordinator.cpp
+@@ -21,6 +21,7 @@
+ #include <sys/stat.h>
+ 
+ #include <algorithm>
++#include <cstring>
+ #include <iterator>
+ 
+ #include <android-base/logging.h>
+diff --git a/main.cpp b/main.cpp
+--- a/main.cpp
++++ b/main.cpp
+@@ -27,6 +27,7 @@
+ #include <stdio.h>
+ #include <sys/stat.h>
+ #include <unistd.h>
++#include <cstring>
+ #include <iostream>
+ #include <set>
+ #include <sstream>
