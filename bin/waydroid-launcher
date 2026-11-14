@@ -31,6 +31,8 @@ if [[ "${WAYDROID_MANAGER_CLEAN_ENV:-}" != 1 ]]; then
     DISPLAY="$parent_display" XAUTHORITY="${XAUTHORITY:-}" \
     GAMESCOPE_WAYLAND_DISPLAY="$parent_wayland" WAYLAND_DISPLAY="$parent_wayland" \
     SteamAppId="${SteamAppId:-}" SteamGameId="${SteamGameId:-}" \
+    WAYDROID_MANAGER_EXTERNAL_WAYLAND_DISPLAY="${WAYDROID_MANAGER_EXTERNAL_WAYLAND_DISPLAY:-}" \
+    WAYDROID_MANAGER_EXTERNAL_WAYLAND_ENV="${WAYDROID_MANAGER_EXTERNAL_WAYLAND_ENV:-}" \
     XDG_STATE_HOME="${XDG_STATE_HOME:-}" \
     XDG_DATA_HOME="$data_home" \
     WAYDROID_MANAGER_STEAM_OWNER_PID="$steam_owner_pid" \
@@ -62,11 +64,20 @@ if [[ ! -S "$shared_socket" || ! -f "$shared_ready" ]]; then
     done
   else
     rm -f "$shared_socket" "$shared_ready"
+    relay_command=("$launcher_dir/waydroid-wayland-relay" --host "$parent_wayland" "$shared_socket")
+    # Gamescope reads native window identity from the client's Steam scope.
+    if [[ "${SteamAppId:-}" =~ ^[1-9][0-9]*$ ]]; then
+      relay_command=(systemd-run --user --scope --quiet \
+        --unit="app-steam-app${SteamAppId}-$$" \
+        --property=PartOf=waydroid-manager-shared-relay.service "${relay_command[@]}")
+    fi
     systemd-run --user --collect --quiet --unit="$shared_unit" \
       --property=KillMode=control-group \
       --setenv="XDG_RUNTIME_DIR=$runtime_dir" \
       --setenv="DISPLAY=$parent_display" \
-      "$launcher_dir/waydroid-wayland-relay" --host "$parent_wayland" "$shared_socket"
+      --setenv="WAYDROID_MANAGER_EXTERNAL_WAYLAND_DISPLAY=${WAYDROID_MANAGER_EXTERNAL_WAYLAND_DISPLAY:-}" \
+      --setenv="WAYDROID_MANAGER_EXTERNAL_WAYLAND_ENV=${WAYDROID_MANAGER_EXTERNAL_WAYLAND_ENV:-}" \
+      "${relay_command[@]}"
     for _ in {1..50}; do
       [[ -S "$shared_socket" && -f "$shared_ready" ]] && break
       sleep 0.1

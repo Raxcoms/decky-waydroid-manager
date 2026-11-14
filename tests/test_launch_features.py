@@ -67,6 +67,7 @@ class LaunchFeatureTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_runtime_staging_failure_does_not_enable_the_session(self):
         self.state["secondScreen"]["container"] = True
+        self.plugin._control = Mock(host=self.launch)
         self.plugin._runtime_display.acquire.side_effect = RuntimeError("Could not stage config")
         with (patch.object(backend, "container_pid", return_value=None),
               patch.object(backend, "discover_external_display", return_value=Mock(socket=Path("external"))),
@@ -75,4 +76,5 @@ class LaunchFeatureTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(RuntimeError, "Could not stage config"):
                 await self.plugin._start_registered_launch(self.launch, True)
         self.plugin._runtime_display.acquire.assert_called_once()
+        self.plugin._control.identify_launch.assert_called_once_with(1, Path("external"))
         self.assertIsNone(self.plugin._session_second_screen)

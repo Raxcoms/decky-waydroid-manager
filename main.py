@@ -164,11 +164,16 @@ class Plugin:
                             raise RuntimeError("The host has no available external Wayland display")
                         identity = await asyncio.to_thread(inspect_vendor, WAYDROID_DIR, self._run)
                         files = select_payload(payload_directory, identity)
+                        host = self._control.host if self._control else None
+                        if host is None:
+                            raise RuntimeError("The shared Waydroid relay is not registered")
+                        external_relay = host.display.parent / "external"
+                        self._control.identify_launch(host.process[0], external_relay)
                     except (OSError, RuntimeError, subprocess.SubprocessError):
                         if enabled:
                             raise
                     else:
-                        await asyncio.to_thread(self._runtime_display.acquire, files, external.socket, self._run, launch.display)
+                        await asyncio.to_thread(self._runtime_display.acquire, files, external_relay, self._run, launch.display)
                         capable = True
             self._session_second_screen = capable
             self._display_requests[launch.process] = enabled

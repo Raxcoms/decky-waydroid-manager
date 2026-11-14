@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import array
 from collections import deque
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 from dataclasses import dataclass, field
 import os
 from pathlib import Path
@@ -22,6 +22,7 @@ from waydroid_manager.wayland import SurfaceCommits
 from waydroid_manager.metrics import MetricsSocket
 from waydroid_manager.resolution import launch_resolution
 from waydroid_manager.control import control_path, service_connection
+from waydroid_manager.second_screen import discover_external_display
 
 
 MAX_PENDING = 1024 * 1024
@@ -37,6 +38,14 @@ class Endpoint:
     upstream: bool = False
 
 
+@dataclass
+class Listener:
+    socket: socket.socket
+    parent: str
+    coalesce: bool
+    resolution: tuple[int, int] | None
+
+
 def close_fds(fds: list[int]) -> None:
     for fd in fds:
         os.close(fd)
@@ -47,10 +56,14 @@ class Relay:
         self.listener = listener
         self.parent = parent
         self.selector = selectors.DefaultSelector()
-        self.selector.register(listener, selectors.EVENT_READ, None)
+        self.add_listener(listener, parent, coalesce, resolution)
         self.endpoints: set[Endpoint] = set()
         self.coalesce = coalesce
         self.resolution = resolution
+
+    def add_listener(self, listener, parent, coalesce=False, resolution=None):
+        self.selector.register(listener, selectors.EVENT_READ,
+                               Listener(listener, parent, coalesce, resolution))
 
     def update(self, endpoint: Endpoint) -> None:
         events = 0
@@ -87,13 +100,13 @@ class Relay:
                 _, fds = current.pending.popleft()
                 close_fds(fds)
 
-    def accept(self) -> None:
-        client, _ = self.listener.accept()
+    def accept(self, listener: Listener) -> None:
+        client, _ = listener.socket.accept()
         host = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
             host.settimeout(3)
             # The parent sees this Steam-owned process as the Wayland client.
-            host.connect(self.parent)
+            host.connect(listener.parent)
         except OSError:
             client.close()
             host.close()
@@ -101,8 +114,8 @@ class Relay:
         client.setblocking(False)
         host.setblocking(False)
         downstream, upstream = Endpoint(client), Endpoint(host)
-        if self.coalesce:
-            downstream.protocol = SurfaceCommits(self.resolution)
+        if listener.coalesce:
+            downstream.protocol = SurfaceCommits(listener.resolution)
             upstream.protocol = downstream.protocol
             upstream.upstream = True
         downstream.peer, upstream.peer = upstream, downstream
@@ -158,8 +171,11 @@ class Relay:
     def step(self, timeout: float = 0.25) -> None:
         for key, events in self.selector.select(timeout):
             endpoint = key.data
-            if endpoint is None:
-                self.accept()
+            if isinstance(endpoint, Listener):
+                try:
+                    self.accept(endpoint)
+                except OSError as error:
+                    print(f"Wayland connection unavailable: {error}", file=sys.stderr)
                 continue
             if endpoint not in self.endpoints:
                 continue
@@ -216,12 +232,24 @@ def main() -> int:
             Path(path).unlink(missing_ok=True)
         else:
             path = str(Path(directory) / "wayland")
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener, MetricsSocket(Path(path).parent / "metrics") as metrics:
+        with ExitStack() as stack, socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener, MetricsSocket(Path(path).parent / "metrics") as metrics:
             listener.bind(path)
             os.chmod(path, 0o600)
             listener.listen(16)
             listener.setblocking(False)
             relay = Relay(listener, parent, coalesce=True, resolution=resolution)
+            if host:
+                external = discover_external_display(os.getuid(), primary=Path(parent))
+                if external:
+                    external_path = Path(path).parent / "external"
+                    external_path.unlink(missing_ok=True)
+                    secondary = stack.enter_context(socket.socket(socket.AF_UNIX, socket.SOCK_STREAM))
+                    secondary.bind(str(external_path))
+                    external_path.chmod(0o600)
+                    secondary.listen(4)
+                    secondary.setblocking(False)
+                    stack.callback(external_path.unlink, missing_ok=True)
+                    relay.add_listener(secondary, str(external.socket))
             def report(*_):
                 protocols = [endpoint.protocol for endpoint in relay.endpoints if endpoint.protocol and not endpoint.upstream]
                 print(f"Wayland commits: {sum(p.commits for p in protocols)}, empty commits suppressed: {sum(p.dropped for p in protocols)}", file=sys.stderr, flush=True)

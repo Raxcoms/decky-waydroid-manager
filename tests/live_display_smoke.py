@@ -1,6 +1,7 @@
 """Temporary, explicitly invoked hardware smoke test for the display payload."""
 
 import json
+import os
 from pathlib import Path
 import pwd
 import re
@@ -46,13 +47,25 @@ def smoke(root: Path, user: str, abandoned_sessions: list[str]):
     package = "waydroid.manager.probe"
     installed = False
     failure = None
+    relay = None
+    relay_unit = f"app-steam-app1-{os.getpid()}"
 
     def state(value, **details):
         (root / "smoke-state.json").write_text(json.dumps({"state": value, **details}))
 
     try:
         state("starting", primary=str(primary), external=str(external.socket))
-        lease.acquire(files, external.socket, run, primary)
+        external_relay = root / "external-relay"
+        relay = subprocess.Popen([*user_command, "systemd-run", "--user", "--scope", "--quiet",
+                                  f"--unit={relay_unit}", "/usr/bin/python3", "-I",
+                                  str(root / "tests/live_display_relay.py"),
+                                  str(external_relay), str(external.socket)], env=clean_env())
+        deadline = time.monotonic() + 10
+        while not external_relay.is_socket() and time.monotonic() < deadline and relay.poll() is None:
+            time.sleep(0.1)
+        if not external_relay.is_socket():
+            raise RuntimeError("The smoke-test relay did not start")
+        lease.acquire(files, external_relay, run, primary)
         run([*user_command, "systemd-run", "--user", "--collect", "--quiet",
              "--unit=waydroid-manager-display-smoke-session", "--property=KillMode=control-group",
              "env", f"WAYLAND_DISPLAY={primary}", "waydroid", "session", "start"])
@@ -117,6 +130,9 @@ def smoke(root: Path, user: str, abandoned_sessions: list[str]):
         subprocess.run([*user_command, "systemctl", "--user", "stop", "waydroid-manager-display-smoke-session"],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
         lease.recover()
+        if relay is not None:
+            cleanup([*user_command, "systemctl", "--user", "stop", relay_unit + ".scope"])
+            relay.wait(timeout=10)
         state("failed" if failure or errors else "cleaned", error=failure, cleanupErrors=errors)
 
 
