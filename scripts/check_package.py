@@ -42,6 +42,23 @@ def check(root: Path) -> None:
     backend = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(backend)
     backend.Plugin()
+    from waydroid_manager.display_payload import VendorIdentity, digest, select_payload
+    payloads = root / "bin/display-payloads"
+    identities = set()
+    for manifest in payloads.glob("*/manifest.json"):
+        metadata = json.loads(manifest.read_text(encoding="utf-8"))
+        identity = VendorIdentity(metadata["vendorFingerprint"], metadata["sdk"],
+                                  metadata["stockComposerSha256"], metadata["elfMachine"],
+                                  metadata["stockAdapterSha256"])
+        if identity in identities:
+            raise RuntimeError("Multiple payloads target the same Waydroid vendor image")
+        identities.add(identity)
+        select_payload(payloads, identity)
+        if digest(manifest.parent / "source-manifest.xml") != metadata["sourceManifestSha256"]:
+            raise RuntimeError("The payload source manifest failed validation")
+        for name in ("NOTICE.txt", "composer-source.patch", "adapter-source.patch"):
+            if not (manifest.parent / name).is_file() or not (manifest.parent / name).stat().st_size:
+                raise RuntimeError(f"Missing payload provenance: {name}")
 
 
 if __name__ == "__main__":

@@ -1,83 +1,95 @@
-# Experimental second screen
+# Second screen support
 
-## Status
+Waydroid Manager can expose a real Android external display through the host's
+secondary Wayland output. Android keeps its primary display and starts its own
+secondary launcher on the other screen. Apps that support Android presentations
+can draw their own content there.
 
-The preferences, shared launch registration, external socket discovery, payload validation, and temporary mount lifecycle are implemented. The plugin-owned Android payload is being built and has not passed display presentation tests yet.
+## Enable or disable
 
-The enabled launch path requires a matching bundled payload. Until one is available, disable second-screen support to use the standard launch path. Rebooting alone cannot supply a missing payload.
+1. Open an Android app's menu, or **Waydroid actions** for the full container.
+2. Select **Enable second screen support**.
+3. Confirm the dialog. It explains that the feature works after a reboot.
+4. Close existing Waydroid launches before starting the enabled shortcut.
 
-The eventual feature must make Android behave as though a USB-C monitor is connected. Moving a Waydroid app window to another host output is not enough because Android still reports one display to the app.
+The menu then offers **Disable second screen support**. An app's choice overrides
+the container default. Removing an app removes its saved choice.
 
-## User experience
+Only launches through Waydroid Manager use these settings. Starting ordinary
+Waydroid outside the plugin continues to use its installed image and settings.
 
-The Android app menu will eventually show **Enable second screen support** or **Disable second screen support**. The full Waydroid menu will provide the same choice for the container launch.
+## Sharing and returning the screen
 
-Selecting Enable opens a confirmation dialog that says the feature takes effect after a reboot. A selection changes only Waydroid Manager state. It must not change the installed Waydroid image or an ordinary Waydroid launch.
+Enabled and ordinary Steam shortcuts can share one plugin-owned Android session
+when its matching display payload is available. Joining an existing session does
+not restart Android. The external display remains connected while at least one
+enabled shortcut is open. Closing the final enabled shortcut withdraws it and
+returns the secondary output to the host's previous window. Other ordinary
+Waydroid shortcuts can keep running.
 
-The full-container setting applies to full launches. An app setting overrides the container setting for that app. Removing an app also removes its saved setting.
+Closing the final shortcut stops the owned session and removes its temporary
+mounts. The host compositor continues to own and arbitrate DRM leases, including
+requests from its other applications. The plugin does not stop or replace that
+compositor or change Armada's display configuration.
 
-## Required runtime boundary
+## Compatibility
 
-Waydroid already supports rootfs overlays. It mounts `/var/lib/waydroid/overlay` over the system image and `/var/lib/waydroid/overlay/vendor` over the vendor image before it starts the container. This is the correct deployment point for a matching external-display HWC because the original images remain unchanged.
+This requires a host-provided secondary Wayland socket and a payload matching the
+installed Waydroid vendor image. The bundled payload targets the tested 64-bit
+Android 13 image with vendor fingerprint:
 
-The overlay is global while Waydroid is running, so the launch path must still own its lifecycle:
+```text
+waydroid/lineage_waydroid_arm64/waydroid_arm64:13/TQ3A.230901.001/aleasto10221218:userdebug/test-keys
+```
 
-- compose a matching HWC and adapter ahead of the existing vendor overlay using a temporary overlay mount;
-- add a temporary framework resource overlay that disables automatic external display mirroring;
-- discover a host-provided external Wayland socket and bind it into the container as `wayland-1` before Waydroid starts;
-- add `waydroid.wayland_display_ext=wayland-1` only to the generated properties for that launch;
-- remove the temporary mounts when the final compatible plugin launch ends.
+Selection also checks the original composer and adapter hashes and the payload's
+architecture and file hashes. A different image needs a separately built and
+validated payload. Rebooting cannot resolve an image mismatch.
 
-The launcher must never acquire, hold, or release a DRM lease. The host compositor owns its lease and arbitrates it with its existing applications. The plugin requests use by mapping its external Wayland surface only for a second-screen session. When the final eligible Waydroid app exits, the HWC closes that surface, returning presentation to the compositor and its previous user.
+Display discovery uses the current user's host environment snapshots. Integrators
+can provide `WAYDROID_MANAGER_EXTERNAL_WAYLAND_DISPLAY` or
+`WAYDROID_MANAGER_EXTERNAL_WAYLAND_ENV` to the launcher. The latter names a regular,
+user-owned environment file containing `WAYLAND_DISPLAY`. No device name, panel,
+or physical connector is hardcoded. Thor is a hardware test device, not a runtime
+requirement. Pocket DS and Pocket Duo hardware have not been tested here.
 
-The HWC extension is owned by this plugin and has no device, connector, panel, or touch-controller rules. Its only host input is the external Wayland socket supplied for that session. A host integration may expose the socket through an environment file, a launcher, or an explicit plugin setting, but it remains responsible for lease policy. On Thor, the existing secondary Gamescope is one example of this contract: it holds a yielded DRM lease and exposes a socket for normal client applications. It is a validation fixture, not a runtime dependency.
+## Reversibility
 
-Runtime files live under `/run`. Temporary bind mounts expose the configuration only for the plugin session, leaving the original files intact. A separate root guard stops the owned session and removes those mounts if the backend exits. Rebooting removes the mounts automatically. The HWC retains the stock primary path and treats a missing `wayland-1` socket as no external display. The installed images and host lease service are unchanged.
+The plugin stages files under `/run` and temporarily mounts them ahead of the
+existing Waydroid overlay. It supplies the composer, adapter, framework resource
+overlay, secondary-home defaults, and external touch mapping for that session.
+Existing overlay display settings are merged into staging. Installed images and
+original configuration files remain unchanged.
 
-Apps can share an active session when their second-screen settings match. A launch that requests a different setting asks the user to close the existing shortcuts before switching the global container configuration.
+A separate root guard monitors the backend and can stop the owned session and
+remove its mounts even if the plugin disappears. Its code is copied into `/run`
+before activation. A reboot also removes these mounts. Leaving the preference
+enabled when removing the plugin does not patch ordinary Waydroid permanently.
 
-## Hardware composer work
-
-The patched HWC needs to:
-
-1. Keep the existing primary display unchanged.
-2. Create a second display context with separate buffers, fences, dimensions, and presentation timing.
-3. Report the external display through Android's HWC hotplug callback after Android boot.
-4. Present that display through a distinct Wayland toplevel, allowing Gamescope to place it on a physical or virtual output.
-5. Support Android's per-display prepare, set, configuration, power, and VSync requests.
-
-The current HWC uses only `HWC_DISPLAY_PRIMARY`; it does not have an external-display implementation to enable with a property. The patched library must be built for the exact Waydroid Android and vendor-image ABI used by the device.
-
-## Android launch policy
-
-After Android sees the external display, a plugin-owned privileged helper must launch the selected activity on it. It should use Android's display-aware activity launch API and leave existing app data and system settings unchanged. The first implementation can use a non-touch external display; pointer and touch routing can be added after display presentation is reliable.
-
-## Safety checks
-
-Before using the enable action, the runtime must verify all of the following:
-
-- the matching HWC payload is bundled and its architecture matches the device;
-- Waydroid is stopped and no unrelated Waydroid session is active;
-- a usable host-provided external Wayland socket is present and can be bound as `wayland-1`;
-- the launcher can stop its container and remove all temporary mounts on normal exit, crash, and cancellation.
-
-If any check fails, the feature remains unavailable and standard Waydroid launching continues unchanged.
+If the external compositor disconnects, Android withdraws that display while
+keeping its primary display. Close and relaunch the plugin session after the host
+output becomes available again.
 
 ## Validation
 
-Validation must cover both scopes and both cleanup paths:
+Thor testing on November 14, 2026 verified:
 
-1. Enable the setting for one app and verify that only its plugin launch reports two Android displays.
-2. Enable the container setting and verify a full plugin launch reports two Android displays.
-3. Stop the Steam shortcut, then start Waydroid outside the plugin and verify it reports one display and uses the stock HWC.
-4. Remove the plugin while the setting is enabled, then start Waydroid normally and verify it still uses the stock image and one display.
-5. Reboot during a plugin-owned second-screen launch and verify the next normal Waydroid start remains unchanged.
-6. Test an Android app launched on the external display, display removal, rotation, suspend and resume, and a disconnected host output.
+- primary Android output at 1920 by 1080, approximately 120 Hz;
+- external Android output at 1240 by 1080, approximately 60 Hz;
+- a distinct Android presentation on the real secondary compositor;
+- Android's secondary launcher through the actual Steam shortcut;
+- screen withdrawal returning to the existing KDE mobile session, followed by
+  reconnection without restarting Android;
+- the container menu's enable confirmation and subsequent disable action;
+- normal Steam shortcut exit removing the temporary runtime mounts;
+- an ordinary Waydroid boot afterward using one display and the original
+  composer hash.
 
-The feature is not ready for release until the private runtime path and at least one matching HWC payload pass these checks on hardware.
+A mount integration test also verified guard recovery after a backend process
+crash using disposable configuration fixtures. Automated Linux tests cover
+shared launch accounting, relay isolation, payload validation, and recovery.
+Physical input, suspend/resume, and other device models require their own hardware
+validation. No device-wide reboot was performed during these checks.
 
-### Linux helper validation
-
-The focused suite passed all 24 tests on Thor on November 14, 2026. This covers socket discovery, authenticated launch registration, shared launch release accounting, cancellation during cleanup, overlay restoration, and configuration recovery. Tests used temporary files and sockets, which were removed afterward. This does not validate Android display presentation or returning the physical screen to an existing application.
-
-The full Python suite passes 193 tests under Linux. Thor also passed a mount integration test that checked both normal release and a backend process crash: the independent guard restored the original fixture files and overlays. The test did not modify the installed plugin or Waydroid configuration.
+See [the payload build guide](../android/hwc/README.md) for rebuilding against a
+different compatible Waydroid image.

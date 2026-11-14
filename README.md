@@ -38,3 +38,7 @@ To publish an official release, merge the `package.json` version bump into `main
 ## License
 
 [Creative Commons Attribution 4.0 International](LICENSE) (CC BY 4.0).
+
+Bundled Android display libraries retain their upstream licenses. Each payload
+includes its source revisions, patches, and third-party notices in
+[`bin/display-payloads`](bin/display-payloads).

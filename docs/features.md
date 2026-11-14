@@ -26,7 +26,8 @@ If Steam cannot remove a shortcut right away after an uninstall or image removal
 
 ## Adjust a Steam launch
 
-Close the running Android shortcut before opening another. Waydroid uses one Android session at a time.
+Plugin shortcuts share one Android session. Close an ordinary Waydroid session
+started outside the plugin before launching through Steam.
 
 - Set the resolution in Steam's shortcut properties before launching. Android receives the selected display size when Steam exposes a single active game output. With an ambiguous multi-output layout, Android keeps the size reported by Gamescope. An in-game resolution setting still controls how the game renders.
 - Adjust the frame cap in Steam's Quick Access performance settings. The result depends on [the refresh mode Waydroid exposes to Android](#known-issue-with-frame-cap-precision).
@@ -47,6 +48,19 @@ On the tested Android 13 image, Waydroid takes the Wayland refresh rate at start
 Live mode switching is the remaining Waydroid work. Its display driver needs to update the virtual VSync period and notify Android of the mode change. A runtime Wayland output update alone leaves the current driver on its startup period. [Waydroid display driver](https://github.com/waydroid/android_hardware_waydroid/blob/lineage-20/hwcomposer/hwcomposer.cpp#L730-L742) · [Android display mode switching](https://source.android.com/docs/core/graphics/multiple-refresh-rate)
 
 A future integration should let the Steam slider change actual Android rendering while the app and container stay running, with no extra composition or host configuration changes. Validate app buffer production and presentation separately at values such as 27 and 100 FPS, and on devices with different refresh modes.
+
+## Use a second screen
+
+Choose **Enable second screen support** from an app's menu or **Waydroid actions**.
+Confirm the reboot notice, then close existing launches before starting the
+enabled shortcut. Android starts a secondary launcher on the host's other screen.
+The menu offers **Disable second screen support** after enabling it.
+
+The external output returns to its previous host window when the final enabled
+shortcut closes. Ordinary Waydroid launches outside the plugin keep their original
+configuration. A compatible Waydroid image and host secondary output are required;
+see [second screen support](dual-screen-investigation.md) for compatibility and
+cleanup details.
 
 ## Manage Waydroid
 
