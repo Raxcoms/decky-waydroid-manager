@@ -43,7 +43,7 @@ index d2b405e..d1ce5c9 100644
 \ No newline at end of file
 +    , update_shm_buffer_impl(select_update_shm_buffer_impl(display->gtype)) { }
 diff --git a/hwcomposer/hwcomposer.cpp b/hwcomposer/hwcomposer.cpp
-index d24b035..5b6951b 100644
+index d24b035..6a344a9 100644
 --- a/hwcomposer/hwcomposer.cpp
 +++ b/hwcomposer/hwcomposer.cpp
 @@ -85,14 +85,15 @@ namespace {
@@ -268,10 +268,10 @@ index d24b035..5b6951b 100644
 +    if (contents->flags & HWC_GEOMETRY_CHANGED)
 +        retire_buffers(d);
 +
-+    // Color layers have no buffer.
++    // Client-composed layers have no handles after the adapter combines them.
 +    bool content = false;
 +    for (size_t i = 0; i < contents->numHwLayers; i++) {
-+        if (contents->hwLayers[i].compositionType != HWC_FRAMEBUFFER_TARGET && contents->hwLayers[i].handle)
++        if (contents->hwLayers[i].compositionType != HWC_FRAMEBUFFER_TARGET)
 +            content = true;
 +    }
 +    bool shown = d->connected && show_external(pdev, content && pdev->ext_active);
