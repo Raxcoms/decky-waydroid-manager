@@ -528,7 +528,7 @@ index b147f38..0803a57 100644
  
  int apply_hwc_layer_to_window(waydroid_hwc_composer_device_1 *pdev, hwc_layer_1 *hwc_layer, size_t hwc_layer_index, window *window);
 diff --git a/hwcomposer/wayland-hwc.cpp b/hwcomposer/wayland-hwc.cpp
-index c75d93c..42b1ab2 100644
+index c75d93c..a0a5783 100644
 --- a/hwcomposer/wayland-hwc.cpp
 +++ b/hwcomposer/wayland-hwc.cpp
 @@ -84,8 +84,84 @@ using ::android::hardware::hidl_string;
@@ -697,7 +697,24 @@ index c75d93c..42b1ab2 100644
          window->set_maximize(true);
      }
      // Set title
-@@ -562,12 +679,15 @@ window::create(struct display *display, bool use_subsurfaces, std::string appID,
+@@ -544,10 +661,12 @@ window::create(struct display *display, bool use_subsurfaces, std::string appID,
+     window->set_app_id(std::move(appID));
+ 
+     wl_surface_commit(window->surface);
+-    // Wait for first configure event
+-    do {
+-        wl_display_roundtrip(display->display);
+-    } while (!window->configured);
++    // A yielded secondary compositor may not configure until the display is requested.
++    if (!display->secondary) {
++        do {
++            wl_display_roundtrip(display->display);
++        } while (!window->configured);
++    }
+ 
+     if (calibrating) {
+         wp_fractional_scale_v1* fs = nullptr;
+@@ -562,12 +681,15 @@ window::create(struct display *display, bool use_subsurfaces, std::string appID,
          // See: https://github.com/swaywm/sway/issues/2176
          // Some other compositors may refine the window size after a buffer is attached (Hyprland)
          // Try second configure event, with buffer attached
@@ -719,7 +736,7 @@ index c75d93c..42b1ab2 100644
  
          if (fs) {
              wp_fractional_scale_v1_destroy(fs);
-@@ -626,11 +746,13 @@ window::create(struct display *display, bool use_subsurfaces, std::string appID,
+@@ -626,11 +748,13 @@ window::create(struct display *display, bool use_subsurfaces, std::string appID,
      window->bg_buffer = wl_shm_pool_create_buffer(pool, 0, 1, 1, 4, WL_SHM_FORMAT_ARGB8888);
      wl_shm_pool_destroy(pool);
  
@@ -736,7 +753,7 @@ index c75d93c..42b1ab2 100644
  
      return window;
  }
-@@ -642,9 +764,11 @@ surface_context::~surface_context() {
+@@ -642,9 +766,11 @@ surface_context::~surface_context() {
      if (surface)
          wl_surface_destroy(surface);
  }
@@ -749,7 +766,7 @@ index c75d93c..42b1ab2 100644
  }
  surface_context& surface_context::operator=(surface_context&& rhs) {
      if (viewport)
-@@ -655,8 +779,11 @@ surface_context& surface_context::operator=(surface_context&& rhs) {
+@@ -655,8 +781,11 @@ surface_context& surface_context::operator=(surface_context&& rhs) {
      surface = rhs.surface;
      viewport = rhs.viewport;
  
@@ -761,7 +778,7 @@ index c75d93c..42b1ab2 100644
  
      return *this;
  }
-@@ -1350,6 +1477,136 @@ static const struct xdg_wm_base_listener xdg_wm_base_listener = {
+@@ -1350,6 +1479,136 @@ static const struct xdg_wm_base_listener xdg_wm_base_listener = {
      xdg_wm_base_ping,
  };
  
@@ -898,7 +915,7 @@ index c75d93c..42b1ab2 100644
  static void
  seat_handle_capabilities(void *data, struct wl_seat *seat, uint32_t wl_caps)
  {
-@@ -1909,6 +2166,10 @@ registry_handle_global(void *data, struct wl_registry *registry,
+@@ -1909,6 +2168,10 @@ registry_handle_global(void *data, struct wl_registry *registry,
      } else if(strcmp(interface, "wl_shell") == 0) {
          d->shell = (struct wl_shell *)wl_registry_bind(
                  registry, id, &wl_shell_interface, 1);
@@ -909,7 +926,7 @@ index c75d93c..42b1ab2 100644
      } else if (strcmp(interface, "wl_seat") == 0) {
          d->seat = (struct wl_seat*)wl_registry_bind(registry, id,
                  &wl_seat_interface, std::min(version, (uint32_t)WL_POINTER_AXIS_SOURCE_SINCE_VERSION));
-@@ -1950,7 +2211,7 @@ registry_handle_global(void *data, struct wl_registry *registry,
+@@ -1950,7 +2213,7 @@ registry_handle_global(void *data, struct wl_registry *registry,
      } else if (strcmp(interface, "zwp_tablet_manager_v2") == 0) {
          d->tablet_manager = (struct zwp_tablet_manager_v2 *)wl_registry_bind(registry, id,
                  &zwp_tablet_manager_v2_interface, 1);
@@ -918,7 +935,7 @@ index c75d93c..42b1ab2 100644
              add_tablet_seat(d);
      } else if (strcmp(interface, "zwp_pointer_constraints_v1") == 0) {
          d->pointer_constraints = (struct zwp_pointer_constraints_v1 *)wl_registry_bind(
-@@ -1967,7 +2228,7 @@ registry_handle_global(void *data, struct wl_registry *registry,
+@@ -1967,7 +2230,7 @@ registry_handle_global(void *data, struct wl_registry *registry,
      } else if (strcmp(interface, wl_data_device_manager_interface.name) == 0) {
          d->data_device_manager = (struct wl_data_device_manager *)wl_registry_bind(registry, id,
                  &wl_data_device_manager_interface, std::min(version,  3U));
@@ -927,7 +944,7 @@ index c75d93c..42b1ab2 100644
              d->data_device = wl_data_device_manager_get_data_device(d->data_device_manager, d->seat);
      } else if (strcmp(interface, "gtk_shell1") == 0) {
          if (version < 6)
-@@ -2055,7 +2316,8 @@ void open_windows::erase(const key_type& key) {
+@@ -2055,7 +2318,8 @@ void open_windows::erase(const key_type& key) {
  }
  
  static void* hwc_wayland_thread(void* data) {
@@ -937,7 +954,7 @@ index c75d93c..42b1ab2 100644
      int ret = 0;
  
      setpriority(PRIO_PROCESS, 0, HAL_PRIORITY_URGENT_DISPLAY);
-@@ -2079,6 +2341,11 @@ static void* hwc_wayland_thread(void* data) {
+@@ -2079,6 +2343,11 @@ static void* hwc_wayland_thread(void* data) {
          snprintf(msg, sizeof(msg), "socket error: %s", strerror(err));
      }
      ALOGE("*** %s: Wayland client was disconnected: %s", __PRETTY_FUNCTION__, msg);
@@ -949,7 +966,7 @@ index c75d93c..42b1ab2 100644
  
      FILE *f = fopen("/data/waydroid_hwc_wayland_error.txt", "a");
      if (f) {
-@@ -2092,9 +2359,10 @@ static void* hwc_wayland_thread(void* data) {
+@@ -2092,9 +2361,10 @@ static void* hwc_wayland_thread(void* data) {
  }
  
  struct display *
@@ -961,7 +978,7 @@ index c75d93c..42b1ab2 100644
      if (display == NULL) {
          ALOGE("out of memory");
          return NULL;
-@@ -2125,7 +2393,7 @@ create_display(const char *gralloc)
+@@ -2125,7 +2395,7 @@ create_display(const char *gralloc)
                   &registry_listener, display);
      wl_display_roundtrip(display->display);
  

@@ -44,7 +44,7 @@ def bundle(build: Path, identity: VendorIdentity, output: Path) -> Path:
     try:
         for name in (*files, "source-manifest.xml", "composer-source.patch", "adapter-source.patch", "NOTICE.txt"):
             shutil.copyfile(build / name, target / name)
-        (target / "manifest.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+        (target / "manifest.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8", newline="\n")
         select_payload(output, identity)
     except Exception:
         shutil.rmtree(target)
