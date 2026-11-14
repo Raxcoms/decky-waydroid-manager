@@ -2,7 +2,9 @@
 
 ## Status
 
-This is an investigation plan. The current Waydroid hardware composer exposes one Android display, so there is no safe configuration switch that can add an external display.
+The preferences, shared launch registration, external socket discovery, and reversible configuration helpers are implemented. Payload activation is not connected yet. The current Waydroid hardware composer exposes one Android display, so there is no safe configuration switch that can add an external display.
+
+The external-display HWC, image compatibility checks, and surface request/return lifecycle still need implementation and hardware validation. The settings currently save a preference only; rebooting does not yet enable a second Android display.
 
 The eventual feature must make Android behave as though a USB-C monitor is connected. Moving a Waydroid app window to another host output is not enough because Android still reports one display to the app.
 
@@ -69,4 +71,8 @@ Validation must cover both scopes and both cleanup paths:
 5. Reboot during a plugin-owned second-screen launch and verify the next normal Waydroid start remains unchanged.
 6. Test an Android app launched on the external display, display removal, rotation, suspend and resume, and a disconnected host output.
 
-No user-facing toggle should be added until the private runtime path and at least one matching HWC payload pass these checks on hardware.
+The feature is not ready for release until the private runtime path and at least one matching HWC payload pass these checks on hardware.
+
+### Linux helper validation
+
+The focused suite passed all 24 tests on Thor on November 14, 2026. This covers socket discovery, authenticated launch registration, shared launch release accounting, cancellation during cleanup, overlay restoration, and configuration recovery. Tests used temporary files and sockets, which were removed afterward. This does not validate Android display presentation or returning the physical screen to an existing application.
