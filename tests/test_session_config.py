@@ -18,6 +18,7 @@ class SessionConfigLeaseTests(unittest.TestCase):
         self.config.write_text("lxc.include = config_session\n", encoding="utf-8")
         self.settings = self.root / "waydroid.cfg"
         self.settings.write_text("[waydroid]\n\n[properties]\nfoo=bar\n", encoding="utf-8")
+        (self.root / "waydroid_base.prop").write_bytes(b"ro.hardware.gralloc=gbm\n")
         self.socket = Path("/run/user/1000/external-wayland")
         self.lease = SessionConfigLease(self.root)
 
@@ -38,6 +39,7 @@ class SessionConfigLeaseTests(unittest.TestCase):
         self.assertEqual(self.config.read_bytes(), original_config)
         self.assertEqual(self.settings.read_bytes(), original_settings)
         self.assertFalse((self.root / "lxc/waydroid" / FRAGMENT).exists())
+        self.assertEqual((self.root / "waydroid_base.prop").read_bytes(), b"ro.hardware.gralloc=gbm\n")
 
     def test_recovery_does_not_overwrite_another_change(self):
         self.lease.acquire(self.socket)

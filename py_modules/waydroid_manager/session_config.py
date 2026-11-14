@@ -21,6 +21,7 @@ class SessionConfigLease:
         self.lxc = config_dir / "lxc/waydroid"
         self.config = self.lxc / "config"
         self.settings = config_dir / "waydroid.cfg"
+        self.base_properties = config_dir / "waydroid_base.prop"
         self.fragment = self.lxc / FRAGMENT
         self.root = config_dir / "waydroid-manager-session"
         self.manifest = self.root / "manifest.json"
@@ -72,7 +73,8 @@ class SessionConfigLease:
                 or state.get("phase") not in {"staging", "active"}
                 or not isinstance(state.get("entries"), list)):
             raise RuntimeError("Waydroid session manifest is invalid")
-        expected = {"config": self.config, "settings": self.settings, "fragment": self.fragment}
+        expected = {"config": self.config, "settings": self.settings, "fragment": self.fragment,
+                    "baseProperties": self.base_properties}
         seen = set()
         for entry in state["entries"]:
             if not isinstance(entry, dict):
@@ -143,13 +145,18 @@ class SessionConfigLease:
             raise RuntimeError("Waydroid session lease is already active")
         config = self._read(self.config)
         settings = self._read(self.settings)
+        base_properties = self._read(self.base_properties)
+        if re.search(rb"(?m)^\s*waydroid\.wayland_display_ext\s*=", base_properties):
+            raise RuntimeError("Waydroid external display property is already configured")
         fragment = self._fragment_config(socket)
         contents = {
             "config": self._include_config(config, self.fragment),
             "settings": self._property_config(settings),
             "fragment": fragment,
+            "baseProperties": base_properties.rstrip(b"\r\n") + b"\nwaydroid.wayland_display_ext=wayland-1\n",
         }
-        paths = {"config": self.config, "settings": self.settings, "fragment": self.fragment}
+        paths = {"config": self.config, "settings": self.settings, "fragment": self.fragment,
+                 "baseProperties": self.base_properties}
         entries = [self._entry(name, paths[name], content) for name, content in contents.items()]
         self._write_manifest({"version": 1, "phase": "staging", "entries": entries})
         try:
