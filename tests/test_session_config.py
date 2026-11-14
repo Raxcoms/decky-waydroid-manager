@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import tempfile
 import unittest
 
@@ -52,3 +53,28 @@ class SessionConfigLeaseTests(unittest.TestCase):
     def test_rejects_socket_paths_that_lxc_cannot_parse(self):
         with self.assertRaisesRegex(RuntimeError, "invalid path"):
             self.lease.acquire(Path("/run/user/1000/external display"))
+
+    def test_retry_after_partial_recovery_preserves_originals(self):
+        original = self.settings.read_bytes()
+        self.lease.acquire(self.socket)
+        staged = self.settings.read_bytes()
+        self.settings.write_bytes(b"other change")
+        with self.assertRaises(RuntimeError):
+            self.lease.recover()
+        self.settings.write_bytes(staged)
+        self.assertTrue(self.lease.recover())
+        self.assertEqual(self.settings.read_bytes(), original)
+        self.assertFalse(self.lease.root.exists())
+
+    def test_manifest_cannot_restore_a_path_outside_the_transaction(self):
+        self.lease.acquire(self.socket)
+        state = json.loads(self.lease.manifest.read_text())
+        state["entries"][0]["path"] = "../outside"
+        self.lease.manifest.write_text(json.dumps(state))
+        with self.assertRaisesRegex(RuntimeError, "manifest is invalid"):
+            self.lease.recover()
+
+    def test_properties_without_final_newline_are_separated(self):
+        self.settings.write_bytes(b"[properties]\nfoo=bar")
+        self.lease.acquire(self.socket)
+        self.assertIn(b"foo=bar\nwaydroid.wayland_display_ext=wayland-1\n", self.settings.read_bytes())

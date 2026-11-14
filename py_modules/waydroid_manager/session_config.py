@@ -32,6 +32,8 @@ class SessionConfigLease:
 
     def _read(self, path: Path, *, required: bool = True) -> bytes | None:
         try:
+            if path.is_symlink():
+                raise RuntimeError(f"Waydroid session file is not regular: {path}")
             if not path.exists():
                 if required:
                     raise RuntimeError(f"Waydroid session file is missing: {path}")
@@ -67,7 +69,26 @@ class SessionConfigLease:
         except (OSError, ValueError) as error:
             raise RuntimeError("Waydroid session manifest is invalid") from error
         if (not isinstance(state, dict) or state.get("version") != 1
+                or state.get("phase") not in {"staging", "active"}
                 or not isinstance(state.get("entries"), list)):
+            raise RuntimeError("Waydroid session manifest is invalid")
+        expected = {"config": self.config, "settings": self.settings, "fragment": self.fragment}
+        seen = set()
+        for entry in state["entries"]:
+            if not isinstance(entry, dict):
+                raise RuntimeError("Waydroid session manifest is invalid")
+            name = entry.get("name")
+            if (not isinstance(name, str) or name not in expected or name in seen
+                    or entry.get("path") != str(expected[name].relative_to(self.config_dir))
+                    or type(entry.get("created")) is not bool
+                    or type(entry.get("mode")) is not int or not 0 <= entry["mode"] <= 0o777
+                    or not isinstance(entry.get("sourceDigest"), str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", entry["sourceDigest"])
+                    or (not entry["created"] and (not isinstance(entry.get("originalDigest"), str)
+                        or not re.fullmatch(r"[0-9a-f]{64}", entry["originalDigest"])))):
+                raise RuntimeError("Waydroid session manifest is invalid")
+            seen.add(name)
+        if seen != set(expected):
             raise RuntimeError("Waydroid session manifest is invalid")
         return state
 
@@ -105,6 +126,8 @@ class SessionConfigLease:
             return (text + f"[properties]\n{PROPERTY}=wayland-1\n").encode()
         end = next((index for index in range(section + 1, len(lines))
                     if re.fullmatch(r"\s*\[[^]]+\]\s*(?:\r?\n)?", lines[index])), len(lines))
+        if end and not lines[end - 1].endswith("\n"):
+            lines[end - 1] += "\n"
         lines.insert(end, f"{PROPERTY}=wayland-1\n")
         return "".join(lines).encode()
 
@@ -145,7 +168,6 @@ class SessionConfigLease:
         state = self._read_manifest()
         if state is None:
             return False
-        staging = state.get("phase") == "staging"
         errors = []
         for entry in reversed(state["entries"]):
             try:
@@ -161,7 +183,7 @@ class SessionConfigLease:
                     if self._digest(backup) != entry.get("originalDigest"):
                         raise RuntimeError(f"Waydroid session backup changed: {path}")
                     self._write(path, backup, entry["mode"])
-                elif not staging or current is None or self._digest(current) != entry.get("originalDigest"):
+                elif current is None or self._digest(current) != entry.get("originalDigest"):
                     raise RuntimeError(f"Waydroid session file changed: {path}")
             except (OSError, RuntimeError) as error:
                 errors.append(str(error))
@@ -173,6 +195,8 @@ class SessionConfigLease:
             elif path.is_dir():
                 path.rmdir()
         self.manifest.unlink(missing_ok=True)
+        if self.backups.exists():
+            self.backups.rmdir()
         try:
             self.root.rmdir()
         except OSError:
