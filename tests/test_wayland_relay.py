@@ -141,9 +141,11 @@ class RelayTests(unittest.TestCase):
 
     def test_child_exit_removes_private_socket(self):
         args = [str(SCRIPT), self.parent_path, "--", sys.executable, "-c", "pass"]
-        with (patch.dict(os.environ, {"XDG_RUNTIME_DIR": self.directory.name}),
+        control = unittest.mock.Mock()
+        control.result = {"owner": True, "display": self.parent_path}
+        with (patch.dict(os.environ, {"XDG_RUNTIME_DIR": self.directory.name, "WAYDROID_MANAGER_MODE": "full"}),
               patch.object(sys, "argv", args), patch.object(relay_module.signal, "signal"),
-              patch.object(relay_module, "service_connection", return_value=nullcontext()),
+              patch.object(relay_module, "service_connection", return_value=nullcontext(control)),
               patch.object(relay_module.select, "select", return_value=([], [], []))):
             self.assertEqual(relay_module.main(), 0)
         self.assertEqual(list(Path(self.directory.name).glob("waydroid-manager-*")), [])

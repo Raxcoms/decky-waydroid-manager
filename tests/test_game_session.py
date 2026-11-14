@@ -61,7 +61,7 @@ class GameSessionTests(unittest.TestCase):
             service = directory / "waydroid-service"
             service.write_text(
                 '#!/bin/sh\n'
-                'if [ "$1" = --release ]; then echo stop >> "$WAYDROID_MANAGER_LOG_DIR/calls"; exit 0; fi\n'
+                'if [ "$1" = --release ]; then echo release >> "$WAYDROID_MANAGER_LOG_DIR/calls"; exit 0; fi\n'
                 'if [ "$SCENARIO" = locked ] && [ "$1" = --policy ] && [ "$2" != restore ]; then\n'
                 '  calls="$WAYDROID_MANAGER_LOG_DIR/calls"\n'
                 '  echo unlock-check >> "$calls"\n'
@@ -95,7 +95,7 @@ class GameSessionTests(unittest.TestCase):
             with self.subTest(mode=mode):
                 result, calls = self.run_session("ready", mode)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(calls, ["list", "list", "list", command, "stop"])
+                self.assertEqual(calls, ["list", "list", "list", command, "release"])
 
     def test_never_launches_if_the_owned_session_disappears(self):
         for scenario in ("stopped", "owner_lost"):
@@ -103,26 +103,26 @@ class GameSessionTests(unittest.TestCase):
                 result, calls = self.run_session(scenario)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("Android did not become ready", result.stderr)
-                self.assertEqual(calls, ["list", "stop"])
+                self.assertEqual(calls, ["list", "release"])
 
     def test_foreign_session_is_left_alone(self):
         result, calls = self.run_session("foreign")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Close the running Waydroid session", result.stderr)
-        self.assertEqual(calls, [])
+        self.assertEqual(calls, ["release"])
 
     def test_app_list_does_not_allow_launch_before_unlock(self):
         result, calls = self.run_session("locked", "app")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(calls, ["list", "unlock-check"] * 3 + ["app launch test.package", "stop"])
+        self.assertEqual(calls, ["list", "unlock-check"] * 3 + ["app launch test.package", "release"])
 
     def test_freezing_is_not_a_stopped_container(self):
         result, calls = self.run_session("freezing")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(calls, ["list", "list", "list", "show-full-ui", "stop"])
+        self.assertEqual(calls, ["list", "list", "list", "show-full-ui", "release"])
 
     def test_shortcut_exits_if_android_dies_after_presentation(self):
         result, calls = self.run_session("ends")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Waydroid session ended", result.stderr)
-        self.assertEqual(calls, ["list", "list", "list", "show-full-ui", "stop"])
+        self.assertEqual(calls, ["list", "list", "list", "show-full-ui", "release"])
