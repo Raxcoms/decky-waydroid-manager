@@ -97,8 +97,8 @@ class LaunchPolicy:
         self.run, self.identify = run, identify
         self.saved = None
 
-    def android(self, *args: str) -> str:
-        return self.run(["waydroid", "shell", "--", *args], timeout=5)
+    def android(self, *args: str, timeout: int = 5) -> str:
+        return self.run(["waydroid", "shell", "--", *args], timeout=timeout)
 
     def current(self) -> str | None:
         output = self.android("settings", "list", "global")
@@ -137,11 +137,15 @@ class LaunchPolicy:
         active = "Waydroid" if whole_display else package or "Waydroid"
         self.android("setprop", "waydroid.active_apps", active)
         self.android("settings", "put", "global", "policy_control", self.saved[2])
-        command = ["am", "start", "--user", "current", "--display", DEFAULT_DISPLAY,
+        command = ["am", "start", "-W", "--user", "current", "--display", DEFAULT_DISPLAY,
                    *intent]
-        output = self.android(*command)
+        output = self.android(*command, timeout=30)
         if re.search(r"^Error:", output, re.MULTILINE):
             raise RuntimeError(output.strip())
+        activity = re.search(r"^Activity:\s+(\S+)", output, re.MULTILINE)
+        if (not re.search(r"^Status:\s+ok\s*$", output, re.MULTILINE) or activity is None
+                or (package and not activity[1].startswith(package + "/"))):
+            raise RuntimeError("Android did not confirm the requested activity started")
 
     def _app_intent(self, package: str) -> list[str]:
         # Match Android's package launcher, including activities without CATEGORY_DEFAULT.
@@ -155,6 +159,19 @@ class LaunchPolicy:
             if component:
                 return [*intent, "-n", component, "--activity-reset-task-if-needed"]
         raise RuntimeError(f"Android has no launch activity for {package}")
+
+    def primary_task(self) -> str:
+        output = self.android("dumpsys", "activity", "activities")
+        displays = re.split(r"^Display #(\d+).*?$", output, flags=re.MULTILINE)
+        for index in range(1, len(displays), 2):
+            if displays[index] == DEFAULT_DISPLAY:
+                task = re.search(r"topResumedActivity=.*?\bt(\d+)\}", displays[index + 1])
+                if task:
+                    return task[1]
+        raise RuntimeError("Android did not report a resumed task on the primary display")
+
+    def focus_task(self, task: str) -> None:
+        self.android("am", "task", "focus", task)
 
 
 def run_dex(run, helper: Path, identify, identity, main_class: str, *args: str, uid: str | None = None) -> str:

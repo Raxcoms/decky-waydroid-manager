@@ -70,6 +70,7 @@ class LaunchPolicyTests(unittest.TestCase):
         self.writes = []
         self.activities = {"android.intent.category.LAUNCHER": ["example.app/.MainActivity"]}
         self.queries = []
+        self.launch_result = None
         self.policy = LaunchPolicy(self.run_android, lambda: self.guest)
 
     def run_android(self, command, **kwargs):
@@ -82,6 +83,11 @@ class LaunchPolicyTests(unittest.TestCase):
         if args == ["settings", "list", "global"]:
             return "" if self.value is None else f"policy_control={self.value}"
         self.writes.append(args)
+        if args[:2] == ["am", "start"]:
+            self.assertIn("-W", args)
+            self.assertEqual(kwargs["timeout"], 30)
+            component = args[args.index("-n") + 1] if "-n" in args else "home.app/.HomeActivity"
+            return self.launch_result if self.launch_result is not None else f"Status: ok\nActivity: {component}\nComplete"
         return ""
 
     def test_unset_preference_is_restored_after_a_stock_app_launch(self):
@@ -113,7 +119,7 @@ class LaunchPolicyTests(unittest.TestCase):
         self.assertEqual(self.writes, [
             ["setprop", "waydroid.active_apps", "Waydroid"],
             ["settings", "put", "global", "policy_control", "null*"],
-            ["am", "start", "--user", "current", "--display", "0", "-a", "android.intent.action.MAIN",
+            ["am", "start", "-W", "--user", "current", "--display", "0", "-a", "android.intent.action.MAIN",
              "-c", "android.intent.category.HOME"],
         ])
 
@@ -122,7 +128,7 @@ class LaunchPolicyTests(unittest.TestCase):
         self.policy.present("example.app")
         self.assertEqual(self.writes[0], ["setprop", "waydroid.active_apps", "example.app"])
         self.assertEqual(self.writes[1][-1], "immersive.status=*")
-        self.assertEqual(self.writes[2][1:7], ["start", "--user", "current", "--display", "0", "-a"])
+        self.assertEqual(self.writes[2][1:8], ["start", "-W", "--user", "current", "--display", "0", "-a"])
         self.assertEqual(self.writes[2][-3:], ["-n", "example.app/.MainActivity", "--activity-reset-task-if-needed"])
 
     def test_launch_is_rejected_if_the_guest_has_changed(self):
@@ -161,3 +167,25 @@ class LaunchPolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "no launch activity"):
             self.policy.present("example.app")
         self.assertEqual(self.writes, [])
+
+    def test_launch_requires_android_confirmation_of_the_requested_package(self):
+        self.policy.save("app")
+        for output in ("", "Status: timeout\nActivity: example.app/.MainActivity",
+                       "Status: ok\nActivity: other.package/.Activity"):
+            with self.subTest(output=output):
+                self.launch_result = output
+                with self.assertRaisesRegex(RuntimeError, "did not confirm"):
+                    self.policy.present("example.app")
+
+    def test_primary_task_is_discovered_without_using_external_activity_ids(self):
+        self.policy.run = Mock(return_value="""Display #7 (activities):
+ topResumedActivity=ActivityRecord{xxx u0 external/.Activity} t99}
+Display #0 (activities):
+ topResumedActivity=ActivityRecord{yyy u0 example.app/.MainActivity} t21}
+""")
+        self.assertEqual(self.policy.primary_task(), "21")
+
+    def test_missing_primary_task_cannot_be_replaced_with_an_external_task(self):
+        self.policy.run = Mock(return_value="Display #7 (activities):\n topResumedActivity=ActivityRecord{x} t99}")
+        with self.assertRaisesRegex(RuntimeError, "primary display"):
+            self.policy.primary_task()

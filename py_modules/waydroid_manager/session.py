@@ -106,6 +106,9 @@ class LaunchSession:
             raise RuntimeError("Waydroid launch is no longer active")
         if not android_user_ready(self.services.run):
             raise RuntimeError(GUEST_STARTING)
+        self.policy.save(mode)
+
+    def _activate_external(self, launch: Launch) -> None:
         if self.requests.get(launch.process) and launch.process not in self.display_users:
             self.services.run(["waydroid", "shell", "--", "setprop", "waydroid.external_display_active", "1"])
             deadline = time.monotonic() + 5
@@ -120,13 +123,20 @@ class LaunchSession:
                 if not self.display_users:
                     self.services.run(["waydroid", "shell", "--", "setprop", "waydroid.external_display_active", "0"])
                 raise RuntimeError("Android did not connect the external display")
-        self.policy.save(mode)
 
     async def show(self, launch: Launch) -> None:
         async with self.lock:
             if not session_uses_socket(launch.display) or launch.process not in self.requests:
                 raise RuntimeError("Waydroid launch is no longer active")
             await asyncio.to_thread(self.policy.present, launch.request.package, whole_display=self.capable is True)
+            if self.control is not None and launch.process not in self.control.launches:
+                raise RuntimeError("Waydroid launch is no longer active")
+            task = None
+            if self.requests.get(launch.process) and not self.display_users:
+                task = await asyncio.to_thread(self.policy.primary_task)
+            await asyncio.to_thread(self._activate_external, launch)
+            if task is not None:
+                await asyncio.to_thread(self.policy.focus_task, task)
 
     async def release(self, launch: Launch) -> None:
         async with self.lock:

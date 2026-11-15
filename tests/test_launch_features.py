@@ -94,7 +94,7 @@ class LaunchFeatureTests(unittest.IsolatedAsyncioTestCase):
               patch.object(session, "android_user_ready", return_value=True),
               patch.object(session.time, "monotonic", side_effect=[0, 6])):
             with self.assertRaisesRegex(RuntimeError, "did not connect"):
-                self.plugin._prepare_presentation(self.launch, "app")
+                self.plugin._activate_external(self.launch)
         self.assertEqual(self.plugin.display_users, set())
         self.assertEqual(self.services.run.call_args.args[0][-2:], ["waydroid.external_display_active", "0"])
 
@@ -104,14 +104,14 @@ class LaunchFeatureTests(unittest.IsolatedAsyncioTestCase):
         self.services.run.return_value = "Display id 7: external display"
         with (patch.object(session, "session_uses_socket", return_value=True),
               patch.object(session, "android_user_ready", return_value=True)):
-            await self.plugin.present(self.launch, "app")
+            self.plugin._activate_external(self.launch)
         self.assertEqual(self.plugin.display_users, {self.launch.process})
-        self.plugin.policy.save.assert_called_once_with("app")
 
     async def test_dual_display_session_presents_the_app_as_a_complete_output(self):
         self.plugin.requests[self.launch.process] = True
         self.plugin.capable = True
         self.plugin.policy = Mock()
+        self.services.run.return_value = "Display id 7: external display"
         with patch.object(session, "session_uses_socket", return_value=True):
             await self.plugin.show(self.launch)
         self.plugin.policy.present.assert_called_once_with("example.app", whole_display=True)
@@ -122,3 +122,37 @@ class LaunchFeatureTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(RuntimeError, "no longer active"):
                 await self.plugin.show(self.launch)
         self.plugin.policy.present.assert_not_called()
+
+    async def test_preparation_leaves_the_external_display_inactive(self):
+        self.plugin.requests[self.launch.process] = True
+        self.plugin.policy = Mock()
+        with (patch.object(session, "session_uses_socket", return_value=True),
+              patch.object(session, "android_user_ready", return_value=True)):
+            await self.plugin.present(self.launch, "app")
+        self.services.run.assert_not_called()
+        self.plugin.policy.save.assert_called_once_with("app")
+
+    async def test_external_display_waits_for_primary_activity_confirmation(self):
+        events = []
+        self.plugin.requests[self.launch.process] = True
+        self.plugin.policy = Mock()
+        self.plugin.policy.present.side_effect = lambda *args, **kwargs: events.append("app-ready")
+        def run(command, **kwargs):
+            if command[-2:] == ["waydroid.external_display_active", "1"]:
+                events.append("external-active")
+            return "Display id 7: external display"
+        self.services.run.side_effect = run
+        with patch.object(session, "session_uses_socket", return_value=True):
+            await self.plugin.show(self.launch)
+        self.assertEqual(events, ["app-ready", "external-active"])
+        self.plugin.policy.focus_task.assert_called_once_with(self.plugin.policy.primary_task.return_value)
+
+    async def test_failed_primary_start_never_acquires_the_external_display(self):
+        self.plugin.requests[self.launch.process] = True
+        self.plugin.policy = Mock()
+        self.plugin.policy.present.side_effect = RuntimeError("Activity did not start")
+        with patch.object(session, "session_uses_socket", return_value=True):
+            with self.assertRaisesRegex(RuntimeError, "did not start"):
+                await self.plugin.show(self.launch)
+        self.services.run.assert_not_called()
+        self.assertEqual(self.plugin.display_users, set())

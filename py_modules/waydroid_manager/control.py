@@ -48,9 +48,9 @@ def control_path(uid: int) -> Path:
 
 
 @contextmanager
-def service_connection(path: Path, command: bytes):
+def service_connection(path: Path, command: bytes, timeout: int = 35):
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
-        connection.settimeout(35)
+        connection.settimeout(timeout)
         connection.connect(str(path))
         _, uid, _ = struct.unpack("3i", connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
         if uid != 0:

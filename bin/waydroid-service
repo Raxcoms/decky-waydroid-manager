@@ -17,7 +17,7 @@ try:
     path = control_path(os.getuid())
     if sys.argv[1:] in (["--release"], ["--present"]):
         command = b"RELEASE" if sys.argv[1] == "--release" else b"PRESENT"
-        with service_connection(path, command):
+        with service_connection(path, command, timeout=60 if command == b"PRESENT" else 35):
             pass
     elif len(sys.argv) == 3 and sys.argv[1] == "--policy":
         with service_connection(path, b"POLICY " + sys.argv[2].encode("ascii")):

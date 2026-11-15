@@ -60,6 +60,9 @@ The menu offers **Disable second screen support** after enabling it.
 
 Apps start on the screen running Steam. Android treats the leased screen as an
 external display; apps with external-display support can use it for extra content.
+The plugin waits for Android to confirm the primary activity has started before
+connecting the second screen. A failed app launch leaves the second screen with
+its previous user.
 
 The external output returns to its previous host window when the final enabled
 shortcut closes. Ordinary Waydroid launches outside the plugin keep their original
