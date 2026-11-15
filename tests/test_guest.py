@@ -84,8 +84,8 @@ class LaunchPolicyTests(unittest.TestCase):
             return "" if self.value is None else f"policy_control={self.value}"
         self.writes.append(args)
         if args[:2] == ["am", "start"]:
-            self.assertIn("-W", args)
-            self.assertEqual(kwargs["timeout"], 30)
+            if "-W" in args:
+                self.assertEqual(kwargs["timeout"], 30)
             component = args[args.index("-n") + 1] if "-n" in args else "home.app/.HomeActivity"
             return self.launch_result if self.launch_result is not None else f"Status: ok\nActivity: {component}\nComplete"
         return ""
@@ -177,18 +177,10 @@ class LaunchPolicyTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "did not confirm"):
                     self.policy.present("example.app")
 
-    def test_primary_task_is_discovered_without_using_external_activity_ids(self):
-        self.policy.run = Mock(return_value="""Display #7 (activities):
- topResumedActivity=ActivityRecord{xxx u0 external/.Activity} t99}
-Display #0 (activities):
- topResumedActivity=ActivityRecord{yyy u0 example.app/.MainActivity} t21}
-""")
-        self.assertEqual(self.policy.primary_task(), "21")
-
-    def test_missing_primary_task_cannot_be_replaced_with_an_external_task(self):
-        self.policy.run = Mock(return_value="Display #7 (activities):\n topResumedActivity=ActivityRecord{x} t99}")
-        with self.assertRaisesRegex(RuntimeError, "primary display"):
-            self.policy.primary_task()
+    def test_full_shortcut_can_bring_home_forward_after_external_hotplug(self):
+        self.policy.focus_home()
+        self.assertEqual(self.writes, [["am", "start", "--user", "current", "--display", "0", "-a",
+                                       "android.intent.action.MAIN", "-c", "android.intent.category.HOME"]])
 
     def test_external_display_readiness_requires_its_resumed_activity_to_be_drawn(self):
         output = """Display #7 (activities):

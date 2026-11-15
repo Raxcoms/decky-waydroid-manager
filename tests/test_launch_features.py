@@ -145,7 +145,16 @@ class LaunchFeatureTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(session, "session_uses_socket", return_value=True):
             await self.plugin.show(self.launch)
         self.assertEqual(events, ["app-ready", "external-active"])
-        self.plugin.policy.focus_task.assert_called_once_with(self.plugin.policy.primary_task.return_value)
+        self.plugin.policy.focus_home.assert_not_called()
+
+    async def test_full_shortcut_restores_home_after_external_hotplug(self):
+        launch = Launch(self.launch.process, self.launch.display, LaunchRequest("full", None))
+        self.plugin.requests[launch.process] = True
+        self.plugin.policy = Mock()
+        self.services.run.return_value = "Display id 7: external display"
+        with patch.object(session, "session_uses_socket", return_value=True):
+            await self.plugin.show(launch)
+        self.plugin.policy.focus_home.assert_called_once_with()
 
     async def test_failed_primary_start_never_acquires_the_external_display(self):
         self.plugin.requests[self.launch.process] = True

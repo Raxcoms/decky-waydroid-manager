@@ -132,12 +132,10 @@ class LaunchSession:
             await asyncio.to_thread(self.policy.present, launch.request.package, whole_display=self.capable is True)
             if self.control is not None and launch.process not in self.control.launches:
                 raise RuntimeError("Waydroid launch is no longer active")
-            task = None
-            if self.requests.get(launch.process) and not self.display_users:
-                task = await asyncio.to_thread(self.policy.primary_task)
+            connecting = self.requests.get(launch.process) and not self.display_users
             await asyncio.to_thread(self._activate_external, launch)
-            if task is not None:
-                await asyncio.to_thread(self.policy.focus_task, task)
+            if connecting and launch.request.package is None:
+                await asyncio.to_thread(self.policy.focus_home)
 
     async def release(self, launch: Launch) -> None:
         async with self.lock:

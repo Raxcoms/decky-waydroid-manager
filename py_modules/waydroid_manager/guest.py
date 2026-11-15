@@ -160,36 +160,25 @@ class LaunchPolicy:
                 return [*intent, "-n", component, "--activity-reset-task-if-needed"]
         raise RuntimeError(f"Android has no launch activity for {package}")
 
-    def primary_task(self) -> str:
-        task = self._display_task(DEFAULT_DISPLAY)
-        if task is None:
-            raise RuntimeError("Android did not report a resumed task on the primary display")
-        return task
-
     def display_ready(self, display: str) -> bool:
-        return self._display_task(display, require_drawn=True) is not None
-
-    def _display_task(self, display: str, require_drawn: bool = False) -> str | None:
         output = self.android("dumpsys", "activity", "activities")
         displays = re.split(r"^Display #(\d+).*?$", output, flags=re.MULTILINE)
         for index in range(1, len(displays), 2):
             if displays[index] != display:
                 continue
             block = displays[index + 1]
-            task = re.search(r"topResumedActivity=ActivityRecord\{(\S+).*?\bt(\d+)\}", block)
+            task = re.search(r"topResumedActivity=ActivityRecord\{(\S+)", block)
             if task is None:
-                return None
-            if require_drawn:
-                records = re.split(r"^\s*\* Hist\s+#\d+:\s*", block, flags=re.MULTILINE)
-                record = next((record for record in records[1:]
-                               if record.startswith(f"ActivityRecord{{{task[1]} ")), "")
-                if "reportedDrawn=true" not in record:
-                    return None
-            return task[2]
-        return None
+                return False
+            records = re.split(r"^\s*\* Hist\s+#\d+:\s*", block, flags=re.MULTILINE)
+            record = next((record for record in records[1:]
+                           if record.startswith(f"ActivityRecord{{{task[1]} ")), "")
+            return "reportedDrawn=true" in record
+        return False
 
-    def focus_task(self, task: str) -> None:
-        self.android("am", "task", "focus", task)
+    def focus_home(self) -> None:
+        self.android("am", "start", "--user", "current", "--display", DEFAULT_DISPLAY,
+                     "-a", "android.intent.action.MAIN", "-c", "android.intent.category.HOME")
 
 
 def run_dex(run, helper: Path, identify, identity, main_class: str, *args: str, uid: str | None = None) -> str:
