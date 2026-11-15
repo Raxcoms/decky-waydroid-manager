@@ -189,3 +189,19 @@ Display #0 (activities):
         self.policy.run = Mock(return_value="Display #7 (activities):\n topResumedActivity=ActivityRecord{x} t99}")
         with self.assertRaisesRegex(RuntimeError, "primary display"):
             self.policy.primary_task()
+
+    def test_external_display_readiness_requires_its_resumed_activity_to_be_drawn(self):
+        output = """Display #7 (activities):
+ topResumedActivity=ActivityRecord{new u0 external/.Activity} t99}
+ * Hist #0: ActivityRecord{new u0 external/.Activity} t99}
+   reportedDrawn=false reportedVisible=false
+ * Hist #0: ActivityRecord{old u0 previous/.Activity} t98}
+   reportedDrawn=true reportedVisible=true
+Display #0 (activities):
+ topResumedActivity=ActivityRecord{main u0 example/.Activity} t21}
+"""
+        self.policy.run = Mock(return_value=output)
+        self.assertFalse(self.policy.display_ready("7"))
+        self.policy.run.return_value = output.replace("reportedDrawn=false", "reportedDrawn=true")
+        self.assertTrue(self.policy.display_ready("7"))
+        self.assertFalse(self.policy.display_ready("8"))

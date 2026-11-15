@@ -115,7 +115,8 @@ class LaunchSession:
             while time.monotonic() < deadline:
                 output = self.services.run(["waydroid", "shell", "--", "cmd", "display", "get-displays",
                                             "android.hardware.display.category.PRESENTATION"], timeout=5)
-                if re.search(r"Display id [1-9][0-9]*", output):
+                display = re.search(r"Display id ([1-9][0-9]*)", output)
+                if display and self.policy.display_ready(display[1]):
                     self.display_users.add(launch.process)
                     break
                 time.sleep(0.1)
