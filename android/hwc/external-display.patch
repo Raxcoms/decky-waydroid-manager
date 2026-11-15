@@ -241,7 +241,7 @@ index d24b035..afe820e 100644
 +static bool show_external(waydroid_hwc_composer_device_1 *pdev, bool content) {
 +    window *win = pdev->ext_window.get();
 +
-+    if (!content) {
++    if (!content || !property_get_bool("waydroid.external_display_visible", false)) {
 +        if (!pdev->ext_hidden) {
 +            win->unmap();
 +            pdev->ext_hidden = true;
@@ -431,28 +431,32 @@ index d24b035..afe820e 100644
          return 0;
      return -EINVAL;
  }
-@@ -697,6 +836,33 @@ shutdown:
+@@ -697,6 +836,37 @@ shutdown:
      return NULL;
  }
  
 +static void* hwc_ext_hotplug_thread(void* data) {
 +    auto *pdev = static_cast<waydroid_hwc_composer_device_1 *>(data);
++    bool visible = false;
 +
 +    while (pdev->ext_display->connected) {
 +        if (pdev->procs && pdev->procs->hotplug && property_get_bool("sys.boot_completed", false)) {
 +            bool active = property_get_bool("waydroid.external_display_active", false);
++            bool present = active && property_get_bool("waydroid.external_display_visible", false);
 +            {
 +                std::lock_guard<std::mutex> lock(pdev->ext_mutex);
 +                pdev->ext_active = active;
 +                // Display removal may not produce another frame on an idle primary.
-+                if (!active && !pdev->ext_hidden) {
++                if (!present && !pdev->ext_hidden) {
 +                    show_external(pdev, false);
 +                    wl_display_flush(pdev->ext_display->display);
 +                }
 +            }
-+            if (active != pdev->ext_announced) {
-+                pdev->procs->hotplug(pdev->procs, HWC_DISPLAY_EXTERNAL, active);
++            if (active != pdev->ext_announced || present != visible) {
++                if (active != pdev->ext_announced)
++                    pdev->procs->hotplug(pdev->procs, HWC_DISPLAY_EXTERNAL, active);
 +                pdev->ext_announced = active;
++                visible = present;
 +                if (pdev->procs->invalidate)
 +                    pdev->procs->invalidate(pdev->procs);
 +            }

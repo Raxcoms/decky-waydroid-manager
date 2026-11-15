@@ -17,6 +17,7 @@ class NativePayload:
     vndk: str
     machine: int
     recipe: str
+    capabilities: frozenset[str] = frozenset()
 
     @classmethod
     def load(cls, root: Path) -> "NativePayload":
@@ -33,7 +34,11 @@ class NativePayload:
             if (source.is_symlink() or not source.is_file() or digest(source) != expected
                     or elf_machine(source) != metadata["elfMachine"]):
                 raise RuntimeError("Native display component failed validation")
-        return cls(root, metadata["sdk"], metadata["vndkVersion"], metadata["elfMachine"], metadata["recipeSha256"])
+        capabilities = metadata.get("capabilities", [])
+        if not isinstance(capabilities, list) or not all(isinstance(value, str) for value in capabilities):
+            raise RuntimeError("Invalid native display capabilities")
+        return cls(root, metadata["sdk"], metadata["vndkVersion"], metadata["elfMachine"], metadata["recipeSha256"],
+                   frozenset(capabilities))
 
 
 def select_native(directory: Path, sdk: int, vndk: str, machine: int) -> NativePayload:

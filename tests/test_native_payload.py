@@ -22,9 +22,11 @@ class NativePayloadTests(unittest.TestCase):
                 (payload / name).write_bytes(header)
                 files[name] = hashlib.sha256(header).hexdigest()
             metadata = {"schemaVersion": 2, "sdk": 33, "elfMachine": 183,
-                        "vndkVersion": "33", "recipeSha256": "a" * 64, "files": files}
+                        "vndkVersion": "33", "recipeSha256": "a" * 64, "files": files,
+                        "capabilities": ["external-presentation"]}
             (payload / "manifest.json").write_text(json.dumps(metadata))
             self.assertEqual(select_native(root, 33, "33", 183).root, payload)
+            self.assertIn("external-presentation", select_native(root, 33, "33", 183).capabilities)
             with self.assertRaisesRegex(RuntimeError, "compatible"):
                 select_native(root, 33, "32", 183)
             with self.assertRaisesRegex(RuntimeError, "compatible"):

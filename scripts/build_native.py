@@ -91,7 +91,8 @@ def build(profile: Path, cache: Path, directory: Path, output: Path, ndk: Path, 
     collect(source, target / "NOTICE.txt")
     manifest = {"schemaVersion": 2, "sdk": metadata["sdk"], "vndkVersion": metadata["vndkVersion"],
                 "abi": metadata["abi"], "elfMachine": metadata["elfMachine"], "recipeSha256": identity,
-                "files": files, "dependencies": metadata["dependencies"]}
+                "files": files, "dependencies": metadata["dependencies"],
+                "capabilities": metadata.get("capabilities", [])}
     (target / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
     return target
 
