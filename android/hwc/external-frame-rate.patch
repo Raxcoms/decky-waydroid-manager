@@ -1,0 +1,37 @@
+--- a/hwcomposer/hwcomposer.cpp
++++ b/hwcomposer/hwcomposer.cpp
+@@ -727,7 +727,7 @@
+             struct display *d = pdev->ext_display;
+             switch (attributes[i]) {
+                 case HWC_DISPLAY_VSYNC_PERIOD:
+-                    values[i] = pdev->ext_vsync_period_ns;
++                    values[i] = external_period(pdev);
+                     break;
+                 case HWC_DISPLAY_WIDTH:
+                     values[i] = floor(d->width * d->scale);
+@@ -848,6 +848,7 @@
+ static void* hwc_ext_hotplug_thread(void* data) {
+     auto *pdev = static_cast<waydroid_hwc_composer_device_1 *>(data);
+     bool visible = false;
++    int64_t configured_period = 0;
+ 
+     while (pdev->ext_display->connected) {
+         if (pdev->procs && pdev->procs->hotplug && property_get_bool("sys.boot_completed", false)) {
+@@ -862,11 +863,15 @@
+                     wl_display_flush(pdev->ext_display->display);
+                 }
+             }
+-            if (active != pdev->ext_announced || present != visible) {
+-                if (active != pdev->ext_announced)
++            int64_t period = external_period(pdev);
++            bool cadence_changed = active && period != configured_period;
++            if (active != pdev->ext_announced || present != visible || cadence_changed) {
++                // HWC1 reports changed display attributes through a connected event.
++                if (active != pdev->ext_announced || cadence_changed)
+                     pdev->procs->hotplug(pdev->procs, HWC_DISPLAY_EXTERNAL, active);
+                 pdev->ext_announced = active;
+                 visible = present;
++                configured_period = period;
+                 if (pdev->procs->invalidate)
+                     pdev->procs->invalidate(pdev->procs);
+             }

@@ -195,6 +195,22 @@
       "file": "android/hwc/display-submission.patch"
     },
     {
+      "project": "hardware/waydroid",
+      "file": "android/hwc/external-frame-rate.patch"
+    },
+    {
+      "project": "hardware/interfaces",
+      "file": "android/hwc/external-frame-rate-adapter.patch"
+    },
+    {
+      "project": "hardware/waydroid",
+      "file": "android/hwc/display-validation.patch"
+    },
+    {
+      "project": "hardware/interfaces",
+      "file": "android/hwc/display-validation-adapter.patch"
+    },
+    {
       "project": "system/tools/hidl",
       "file": "android/native/host-tools.patch"
     }

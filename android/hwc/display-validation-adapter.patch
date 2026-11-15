@@ -1,0 +1,150 @@
+--- a/graphics/composer/2.1/utils/hwc2on1adapter/HWC2On1Adapter.cpp
++++ b/graphics/composer/2.1/utils/hwc2on1adapter/HWC2On1Adapter.cpp
+@@ -994,7 +994,7 @@
+     std::unique_lock<std::recursive_mutex> lock(mStateMutex);
+ 
+     if (!mChanges) {
+-        if (!mDevice.prepareAllDisplays()) {
++        if (!mDevice.prepareDisplay(mHwc1Id)) {
+             return Error::BadDisplay;
+         }
+     } else {
+@@ -2347,94 +2347,20 @@
+     mDisplays.emplace(display->getId(), std::move(display));
+ }
+ 
+-bool HWC2On1Adapter::prepareAllDisplays() {
++bool HWC2On1Adapter::prepareDisplay(int32_t hwc1Id) {
+     ATRACE_CALL();
+-
+     std::unique_lock<std::recursive_timed_mutex> lock(mStateMutex);
+-
+-    for (const auto& displayPair : mDisplays) {
+-        auto& display = displayPair.second;
+-        if (!display->prepare()) {
+-            return false;
+-        }
+-    }
+-
+-    if (mHwc1DisplayMap.count(HWC_DISPLAY_PRIMARY) == 0) {
+-        ALOGE("prepareAllDisplays: Unable to find primary HWC1 display");
++    if (mHwc1DisplayMap.count(hwc1Id) == 0)
+         return false;
+-    }
+-
+-    // Build an array of hwc_display_contents_1 to call prepare() on HWC1.
+-    mHwc1Contents.clear();
+-
+-    // Always push the primary display
+-    auto primaryDisplayId = mHwc1DisplayMap[HWC_DISPLAY_PRIMARY];
+-    auto& primaryDisplay = mDisplays[primaryDisplayId];
+-    mHwc1Contents.push_back(primaryDisplay->getDisplayContents());
+-
+-    // Push the external display, if present
+-    if (mHwc1DisplayMap.count(HWC_DISPLAY_EXTERNAL) != 0) {
+-        auto externalDisplayId = mHwc1DisplayMap[HWC_DISPLAY_EXTERNAL];
+-        auto& externalDisplay = mDisplays[externalDisplayId];
+-        mHwc1Contents.push_back(externalDisplay->getDisplayContents());
+-    } else {
+-        // Even if an external display isn't present, we still need to send
+-        // at least two displays down to HWC1
+-        mHwc1Contents.push_back(nullptr);
+-    }
+-
+-    // Push the hardware virtual display, if supported and present
+-    if (mHwc1MinorVersion >= 3) {
+-        if (mHwc1DisplayMap.count(HWC_DISPLAY_VIRTUAL) != 0) {
+-            auto virtualDisplayId = mHwc1DisplayMap[HWC_DISPLAY_VIRTUAL];
+-            auto& virtualDisplay = mDisplays[virtualDisplayId];
+-            mHwc1Contents.push_back(virtualDisplay->getDisplayContents());
+-        } else {
+-            mHwc1Contents.push_back(nullptr);
+-        }
+-    }
+-
+-    for (auto& displayContents : mHwc1Contents) {
+-        if (!displayContents) {
+-            continue;
+-        }
+-
+-        ALOGV("Display %zd layers:", mHwc1Contents.size() - 1);
+-        for (size_t l = 0; l < displayContents->numHwLayers; ++l) {
+-            auto& layer = displayContents->hwLayers[l];
+-            ALOGV("  %zd: %d", l, layer.compositionType);
+-        }
+-    }
+-
+-    ALOGV("Calling HWC1 prepare");
+-    {
+-        ATRACE_NAME("HWC1 prepare");
+-        mHwc1Device->prepare(mHwc1Device, mHwc1Contents.size(),
+-                mHwc1Contents.data());
+-    }
+-
+-    for (size_t c = 0; c < mHwc1Contents.size(); ++c) {
+-        auto& contents = mHwc1Contents[c];
+-        if (!contents) {
+-            continue;
+-        }
+-        ALOGV("Display %zd layers:", c);
+-        for (size_t l = 0; l < contents->numHwLayers; ++l) {
+-            ALOGV("  %zd: %d", l, contents->hwLayers[l].compositionType);
+-        }
+-    }
+-
+-    // Return the received contents to their respective displays
+-    for (size_t hwc1Id = 0; hwc1Id < mHwc1Contents.size(); ++hwc1Id) {
+-        if (mHwc1Contents[hwc1Id] == nullptr) {
+-            continue;
+-        }
+-
+-        auto displayId = mHwc1DisplayMap[hwc1Id];
+-        auto& display = mDisplays[displayId];
+-        display->generateChanges();
+-    }
+-
++    auto& display = mDisplays[mHwc1DisplayMap[hwc1Id]];
++    if (!display->prepare())
++        return false;
++    size_t count = mHwc1MinorVersion >= 3 ? HWC_DISPLAY_VIRTUAL + 1 : HWC_DISPLAY_EXTERNAL + 1;
++    std::vector<hwc_display_contents_1_t*> pending(count, nullptr);
++    pending[hwc1Id] = display->getDisplayContents();
++    if (mHwc1Device->prepare(mHwc1Device, pending.size(), pending.data()) != 0)
++        return false;
++    display->generateChanges();
+     return true;
+ }
+ 
+@@ -2518,17 +2444,18 @@
+ Error HWC2On1Adapter::setDisplay(int32_t hwc1Id) {
+     ATRACE_CALL();
+     std::unique_lock<std::recursive_timed_mutex> lock(mStateMutex);
+-    if (hwc1Id < 0 || size_t(hwc1Id) >= mHwc1Contents.size() || !mHwc1Contents[hwc1Id])
++    if (mHwc1DisplayMap.count(hwc1Id) == 0)
+         return Error::BadDisplay;
+ 
+     auto& display = mDisplays[mHwc1DisplayMap[hwc1Id]];
+-    auto* contents = mHwc1Contents[hwc1Id];
++    auto* contents = display->getDisplayContents();
+     Error error = display->set(*contents);
+     if (error != Error::None)
+         return error;
+ 
+     // Each HWC2 present submits only that display's new frame.
+-    std::vector<hwc_display_contents_1_t*> pending(mHwc1Contents.size(), nullptr);
++    size_t count = mHwc1MinorVersion >= 3 ? HWC_DISPLAY_VIRTUAL + 1 : HWC_DISPLAY_EXTERNAL + 1;
++    std::vector<hwc_display_contents_1_t*> pending(count, nullptr);
+     pending[hwc1Id] = contents;
+     int result = mHwc1Device->set(mHwc1Device, pending.size(), pending.data());
+     if (result != 0)
+--- a/graphics/composer/2.1/utils/hwc2on1adapter/include/hwc2on1adapter/HWC2On1Adapter.h
++++ b/graphics/composer/2.1/utils/hwc2on1adapter/include/hwc2on1adapter/HWC2On1Adapter.h
+@@ -687,7 +687,7 @@
+             hwc2_layer_t layerId);
+     void populatePrimary();
+ 
+-    bool prepareAllDisplays();
++    bool prepareDisplay(int32_t hwc1Id);
+     std::vector<struct hwc_display_contents_1*> mHwc1Contents;
+     HWC2::Error setDisplay(int32_t hwc1Id);
+ 
