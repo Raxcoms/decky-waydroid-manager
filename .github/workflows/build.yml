@@ -74,13 +74,18 @@ jobs:
           for script in bin/waydroid-launcher bin/waydroid-game-session bin/waydroid-session; do
             bash -n "$script"
           done
-      - name: Restore internal native build outputs
-        env:
-          NATIVE_CACHES: ${{ needs.native.outputs.caches }}
+      - name: Install internal cache client
         run: |
           npm install --prefix "$RUNNER_TEMP/display-cache-client" --no-save --ignore-scripts @actions/cache@6.3.0
           cp scripts/restore_native_cache.mjs "$RUNNER_TEMP/display-cache-client/restore.mjs"
-          node "$RUNNER_TEMP/display-cache-client/restore.mjs"
+      - name: Restore internal native build outputs
+        uses: actions/github-script@v8
+        env:
+          NATIVE_CACHES: ${{ needs.native.outputs.caches }}
+        with:
+          script: |
+            const { pathToFileURL } = require('node:url');
+            await import(pathToFileURL(`${process.env.RUNNER_TEMP}/display-cache-client/restore.mjs`).href);
       - name: Package plugin
         env:
           BUILD_REVISION: ${{ steps.version.outputs.revision }}
