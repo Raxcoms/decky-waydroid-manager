@@ -35,6 +35,10 @@ flowchart LR
    payload and socket binding. A separate guard can clean them up after the
    backend exits. Controller, GPU metrics, and frame-limit adapters attach only
    to the session using the registered socket.
+5. The backend launches the requested activity on Android's default display.
+   Dual-display sessions compose complete Android outputs, avoiding a dependency
+   on image-specific task-layer names. Home launches do not expand notifications
+   to trigger a screen refresh.
 
 User preferences and artwork cleanup run as the Steam login user. APK and XAPK content goes through Android's package installer, with no need for the backend to stage packages in the user's Android data directory.
 

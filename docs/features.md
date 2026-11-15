@@ -52,9 +52,14 @@ A future integration should let the Steam slider change actual Android rendering
 ## Use a second screen
 
 Choose **Enable second screen support** from an app's menu or **Waydroid actions**.
+Each app has its own setting, disabled by default. The setting in **Waydroid
+actions** applies only to the full Waydroid shortcut.
 Confirm the reboot notice, then close existing launches before starting the
 enabled shortcut. Android starts a secondary launcher on the host's other screen.
 The menu offers **Disable second screen support** after enabling it.
+
+Apps start on the screen running Steam. Android treats the leased screen as an
+external display; apps with external-display support can use it for extra content.
 
 The external output returns to its previous host window when the final enabled
 shortcut closes. Ordinary Waydroid launches outside the plugin keep their original
