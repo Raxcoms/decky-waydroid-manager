@@ -211,6 +211,10 @@
       "file": "android/hwc/display-validation-adapter.patch"
     },
     {
+      "project": "hardware/waydroid",
+      "file": "android/hwc/display-density.patch"
+    },
+    {
       "project": "system/tools/hidl",
       "file": "android/native/host-tools.patch"
     }
