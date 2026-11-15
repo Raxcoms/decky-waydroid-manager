@@ -18,6 +18,7 @@ jobs:
     uses: ./.github/workflows/native.yml
 
   build:
+    needs: native
     outputs:
       revision: ${{ steps.version.outputs.revision }}
       version: ${{ steps.version.outputs.version }}
@@ -73,36 +74,15 @@ jobs:
           for script in bin/waydroid-launcher bin/waydroid-game-session bin/waydroid-session; do
             bash -n "$script"
           done
-      - uses: actions/upload-artifact@v7
-        with:
-          name: plugin-runtime
-          path: |
-            dist
-            bin/waydroid-verifier.dex
-          if-no-files-found: error
-
-  package:
-    needs: [build, native]
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
-        with:
-          name: plugin-runtime
-          path: .
-      - uses: actions/download-artifact@v8
-        with:
-          pattern: display-native-*
-          path: out/display-native
-          merge-multiple: true
-      - uses: actions/download-artifact@v8
-        with:
-          pattern: display-tools-*
-          path: out/display-tools
-          merge-multiple: true
+      - name: Restore internal native build outputs
+        env:
+          NATIVE_CACHES: ${{ needs.native.outputs.caches }}
+        run: |
+          npm install --prefix "$RUNNER_TEMP/display-cache-client" --no-save --ignore-scripts @actions/cache@6.3.0
+          node scripts/restore_native_cache.mjs "$RUNNER_TEMP/display-cache-client"
       - name: Package plugin
         env:
-          BUILD_REVISION: ${{ needs.build.outputs.revision }}
+          BUILD_REVISION: ${{ steps.version.outputs.revision }}
         run: |
           args=(package --native out/display-native --runtime-tools out/display-tools)
           if [[ -n "$BUILD_REVISION" ]]; then
@@ -113,7 +93,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: inputs.release_version == ''
         with:
-          name: waydroid-manager-${{ needs.build.outputs.version }}-ci
+          name: waydroid-manager-${{ steps.version.outputs.version }}-ci
           path: package
           if-no-files-found: error
       - name: Create release ZIP

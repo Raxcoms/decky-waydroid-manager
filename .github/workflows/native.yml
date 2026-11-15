@@ -3,6 +3,9 @@ name: Build native display extension
 on:
   workflow_dispatch:
   workflow_call:
+    outputs:
+      caches:
+        value: ${{ jobs.profiles.outputs.caches }}
 
 permissions:
   contents: read
@@ -13,13 +16,16 @@ jobs:
     outputs:
       profiles: ${{ steps.profiles.outputs.value }}
       tools: ${{ steps.profiles.outputs.tools }}
+      caches: ${{ steps.profiles.outputs.caches }}
     steps:
       - uses: actions/checkout@v7
       - id: profiles
         run: |
-          profiles=$(python3 -c 'import json,pathlib; print(json.dumps([p.stem for p in sorted(pathlib.Path("android/native/profiles").glob("*.json"))]))')
+          caches=$(python3 scripts/native_cache.py)
+          echo "caches=$caches" >> "$GITHUB_OUTPUT"
+          profiles=$(echo "$caches" | python3 -c 'import json,sys; print(json.dumps([p for p in json.load(sys.stdin) if "profile" in p]))')
           echo "value=$profiles" >> "$GITHUB_OUTPUT"
-          tools=$(python3 -c 'import json,pathlib; print(json.dumps(json.loads(pathlib.Path("android/native/runtime-tools.json").read_text())))')
+          tools=$(echo "$caches" | python3 -c 'import json,sys; print(json.dumps([p for p in json.load(sys.stdin) if "runner" in p]))')
           echo "tools=$tools" >> "$GITHUB_OUTPUT"
 
   native:
@@ -30,18 +36,11 @@ jobs:
         profile: ${{ fromJSON(needs.profiles.outputs.profiles) }}
     steps:
       - uses: actions/checkout@v7
-      - name: Identify native recipe
-        id: recipe
-        env:
-          PROFILE: ${{ matrix.profile }}
-        run: |
-          digest=$(PYTHONPATH=scripts python3 -c 'import os,pathlib; from build_native import recipe_digest; print(recipe_digest(pathlib.Path("android/native/profiles")/(os.environ["PROFILE"]+".json")))')
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
       - uses: actions/cache/restore@v6
         id: native-cache
         with:
           path: out/display-native
-          key: display-native-${{ runner.os }}-${{ matrix.profile }}-${{ steps.recipe.outputs.digest }}
+          key: ${{ matrix.profile.key }}
       - uses: android-actions/setup-android@v4
         if: steps.native-cache.outputs.cache-hit != 'true'
         with:
@@ -50,7 +49,7 @@ jobs:
       - name: Install native build tools
         if: steps.native-cache.outputs.cache-hit != 'true'
         env:
-          PROFILE: ${{ matrix.profile }}
+          PROFILE: ${{ matrix.profile.profile }}
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends cmake ninja-build bison flex libexpat1-dev android-libbase-dev libjsoncpp-dev libssl-dev
@@ -65,18 +64,13 @@ jobs:
       - name: Build native display libraries
         if: steps.native-cache.outputs.cache-hit != 'true'
         env:
-          PROFILE: ${{ matrix.profile }}
+          PROFILE: ${{ matrix.profile.profile }}
         run: python3 scripts/build_native.py "android/native/profiles/$PROFILE.json" out/display-native
       - uses: actions/cache/save@v6
         if: steps.native-cache.outputs.cache-hit != 'true'
         with:
           path: out/display-native
           key: ${{ steps.native-cache.outputs.cache-primary-key }}
-      - uses: actions/upload-artifact@v7
-        with:
-          name: display-native-${{ matrix.profile }}
-          path: out/display-native
-          if-no-files-found: error
 
   runtime-tools:
     needs: profiles
@@ -90,7 +84,7 @@ jobs:
         id: tools-cache
         with:
           path: out/display-tools
-          key: display-tools-${{ matrix.tool.runner }}-${{ hashFiles('scripts/bundle_runtime_tools.py', 'android/native/runtime-tools.json') }}
+          key: ${{ matrix.tool.key }}
       - name: Package offline resource compiler
         if: steps.tools-cache.outputs.cache-hit != 'true'
         env:
@@ -104,8 +98,3 @@ jobs:
         with:
           path: out/display-tools
           key: ${{ steps.tools-cache.outputs.cache-primary-key }}
-      - uses: actions/upload-artifact@v7
-        with:
-          name: display-tools-${{ matrix.tool.machine }}
-          path: out/display-tools
-          if-no-files-found: error
