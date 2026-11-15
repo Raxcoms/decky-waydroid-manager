@@ -86,7 +86,7 @@ class RuntimeDisplayLease:
                     + configs._fragment_config(external),
                 configs.settings: configs._property_config(configs.settings.read_bytes()),
                 configs.base_properties: base.rstrip(b"\n") + b"\nwaydroid.wayland_display_ext=wayland-1\n"
-                    b"waydroid.external_display_active=0\n",
+                    b"waydroid.external_display_active=0\nwaydroid.external_display_visible=0\n",
             }
             for index, (target, content) in enumerate(contents.items()):
                 if target.is_symlink() or not target.is_file():

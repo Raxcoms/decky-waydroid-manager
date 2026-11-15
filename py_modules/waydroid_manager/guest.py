@@ -176,10 +176,6 @@ class LaunchPolicy:
             return "reportedDrawn=true" in record
         return False
 
-    def focus_home(self) -> None:
-        self.android("am", "start", "--user", "current", "--display", DEFAULT_DISPLAY,
-                     "-a", "android.intent.action.MAIN", "-c", "android.intent.category.HOME")
-
 
 def run_dex(run, helper: Path, identify, identity, main_class: str, *args: str, uid: str | None = None) -> str:
     if not identity or identify() != identity:

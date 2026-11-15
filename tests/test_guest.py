@@ -177,11 +177,6 @@ class LaunchPolicyTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "did not confirm"):
                     self.policy.present("example.app")
 
-    def test_full_shortcut_can_bring_home_forward_after_external_hotplug(self):
-        self.policy.focus_home()
-        self.assertEqual(self.writes, [["am", "start", "--user", "current", "--display", "0", "-a",
-                                       "android.intent.action.MAIN", "-c", "android.intent.category.HOME"]])
-
     def test_external_display_readiness_requires_its_resumed_activity_to_be_drawn(self):
         output = """Display #7 (activities):
  topResumedActivity=ActivityRecord{new u0 external/.Activity} t99}

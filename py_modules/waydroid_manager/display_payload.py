@@ -18,6 +18,7 @@ class VendorIdentity:
     machine: int
     adapter_digest: str = ""
     system_ui_digest: str = ""
+    vndk: str = ""
 
 
 def elf_machine(path: Path) -> int:
@@ -46,7 +47,8 @@ def inspect_vendor(config_dir: Path, run) -> VendorIdentity:
     values = dict(line.split("=", 1) for line in properties.splitlines() if "=" in line)
     fingerprint = values.get("ro.vendor.build.fingerprint", "")
     sdk = values.get("ro.vendor.build.version.sdk", "")
-    if not fingerprint or not sdk.isdecimal():
+    vndk = values.get("ro.vndk.version", "")
+    if not fingerprint or not sdk.isdecimal() or not vndk:
         raise RuntimeError("Could not identify the installed Waydroid vendor ABI")
     with tempfile.TemporaryDirectory(prefix="waydroid-manager-vendor-") as directory:
         library = Path(directory) / "composer.so"
@@ -56,7 +58,8 @@ def inspect_vendor(config_dir: Path, run) -> VendorIdentity:
         system_ui = Path(directory) / "SystemUI.apk"
         run(["debugfs", "-R", f"dump /system_ext/priv-app/SystemUI/SystemUI.apk {system_ui}",
              str(image.with_name("system.img"))], timeout=15)
-        return VendorIdentity(fingerprint, int(sdk), digest(library), elf_machine(library), digest(adapter), digest(system_ui))
+        return VendorIdentity(fingerprint, int(sdk), digest(library), elf_machine(library), digest(adapter),
+                              digest(system_ui), vndk)
 
 
 def select_payload(directory: Path, identity: VendorIdentity) -> dict[str, Path]:
