@@ -87,8 +87,20 @@ export function renderArtwork(role: ArtworkRole, name: string, icon: HTMLImageEl
   const base = context.createLinearGradient(0, 0, width, height);
   base.addColorStop(0, background[0]);
   base.addColorStop(1, background[1]);
+  context.fillStyle = "#171717";
+  context.fillRect(0, 0, width, height);
+  context.save();
+  const blur = Math.min(width, height) * 0.06;
+  const scale = Math.max((width + blur * 6) / icon.naturalWidth, (height + blur * 6) / icon.naturalHeight);
+  const backgroundWidth = icon.naturalWidth * scale;
+  const backgroundHeight = icon.naturalHeight * scale;
+  context.filter = `grayscale(1) blur(${blur}px) brightness(0.45)`;
+  context.drawImage(icon, (width - backgroundWidth) / 2, (height - backgroundHeight) / 2, backgroundWidth, backgroundHeight);
+  context.filter = "none";
+  context.globalCompositeOperation = "color";
   context.fillStyle = base;
   context.fillRect(0, 0, width, height);
+  context.restore();
 
   if (role === "hero") {
     drawIcon(context, icon, width * 0.72, (height - 306) / 2, 306);
