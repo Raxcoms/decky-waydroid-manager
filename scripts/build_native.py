@@ -27,6 +27,7 @@ def recipe_digest(profile: Path) -> str:
     checksum = hashlib.sha256(profile.read_bytes())
     metadata = json.loads(profile.read_text())
     paths = [*sorted((ROOT / "android/native").rglob("CMakeLists.txt")),
+             *sorted((ROOT / "android/native").rglob("*.h")),
              *(ROOT / "scripts" / name for name in
                ("build_native.py", "native_dependencies.py", "native_headers.py", "native_symbols.py", "display_notices.py")),
              *(ROOT / patch["file"] for patch in metadata["patches"])]

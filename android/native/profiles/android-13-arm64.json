@@ -155,7 +155,7 @@
   "ndkVersion": "25.2.9519653",
   "elfMachine": 183,
   "vndkVersion": "33",
-  "capabilities": ["external-presentation"],
+  "capabilities": ["external-presentation", "display-frame-limit"],
   "exportedHeaderPatches": [
     {"project": "system/libhwbinder", "include": "include/hwbinder/IBinder.h"}
   ],
@@ -177,6 +177,14 @@
     {
       "project": "hardware/interfaces",
       "file": "android/hwc/adapter.patch"
+    },
+    {
+      "project": "hardware/waydroid",
+      "file": "android/hwc/frame-rate.patch"
+    },
+    {
+      "project": "hardware/interfaces",
+      "file": "android/hwc/frame-rate-adapter.patch"
     },
     {
       "project": "system/tools/hidl",

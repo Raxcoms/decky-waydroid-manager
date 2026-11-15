@@ -1,0 +1,245 @@
+--- a/hwcomposer/hwcomposer.cpp
++++ b/hwcomposer/hwcomposer.cpp
+@@ -16,6 +16,7 @@
+  */
+ 
+ #include "hwcomposer.h"
++#include "frame_clock.h"
+ 
+ #include <errno.h>
+ #include <pthread.h>
+@@ -228,79 +229,67 @@
+     return 0;
+ }
+ 
+-static long time_to_sleep_to_next_vsync(struct timespec *rt, uint64_t last_vsync_ns, unsigned vsync_period_ns)
+-{
+-    uint64_t now = (uint64_t)rt->tv_sec * 1e9 + rt->tv_nsec;
+-    uint64_t frames_since_last_vsync = (now - last_vsync_ns) / vsync_period_ns + 1;
+-    uint64_t next_vsync = last_vsync_ns + frames_since_last_vsync * vsync_period_ns;
+-
+-    return next_vsync - now;
++static int64_t external_period(waydroid_hwc_composer_device_1 *pdev) {
++    int fps = property_get_int32("waydroid.frame_limit", 0);
++    return fps > 0 ? std::max<int64_t>(1000000000LL / fps, pdev->ext_vsync_period_ns) :
++                     pdev->ext_vsync_period_ns;
++}
++
++static void hwc_dump(hwc_composer_device_1 *dev, char *buffer, int length) {
++    auto *pdev = static_cast<waydroid_hwc_composer_device_1 *>(dev);
++    snprintf(buffer, length,
++             "Waydroid cadence: primary_period_ns=%lld primary_vsyncs=%llu "
++             "external_period_ns=%lld external_vsyncs=%llu\n",
++             (long long)pdev->active_period_ns.load(),
++             (unsigned long long)pdev->primary_vsyncs.load(),
++             (long long)external_period(pdev), (unsigned long long)pdev->external_vsyncs.load());
+ }
+ 
+ static void* hwc_vsync_thread(void* data) {
+     auto *pdev = static_cast<waydroid_hwc_composer_device_1 *>(data);
+     setpriority(PRIO_PROCESS, 0, HAL_PRIORITY_URGENT_DISPLAY);
+-
+-    struct timespec rt;
+-    if (clock_gettime(CLOCK_MONOTONIC, &rt) == -1) {
+-        ALOGE("%s:%d error in vsync thread clock_gettime: %s",
+-              __FILE__, __LINE__, strerror(errno));
+-    }
+-    bool vsync_enabled = false;
+-    uint64_t primary_tick = 0;
+-    uint64_t external_tick = 0;
+-
+-    struct timespec wait_time;
+-    wait_time.tv_sec = 0;
+-    wait_time.tv_nsec = time_to_sleep_to_next_vsync(&rt, pdev->last_vsync_ns, pdev->vsync_period_ns);
++    waydroid_manager::FrameClock primary, external;
+ 
+     while (true) {
+-        ATRACE_BEGIN("hwc_vsync_thread");
+-        int err = nanosleep(&wait_time, NULL);
+-        if (err == -1) {
+-            if (errno == EINTR) {
+-                break;
+-            }
+-            ATRACE_END();
+-            ALOGE("error in vsync thread: %s", strerror(errno));
+-            continue;
+-        }
+-
+-        vsync_enabled = pdev->vsync_callback_enabled;
++        timespec rt;
++        if (clock_gettime(CLOCK_MONOTONIC, &rt) != 0)
++            return nullptr;
++        int64_t now = int64_t(rt.tv_sec) * 1000000000LL + rt.tv_nsec;
++        int64_t period = pdev->active_period_ns.load();
++        int64_t ext_period = external_period(pdev);
++        int64_t next = primary.deadline(now, period);
+         bool external_vsync = pdev->ext_display && pdev->ext_display->connected &&
+                               pdev->ext_active && pdev->ext_vsync_enabled;
+-        if (pdev->ext_display && !pdev->ext_display->connected && pdev->ext_announced.exchange(false))
++        if (external_vsync)
++            next = std::min(next, external.deadline(now, ext_period));
++        int64_t timestamp = primary.consume(now);
++        if (pdev->procs && pdev->procs->vsync) {
++            if (timestamp && pdev->vsync_callback_enabled) {
++                pdev->procs->vsync(pdev->procs, HWC_DISPLAY_PRIMARY, timestamp);
++                ++pdev->primary_vsyncs;
++            }
++            if (external_vsync) {
++                timestamp = external.consume(now);
++                if (timestamp) {
++                    pdev->procs->vsync(pdev->procs, HWC_DISPLAY_EXTERNAL, timestamp);
++                    ++pdev->external_vsyncs;
++                }
++            }
++        }
++        if (pdev->ext_display && !pdev->ext_display->connected &&
++                pdev->ext_announced.exchange(false) && pdev->procs)
+             pdev->procs->hotplug(pdev->procs, HWC_DISPLAY_EXTERNAL, 0);
+-
+-        if (clock_gettime(CLOCK_MONOTONIC, &rt) == -1) {
+-            ALOGE("%s:%d error in vsync thread clock_gettime: %s",
+-                  __FILE__, __LINE__, strerror(errno));
+-        }
+-
+-        int32_t period = external_vsync ? std::min(pdev->vsync_period_ns, pdev->ext_vsync_period_ns)
+-                                       : pdev->vsync_period_ns;
+-        wait_time.tv_nsec = time_to_sleep_to_next_vsync(&rt, pdev->last_vsync_ns, period);
+-
+-        if ((!vsync_enabled && !external_vsync) || !pdev->procs || !pdev->procs->vsync) {
+-            ATRACE_END();
+-            continue;
+-        }
+-
+-        int64_t timestamp = (uint64_t)rt.tv_sec * 1e9 + rt.tv_nsec;
+-        uint64_t current_primary_tick = uint64_t(timestamp) / pdev->vsync_period_ns;
+-        uint64_t current_external_tick = uint64_t(timestamp) / pdev->ext_vsync_period_ns;
+-        if (vsync_enabled && current_primary_tick != primary_tick) {
+-            pdev->procs->vsync(pdev->procs, HWC_DISPLAY_PRIMARY, timestamp);
+-            primary_tick = current_primary_tick;
+-        }
+-        if (external_vsync && current_external_tick != external_tick) {
+-            pdev->procs->vsync(pdev->procs, HWC_DISPLAY_EXTERNAL, timestamp);
+-            external_tick = current_external_tick;
+-        }
+-        ATRACE_END();
+-    }
+-
+-    return NULL;
++        next = primary.deadline(now, period);
++        if (external_vsync)
++            next = std::min(next, external.deadline(now, ext_period));
++        timespec deadline {next / 1000000000LL, next % 1000000000LL};
++        int result;
++        do {
++            result = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &deadline, nullptr);
++        } while (result == EINTR);
++        if (result != 0)
++            return nullptr;
++    }
+ }
+ 
+ static void
+@@ -668,13 +657,16 @@
+ 
+ static int hwc_get_display_configs(struct hwc_composer_device_1* dev,
+                                    int disp, uint32_t* configs, size_t* numConfigs) {
+-    if (*numConfigs == 0) {
+-        return 0;
+-    }
+-
++    auto *pdev = static_cast<waydroid_hwc_composer_device_1 *>(dev);
+     if (disp == HWC_DISPLAY_PRIMARY || is_external(dev, disp)) {
+-        configs[0] = 0;
+-        *numConfigs = 1;
++        size_t count = disp == HWC_DISPLAY_PRIMARY ?
++                1 + (1000000000LL - 1) / pdev->vsync_period_ns : 1;
++        if (configs) {
++            count = std::min(count, *numConfigs);
++            for (size_t i = 0; i < count; ++i)
++                configs[i] = i;
++        }
++        *numConfigs = count;
+         return 0;
+     }
+ 
+@@ -719,7 +711,7 @@
+ }
+ 
+ static int hwc_get_display_attributes(struct hwc_composer_device_1* dev,
+-                                      int disp, uint32_t config __unused,
++                                      int disp, uint32_t config,
+                                       const uint32_t* attributes, int32_t* values) {
+     auto *pdev = static_cast<waydroid_hwc_composer_device_1 *>(dev);
+     for (int i = 0; attributes[i] != HWC_DISPLAY_NO_ATTRIBUTE; i++) {
+@@ -743,6 +735,8 @@
+             }
+         } else if (disp == HWC_DISPLAY_PRIMARY) {
+             values[i] = hwc_attribute(pdev, attributes[i]);
++            if (attributes[i] == HWC_DISPLAY_VSYNC_PERIOD && config)
++                values[i] = 1000000000LL / config;
+             if (values[i] == -EINVAL) {
+                 return -EINVAL;
+             }
+@@ -756,15 +750,22 @@
+ }
+ 
+ static int hwc_get_active_config(struct hwc_composer_device_1* dev, int disp) {
+-    if (disp == HWC_DISPLAY_PRIMARY || is_external(dev, disp))
++    auto *pdev = static_cast<waydroid_hwc_composer_device_1 *>(dev);
++    if (disp == HWC_DISPLAY_PRIMARY)
++        return pdev->active_config.load();
++    return is_external(dev, disp) ? 0 : -EINVAL;
++}
++
++static int hwc_set_active_config(struct hwc_composer_device_1* dev, int disp, int index) {
++    auto *pdev = static_cast<waydroid_hwc_composer_device_1 *>(dev);
++    if (disp == HWC_DISPLAY_PRIMARY && index >= 0 &&
++            (index == 0 || int64_t(index) * pdev->vsync_period_ns < 1000000000LL)) {
++        pdev->active_period_ns = index ? 1000000000LL / index : pdev->vsync_period_ns;
++        pdev->active_config = index;
++        ALOGI("primary cadence period=%lld ns", (long long)pdev->active_period_ns.load());
+         return 0;
+-    return -EINVAL;
+-}
+-
+-static int hwc_set_active_config(struct hwc_composer_device_1* dev, int disp, int index) {
+-    if ((disp == HWC_DISPLAY_PRIMARY || is_external(dev, disp)) && index == 0)
+-        return 0;
+-    return -EINVAL;
++    }
++    return is_external(dev, disp) && index == 0 ? 0 : -EINVAL;
+ }
+ 
+ static int hwc_set_cursor_position_async(struct hwc_composer_device_1 *, int, int, int) {
+@@ -894,7 +895,7 @@
+     pdev->setPowerMode = hwc_set_power_move;
+     pdev->query = hwc_query;
+     pdev->registerProcs = hwc_register_procs;
+-    pdev->dump = nullptr;
++    pdev->dump = hwc_dump;
+     pdev->getDisplayConfigs = hwc_get_display_configs;
+     pdev->getDisplayAttributes = hwc_get_display_attributes;
+     pdev->getActiveConfig = hwc_get_active_config;
+@@ -987,7 +988,9 @@
+ 
+     pdev->vsync_callback_enabled = true;
+     if (pdev->display->refresh > 1000 && pdev->display->refresh < 1000000)
+-        pdev->vsync_period_ns = 1000 * 1000 * 1000 / (pdev->display->refresh / 1000);
++        pdev->vsync_period_ns = 1000000000000LL / pdev->display->refresh;
++    pdev->active_period_ns = pdev->vsync_period_ns;
++    property_set("waydroid.frame_limit_modes", "1");
+ 
+     struct timespec rt;
+     if (clock_gettime(CLOCK_MONOTONIC, &rt) == -1) {
+--- a/hwcomposer/hwcomposer.h
++++ b/hwcomposer/hwcomposer.h
+@@ -80,6 +80,9 @@
+ 
+     std::unique_ptr<waydroid_mode> selected_mode;
+ 
++    std::atomic<int> active_config {0};
++    std::atomic<int64_t> active_period_ns {1000000000 / 60};
++    std::atomic<uint64_t> primary_vsyncs {0}, external_vsyncs {0};
+     struct display *ext_display {};
+     std::unique_ptr<window> ext_window;
+     bool ext_hidden = false;

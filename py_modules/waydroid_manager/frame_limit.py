@@ -3,6 +3,7 @@ import re
 import subprocess
 from typing import Callable
 from .container import container_identity
+from .display_frame_limit import DisplayFrameLimiter
 
 
 class FrameLimiter:
@@ -14,6 +15,13 @@ class FrameLimiter:
         self.original: dict[int, float] = {}
         self.applied: dict[int, float] = {}
         self.sdk = None
+        self.display_modes = None
+        self.display_limiter = DisplayFrameLimiter(self.owned_android)
+
+    def owned_android(self, *command: str) -> str:
+        if self.identify() != self.guest:
+            raise RuntimeError("The Waydroid guest changed")
+        return self.android(*command)
 
     def android(self, *command: str) -> str:
         return self.run(["waydroid", "shell", "--", *command])
@@ -55,6 +63,12 @@ class FrameLimiter:
         return {int(uid): float(fps) for uid, fps in re.findall(r"uid:\s*(\d+)\s+frameRate:\s*([\d.]+)", section.group())}
 
     def restore(self) -> None:
+        if self.guest is not None and self.guest == self.identify():
+            try:
+                self.display_limiter.restore()
+            except (RuntimeError, subprocess.SubprocessError):
+                pass
+        self.display_limiter.clear()
         if self.applied and self.guest == self.identify():
             try:
                 current = self.overrides()
@@ -75,10 +89,8 @@ class FrameLimiter:
             self.launch = launch
             self.guest = guest
             self.sdk = None
+            self.display_modes = None
         if guest is None or fps is None:
-            return
-        if not fps:
-            self.restore()
             return
         if self.sdk is None:
             output = self.android("getprop", "ro.build.version.sdk")
@@ -88,6 +100,17 @@ class FrameLimiter:
             self.sdk = sdk
         if self.sdk != "33":
             raise RuntimeError(f"Android frame limiting has not been verified for SDK {self.sdk}")
+        if self.display_modes is not True:
+            supported = self.android("getprop", "waydroid.frame_limit_modes").strip() == "1"
+            if supported and self.applied:
+                self.restore()
+            self.display_modes = supported
+        if self.display_modes:
+            self.display_limiter.sync(fps)
+            return
+        if not fps:
+            self.restore()
+            return
         target = self.compatible_rate(fps)
         if target is None:
             return

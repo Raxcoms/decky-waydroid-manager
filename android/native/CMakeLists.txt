@@ -65,7 +65,7 @@ include("${generated}/protocols.cmake")
 file(GLOB composer_sources "${waydroid}/*.cpp" "${waydroid}/modes/*.cpp")
 add_library(hwcomposer.waydroid SHARED ${composer_sources} ${wayland_protocol_sources})
 set_target_properties(hwcomposer.waydroid PROPERTIES PREFIX "")
-target_include_directories(hwcomposer.waydroid PRIVATE "${waydroid}"
+target_include_directories(hwcomposer.waydroid PRIVATE "${waydroid}" "${CMAKE_CURRENT_SOURCE_DIR}"
     "${NATIVE_DEPS_DIR}/external/minigbm" "${NATIVE_DEPS_DIR}/external/libdrm/include/drm"
     "${NATIVE_DEPS_DIR}/external/libdrm/android")
 target_compile_definitions(hwcomposer.waydroid PRIVATE LOG_TAG="hwcomposer" EGL_EGLEXT_PROTOTYPES)

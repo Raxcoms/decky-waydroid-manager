@@ -1,0 +1,19 @@
+--- a/graphics/composer/2.1/utils/hwc2on1adapter/HWC2On1Adapter.cpp
++++ b/graphics/composer/2.1/utils/hwc2on1adapter/HWC2On1Adapter.cpp
+@@ -1141,11 +1141,12 @@
+ 
+     mConfigs.clear();
+ 
+-    const size_t MAX_NUM_CONFIGS = 128;
+-    uint32_t configs[MAX_NUM_CONFIGS] = {};
+-    size_t numConfigs = MAX_NUM_CONFIGS;
++    size_t numConfigs = 0;
+     mDevice.mHwc1Device->getDisplayConfigs(mDevice.mHwc1Device, mHwc1Id,
+-            configs, &numConfigs);
++            nullptr, &numConfigs);
++    std::vector<uint32_t> configs(numConfigs);
++    mDevice.mHwc1Device->getDisplayConfigs(mDevice.mHwc1Device, mHwc1Id,
++            configs.data(), &numConfigs);
+ 
+     for (size_t c = 0; c < numConfigs; ++c) {
+         uint32_t hwc1ConfigId = configs[c];
