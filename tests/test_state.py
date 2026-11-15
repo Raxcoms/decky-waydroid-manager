@@ -51,7 +51,12 @@ class StateStoreTests(unittest.TestCase):
             state = store.load()
             self.assertTrue(StateStore.second_screen_enabled(state))
             self.assertFalse(StateStore.second_screen_enabled(state, "example.app"))
+            self.assertFalse(StateStore.second_screen_enabled(state, "other.app"))
+
+            state["secondScreen"]["apps"]["other.app"] = True
+            state["secondScreen"]["container"] = False
             self.assertTrue(StateStore.second_screen_enabled(state, "other.app"))
+            self.assertFalse(StateStore.second_screen_enabled(state))
 
             store.account(state, 1)["autoAddApps"] = True
             store.save(state)

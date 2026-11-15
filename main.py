@@ -362,10 +362,10 @@ class Plugin:
         _, _, home = self._user()
         with self._edit_state(home) as state:
             settings = StateStore.second_screen(state)
-            if enabled == settings["container"]:
-                settings["apps"].pop(package, None)
-            else:
+            if enabled:
                 settings["apps"][package] = enabled
+            else:
+                settings["apps"].pop(package, None)
 
     def _pending_auto_shortcuts(self, account_id: int, live_ids: list[int] | None = None) -> list[dict[str, Any]]:
         if self._initialized() and container_pid() is not None:

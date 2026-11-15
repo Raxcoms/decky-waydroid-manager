@@ -56,7 +56,7 @@ class LaunchFeatureTests(unittest.IsolatedAsyncioTestCase):
         self.plugin.services.run.assert_not_called()
 
     async def test_missing_payload_does_not_stage_files(self):
-        self.state["secondScreen"]["container"] = True
+        self.state["secondScreen"]["apps"]["example.app"] = True
         with (patch.object(session, "container_pid", return_value=None),
               patch.object(session, "discover_external_display", return_value=Mock(socket=Path("external"))),
               patch.object(session, "inspect_vendor", return_value=Mock()),
@@ -66,7 +66,7 @@ class LaunchFeatureTests(unittest.IsolatedAsyncioTestCase):
         self.plugin.overlay.acquire.assert_not_called()
 
     async def test_runtime_staging_failure_does_not_enable_the_session(self):
-        self.state["secondScreen"]["container"] = True
+        self.state["secondScreen"]["apps"]["example.app"] = True
         self.plugin.control = Mock(host=self.launch)
         self.plugin.overlay.acquire.side_effect = RuntimeError("Could not stage config")
         with (patch.object(session, "container_pid", return_value=None),

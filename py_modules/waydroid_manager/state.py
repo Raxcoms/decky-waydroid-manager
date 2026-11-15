@@ -29,8 +29,8 @@ class StateStore:
     @staticmethod
     def second_screen_enabled(state: dict, package: str | None = None) -> bool:
         settings = StateStore.second_screen(state)
-        if package is not None and package in settings["apps"]:
-            return settings["apps"][package]
+        if package is not None:
+            return settings["apps"].get(package, False)
         return settings["container"]
 
     @staticmethod
