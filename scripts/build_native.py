@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -57,8 +58,13 @@ def patched_sources(profile: Path, cache: Path, work: Path) -> tuple[dict, Path]
         for entry in metadata.get("exportedHeaderPatches", []):
             patches = staging / "vendor/extra/waydroid-patches" / f"base-patches-{metadata['sdk']}" / entry["project"]
             for patch in sorted(patches.glob("*.patch")):
-                run("git", "apply", f"--include={entry['include']}", patch,
-                    cwd=staging / "vndk/include" / entry["project"])
+                sections = re.split(r"(?=^diff --git )", patch.read_text(), flags=re.MULTILINE)
+                header = entry["include"]
+                selected = "".join(section for section in sections
+                                   if section.startswith(f"diff --git a/{header} b/{header}\n"))
+                if selected:
+                    run("patch", "-d", staging / "vndk/include" / entry["project"], "-p1", "--batch", "--forward",
+                        input=selected, text=True)
         for patch in metadata["patches"]:
             run("patch", "-d", staging / patch["project"], "-p1", "--batch", "--forward", "-i", ROOT / patch["file"])
         staging.rename(source)
@@ -98,7 +104,7 @@ def build(profile: Path, cache: Path, directory: Path, output: Path, ndk: Path, 
         run(toolchains[0], "--strip-unneeded", "-o", target / name, native / name)
         files[name] = file_digest(target / name)
         validate(toolchains[0].with_name("llvm-nm"), target / name, source / "vndk" / metadata["vndkArch"],
-                 metadata.get("runtimeSymbols", []))
+                 metadata.get("runtimeSymbols", []), metadata.get("requiredRuntimeSymbols", {}).get(name, []))
     collect(source, target / "NOTICE.txt")
     manifest = {"schemaVersion": 2, "sdk": metadata["sdk"], "vndkVersion": metadata["vndkVersion"],
                 "abi": metadata["abi"], "elfMachine": metadata["elfMachine"], "recipeSha256": identity,

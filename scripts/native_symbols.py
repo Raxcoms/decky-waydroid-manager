@@ -11,8 +11,11 @@ def symbols(tool: Path, files: list[Path], option: str) -> set[str]:
             if len(fields := line.split()) >= 2 and len(fields[1]) == 1 and fields[1].isupper()}
 
 
-def validate(tool: Path, library: Path, sdk: Path, extensions: list[str]) -> None:
+def validate(tool: Path, library: Path, sdk: Path, extensions: list[str], required: list[str] = ()) -> None:
     exports = symbols(tool, sorted(sdk.glob("shared/**/*.so")), "--defined-only")
-    missing = symbols(tool, [library], "--undefined-only") - exports - set(extensions)
+    imports = symbols(tool, [library], "--undefined-only")
+    missing = imports - exports - set(extensions)
     if missing:
         raise RuntimeError("Native build uses undeclared runtime symbols: " + ", ".join(sorted(missing)))
+    if missing := set(required) - imports:
+        raise RuntimeError("Native build is missing required Waydroid ABI references: " + ", ".join(sorted(missing)))

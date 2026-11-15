@@ -14,3 +14,8 @@ class NativeSymbolTests(unittest.TestCase):
         with patch("native_symbols.symbols", side_effect=[{"standard"}, {"standard", "undeclared"}]):
             with self.assertRaisesRegex(RuntimeError, "undeclared"):
                 validate(Path("nm"), Path("composer.so"), Path("sdk"), ["waydroid"])
+
+    def test_missing_waydroid_binder_vtable_extension_is_rejected(self):
+        with patch("native_symbols.symbols", side_effect=[{"standard"}, {"standard"}]):
+            with self.assertRaisesRegex(RuntimeError, "missing required Waydroid"):
+                validate(Path("nm"), Path("composer.so"), Path("sdk"), ["waydroid"], ["waydroid"])

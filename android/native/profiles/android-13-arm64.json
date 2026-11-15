@@ -160,6 +160,9 @@
     {"project": "system/libhwbinder", "include": "include/hwbinder/IBinder.h"}
   ],
   "runtimeSymbols": ["_ZN7android8hardware7IBinder14isHostHwBinderEv"],
+  "requiredRuntimeSymbols": {
+    "hwcomposer.waydroid.so": ["_ZN7android8hardware7IBinder14isHostHwBinderEv"]
+  },
   "ffiArch": "aarch64",
   "ffiConfig": "arm64",
   "upstreamPatchProjects": [
