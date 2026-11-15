@@ -1,14 +1,100 @@
-diff --git a/graphics/composer/2.1/utils/hwc2on1adapter/HWC2On1Adapter.cpp b/graphics/composer/2.1/utils/hwc2on1adapter/HWC2On1Adapter.cpp
 --- a/graphics/composer/2.1/utils/hwc2on1adapter/HWC2On1Adapter.cpp
 +++ b/graphics/composer/2.1/utils/hwc2on1adapter/HWC2On1Adapter.cpp
-@@ -1272,7 +1272,9 @@ bool HWC2On1Adapter::Display::hasChanges() const {
+@@ -809,7 +809,7 @@
+     std::unique_lock<std::recursive_mutex> lock(mStateMutex);
+ 
+     if (mChanges) {
+-        Error error = mDevice.setAllDisplays();
++        Error error = mDevice.setDisplay(mHwc1Id);
+         if (error != Error::None) {
+             ALOGE("[%" PRIu64 "] present: setAllDisplaysFailed (%s)", mId,
+                     to_string(error).c_str());
+@@ -1305,7 +1305,7 @@
  Error HWC2On1Adapter::Display::set(hwc_display_contents_1& hwcContents) {
      std::unique_lock<std::recursive_mutex> lock(mStateMutex);
  
 -    if (!mChanges || (mChanges->getNumTypes() > 0)) {
-+    // SurfaceFlinger presents each display separately. The other display
-+    // keeps its previous target until it accepts its own type changes.
-+    if (!mChanges) {
++    if (!mChanges || mChanges->getNumTypes() > 0) {
          ALOGE("[%" PRIu64 "] set failed: not validated", mId);
          return Error::NotValidated;
      }
+@@ -2514,50 +2514,26 @@
+     ALOGV("-----------------------------");
+ }
+ 
+-Error HWC2On1Adapter::setAllDisplays() {
++Error HWC2On1Adapter::setDisplay(int32_t hwc1Id) {
+     ATRACE_CALL();
+-
+     std::unique_lock<std::recursive_timed_mutex> lock(mStateMutex);
+-
+-    // Make sure we're ready to validate
+-    for (size_t hwc1Id = 0; hwc1Id < mHwc1Contents.size(); ++hwc1Id) {
+-        if (mHwc1Contents[hwc1Id] == nullptr) {
+-            continue;
+-        }
+-
+-        auto displayId = mHwc1DisplayMap[hwc1Id];
+-        auto& display = mDisplays[displayId];
+-        Error error = display->set(*mHwc1Contents[hwc1Id]);
+-        if (error != Error::None) {
+-            ALOGE("setAllDisplays: Failed to set display %zd: %s", hwc1Id,
+-                    to_string(error).c_str());
+-            return error;
+-        }
+-    }
+-
+-    ALOGV("Calling HWC1 set");
+-    {
+-        ATRACE_NAME("HWC1 set");
+-        //dumpHWC1Message(mHwc1Device, mHwc1Contents.size(), mHwc1Contents.data());
+-        mHwc1Device->set(mHwc1Device, mHwc1Contents.size(),
+-                mHwc1Contents.data());
+-    }
+-
+-    // Add retire and release fences
+-    for (size_t hwc1Id = 0; hwc1Id < mHwc1Contents.size(); ++hwc1Id) {
+-        if (mHwc1Contents[hwc1Id] == nullptr) {
+-            continue;
+-        }
+-
+-        auto displayId = mHwc1DisplayMap[hwc1Id];
+-        auto& display = mDisplays[displayId];
+-        auto retireFenceFd = mHwc1Contents[hwc1Id]->retireFenceFd;
+-        ALOGV("setAllDisplays: Adding retire fence %d to display %zd",
+-                retireFenceFd, hwc1Id);
+-        display->addRetireFence(mHwc1Contents[hwc1Id]->retireFenceFd);
+-        display->addReleaseFences(*mHwc1Contents[hwc1Id]);
+-    }
+-
++    if (hwc1Id < 0 || size_t(hwc1Id) >= mHwc1Contents.size() || !mHwc1Contents[hwc1Id])
++        return Error::BadDisplay;
++
++    auto& display = mDisplays[mHwc1DisplayMap[hwc1Id]];
++    auto* contents = mHwc1Contents[hwc1Id];
++    Error error = display->set(*contents);
++    if (error != Error::None)
++        return error;
++
++    // Each HWC2 present submits only that display's new frame.
++    std::vector<hwc_display_contents_1_t*> pending(mHwc1Contents.size(), nullptr);
++    pending[hwc1Id] = contents;
++    int result = mHwc1Device->set(mHwc1Device, pending.size(), pending.data());
++    if (result != 0)
++        return Error::NoResources;
++    display->addRetireFence(contents->retireFenceFd);
++    display->addReleaseFences(*contents);
+     return Error::None;
+ }
+ 
+--- a/graphics/composer/2.1/utils/hwc2on1adapter/include/hwc2on1adapter/HWC2On1Adapter.h
++++ b/graphics/composer/2.1/utils/hwc2on1adapter/include/hwc2on1adapter/HWC2On1Adapter.h
+@@ -689,7 +689,7 @@
+ 
+     bool prepareAllDisplays();
+     std::vector<struct hwc_display_contents_1*> mHwc1Contents;
+-    HWC2::Error setAllDisplays();
++    HWC2::Error setDisplay(int32_t hwc1Id);
+ 
+     // Callbacks
+     void hwc1Invalidate();

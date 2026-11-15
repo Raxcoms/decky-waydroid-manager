@@ -191,6 +191,10 @@
       "file": "android/hwc/frame-submission.patch"
     },
     {
+      "project": "hardware/waydroid",
+      "file": "android/hwc/display-submission.patch"
+    },
+    {
       "project": "system/tools/hidl",
       "file": "android/native/host-tools.patch"
     }

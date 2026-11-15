@@ -30,24 +30,27 @@ Plugin shortcuts share one Android session. Close an ordinary Waydroid session
 started outside the plugin before launching through Steam.
 
 - Set the resolution in Steam's shortcut properties before launching. Android receives the selected display size when Steam exposes a single active game output. With an ambiguous multi-output layout, Android keeps the size reported by Gamescope. An in-game resolution setting still controls how the game renders.
-- Adjust the frame cap in Steam's Quick Access performance settings. The result depends on [the refresh mode Waydroid exposes to Android](#known-issue-with-frame-cap-precision).
+- Adjust the frame cap in Steam's Quick Access performance settings. See [frame limits](#frame-limits) for compatibility and display behavior.
 - Use Steam Input and direct touch where supported by your Game Mode session. On some Gamescope builds, mouse mode can deliver pointer input with no visible cursor.
 - Use Steam's performance overlay to monitor the launch. GPU usage requires a compatible driver and MangoHud.
 
-### Known issue with frame cap precision
+### Frame limits
 
-On the tested Android 13 image, Waydroid takes the Wayland refresh rate at startup and exposes a single Android display mode. The plugin reads that mode's refresh period. Android's frame override schedules app frames at whole multiples of that period. Most caps use the fastest compatible cadence at or below the requested value, with a small rounding allowance. A cap one FPS below the rounded native rate uses the native cadence to avoid halving it.
+With a compatible Android 13 composer build, Steam's frame limit controls Android's display cadence while the shortcut is running. Whole-number caps such as 14, 27 and 47 FPS do not need to divide the screen's native refresh rate. Changing the cap also covers Android's launcher, navigation and notification shade.
 
-| Steam cap | Android cadence measured on the Nova's 120 Hz mode |
-| --- | --- |
-| 17 FPS | About 17.15 FPS |
-| 27 FPS | About 24 FPS |
-| 100 FPS | About 60 FPS |
-| 119 FPS | About 120 FPS |
+The limiter works with second-screen support enabled or disabled. Each screen stays within its own native refresh rate. For a device with a 120 Hz primary screen and a 60 Hz second screen:
 
-Live mode switching is the remaining Waydroid work. Its display driver needs to update the virtual VSync period and notify Android of the mode change. A runtime Wayland output update alone leaves the current driver on its startup period. [Waydroid display driver](https://github.com/waydroid/android_hardware_waydroid/blob/lineage-20/hwcomposer/hwcomposer.cpp#L730-L742) · [Android display mode switching](https://source.android.com/docs/core/graphics/multiple-refresh-rate)
+| Steam cap | Primary cap | Second-screen cap |
+| --- | --- | --- |
+| 14 FPS | 14 FPS | 14 FPS |
+| 40 FPS | 40 FPS | 40 FPS |
+| 120 FPS | 120 FPS | 60 FPS |
 
-A future integration should let the Steam slider change actual Android rendering while the app and container stay running, with no extra composition or host configuration changes. Validate app buffer production and presentation separately at values such as 27 and 100 FPS, and on devices with different refresh modes.
+These are rendering limits, not a guarantee that an app will reach that frame rate. A fixed-refresh panel can still repeat frames unevenly when the cap does not divide its refresh rate. The plugin does not change the physical panel mode.
+
+The composer overlay and frame-limit policy are temporary. Closing the last plugin shortcut releases them. Ordinary Waydroid launches keep the installed display driver and saved Android settings.
+
+Without a compatible native build, the existing Android 13 per-app limiter remains available. That fallback only supports refresh-rate divisors and does not cap every Android UI surface. Other Android versions need a compatible native profile before display-wide limiting can be enabled.
 
 ## Use a second screen
 

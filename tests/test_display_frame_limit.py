@@ -5,7 +5,7 @@ from waydroid_manager.frame_limit import FrameLimiter
 
 
 def display_dump(active=3, native=144, display=967):
-    rates = {3: native, 12: 17, 29: 40, 51: 47, 88: 60}
+    rates = {3: native, 9: 14, 12: 17, 29: 40, 51: 47, 88: 60}
     return f'''Display {display} (internal, primary, "Primary display")
    activeModeId={active}
    displayModes=
@@ -44,6 +44,11 @@ class DisplayFrameLimitTests(unittest.TestCase):
         self.limiter.sync(47)
         self.assertEqual(self.writes, [(967, 51)])
         self.assertEqual(self.limit, "47")
+
+    def test_fourteen_fps_does_not_round_to_a_refresh_divisor(self):
+        self.limiter.sync(14)
+        self.assertEqual(self.writes, [(967, 9)])
+        self.assertEqual(self.limit, "14")
 
     def test_cap_clamps_to_native_and_disabling_restores_native(self):
         self.limiter.sync(17)

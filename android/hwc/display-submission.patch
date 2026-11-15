@@ -1,0 +1,17 @@
+--- a/hwcomposer/hwcomposer.cpp
++++ b/hwcomposer/hwcomposer.cpp
+@@ -553,7 +553,13 @@
+     }
+ 
+     hwc_display_contents_1_t* contents = displays[HWC_DISPLAY_PRIMARY];
+-    assert(contents);
++    if (!contents) {
++        sw_sync_timeline_inc(pdev->timeline_fd, 1);
++        ++pdev->next_sync_point;
++        if (ext)
++            ext->retireFenceFd = take_retire_fence(pdev, pdev->ext_display);
++        return 0;
++    }
+ 
+     purge_retired_buffers(pdev->display);
+     if (contents->flags & HWC_GEOMETRY_CHANGED) {
