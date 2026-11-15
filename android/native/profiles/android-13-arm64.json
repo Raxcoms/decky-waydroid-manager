@@ -187,6 +187,10 @@
       "file": "android/hwc/frame-rate-adapter.patch"
     },
     {
+      "project": "hardware/waydroid",
+      "file": "android/hwc/frame-submission.patch"
+    },
+    {
       "project": "system/tools/hidl",
       "file": "android/native/host-tools.patch"
     }
