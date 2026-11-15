@@ -14,11 +14,96 @@ permissions:
   contents: read
 
 jobs:
+  profiles:
+    runs-on: ubuntu-24.04
+    outputs:
+      profiles: ${{ steps.profiles.outputs.value }}
+      tools: ${{ steps.profiles.outputs.tools }}
+      caches: ${{ steps.profiles.outputs.caches }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: profiles
+        run: |
+          caches=$(python3 scripts/native_cache.py)
+          echo "caches=$caches" >> "$GITHUB_OUTPUT"
+          profiles=$(echo "$caches" | python3 -c 'import json,sys; print(json.dumps([p for p in json.load(sys.stdin) if "profile" in p]))')
+          echo "value=$profiles" >> "$GITHUB_OUTPUT"
+          tools=$(echo "$caches" | python3 -c 'import json,sys; print(json.dumps([p for p in json.load(sys.stdin) if "runner" in p]))')
+          echo "tools=$tools" >> "$GITHUB_OUTPUT"
+
   native:
-    uses: ./.github/workflows/native.yml
+    needs: profiles
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        profile: ${{ fromJSON(needs.profiles.outputs.profiles) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/cache/restore@v6
+        id: native-cache
+        with:
+          path: out/display-native
+          key: ${{ matrix.profile.key }}
+      - uses: android-actions/setup-android@v4
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        with:
+          accept-android-sdk-licenses: false
+          packages: ''
+      - name: Install native build tools
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        env:
+          PROFILE: ${{ matrix.profile.profile }}
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends cmake ninja-build bison flex libexpat1-dev android-libbase-dev libjsoncpp-dev libssl-dev
+          ndk=$(python3 -c 'import json,os,pathlib; print(json.loads((pathlib.Path("android/native/profiles")/(os.environ["PROFILE"]+".json")).read_text())["ndkVersion"])')
+          android --sdk="$ANDROID_HOME" sdk install "ndk/$ndk"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ndk" >> "$GITHUB_ENV"
+      - uses: actions/cache@v6
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/.cache/waydroid-manager-native/archives
+          key: native-sources-${{ runner.os }}-${{ hashFiles('android/native/profiles/*.json') }}
+      - name: Build native display libraries
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        env:
+          PROFILE: ${{ matrix.profile.profile }}
+        run: python3 scripts/build_native.py "android/native/profiles/$PROFILE.json" out/display-native
+      - uses: actions/cache/save@v6
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        with:
+          path: out/display-native
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
+
+  runtime-tools:
+    needs: profiles
+    strategy:
+      matrix:
+        tool: ${{ fromJSON(needs.profiles.outputs.tools) }}
+    runs-on: ${{ matrix.tool.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/cache/restore@v6
+        id: tools-cache
+        with:
+          path: out/display-tools
+          key: ${{ matrix.tool.key }}
+      - name: Package offline resource compiler
+        if: steps.tools-cache.outputs.cache-hit != 'true'
+        env:
+          MACHINE: ${{ matrix.tool.machine }}
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends aapt
+          python3 scripts/bundle_runtime_tools.py out/display-tools --machine "$MACHINE"
+      - uses: actions/cache/save@v6
+        if: steps.tools-cache.outputs.cache-hit != 'true'
+        with:
+          path: out/display-tools
+          key: ${{ steps.tools-cache.outputs.cache-primary-key }}
 
   build:
-    needs: native
+    needs: [profiles, native, runtime-tools]
     outputs:
       revision: ${{ steps.version.outputs.revision }}
       version: ${{ steps.version.outputs.version }}
@@ -81,7 +166,7 @@ jobs:
       - name: Restore internal native build outputs
         uses: actions/github-script@v8
         env:
-          NATIVE_CACHES: ${{ needs.native.outputs.caches }}
+          NATIVE_CACHES: ${{ needs.profiles.outputs.caches }}
         with:
           script: |
             const { pathToFileURL } = require('node:url');
