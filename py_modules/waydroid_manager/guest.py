@@ -130,18 +130,31 @@ class LaunchPolicy:
     def present(self, package: str | None, whole_display: bool = False) -> None:
         if self.saved is None or self.identify() != self.saved[0]:
             raise RuntimeError("WAYDROID_NOT_RUNNING")
+        intent = ["-a", "android.intent.action.MAIN", "-c", "android.intent.category.HOME"]
+        if package:
+            intent = self._app_intent(package)
         # Dual-display sessions present Android outputs, without depending on task-layer metadata.
         active = "Waydroid" if whole_display else package or "Waydroid"
         self.android("setprop", "waydroid.active_apps", active)
         self.android("settings", "put", "global", "policy_control", self.saved[2])
-        category = "android.intent.category.LAUNCHER" if package else "android.intent.category.HOME"
         command = ["am", "start", "--user", "current", "--display", DEFAULT_DISPLAY,
-                   "-a", "android.intent.action.MAIN", "-c", category]
-        if package:
-            command.extend(["-p", package, "--activity-reset-task-if-needed"])
+                   *intent]
         output = self.android(*command)
         if re.search(r"^Error:", output, re.MULTILINE):
             raise RuntimeError(output.strip())
+
+    def _app_intent(self, package: str) -> list[str]:
+        # Match Android's package launcher, including activities without CATEGORY_DEFAULT.
+        component_pattern = re.compile(re.escape(package) + r"/[A-Za-z0-9_.$]+")
+        for category in ("android.intent.category.INFO", "android.intent.category.LAUNCHER"):
+            intent = ["-a", "android.intent.action.MAIN", "-c", category]
+            output = self.android("cmd", "package", "query-activities", "--components", "--user", "current",
+                                  *intent, "-p", package)
+            component = next((line.strip() for line in output.splitlines()
+                              if component_pattern.fullmatch(line.strip())), None)
+            if component:
+                return [*intent, "-n", component, "--activity-reset-task-if-needed"]
+        raise RuntimeError(f"Android has no launch activity for {package}")
 
 
 def run_dex(run, helper: Path, identify, identity, main_class: str, *args: str, uid: str | None = None) -> str:

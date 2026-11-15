@@ -68,12 +68,17 @@ class LaunchPolicyTests(unittest.TestCase):
         self.guest = (100, "boot")
         self.value = None
         self.writes = []
+        self.activities = {"android.intent.category.LAUNCHER": ["example.app/.MainActivity"]}
+        self.queries = []
         self.policy = LaunchPolicy(self.run_android, lambda: self.guest)
 
     def run_android(self, command, **kwargs):
         args = command[3:]
         if args[0] == "getprop":
             return ""
+        if args[:3] == ["cmd", "package", "query-activities"]:
+            self.queries.append(args)
+            return "\n".join(self.activities.get(args[-3], []))
         if args == ["settings", "list", "global"]:
             return "" if self.value is None else f"policy_control={self.value}"
         self.writes.append(args)
@@ -118,7 +123,7 @@ class LaunchPolicyTests(unittest.TestCase):
         self.assertEqual(self.writes[0], ["setprop", "waydroid.active_apps", "example.app"])
         self.assertEqual(self.writes[1][-1], "immersive.status=*")
         self.assertEqual(self.writes[2][1:7], ["start", "--user", "current", "--display", "0", "-a"])
-        self.assertEqual(self.writes[2][-3:], ["-p", "example.app", "--activity-reset-task-if-needed"])
+        self.assertEqual(self.writes[2][-3:], ["-n", "example.app/.MainActivity", "--activity-reset-task-if-needed"])
 
     def test_launch_is_rejected_if_the_guest_has_changed(self):
         self.policy.save("app")
@@ -131,4 +136,28 @@ class LaunchPolicyTests(unittest.TestCase):
         self.policy.save("app")
         self.policy.present("example.app", whole_display=True)
         self.assertEqual(self.writes[0], ["setprop", "waydroid.active_apps", "Waydroid"])
-        self.assertEqual(self.writes[-1][-3:], ["-p", "example.app", "--activity-reset-task-if-needed"])
+        self.assertEqual(self.writes[-1][-3:], ["-n", "example.app/.MainActivity", "--activity-reset-task-if-needed"])
+
+    def test_non_default_launcher_activity_is_resolved_before_explicit_launch(self):
+        self.activities = {"android.intent.category.LAUNCHER": ["example.app/.SplashActivity"]}
+        self.policy.save("app")
+        self.policy.present("example.app")
+        self.assertEqual([query[-3] for query in self.queries],
+                         ["android.intent.category.INFO", "android.intent.category.LAUNCHER"])
+        self.assertIn("--components", self.queries[-1])
+        self.assertEqual(self.writes[-1][-3:], ["-n", "example.app/.SplashActivity", "--activity-reset-task-if-needed"])
+
+    def test_info_activity_takes_precedence_over_launcher(self):
+        self.activities["android.intent.category.INFO"] = ["example.app/.InfoActivity"]
+        self.policy.save("app")
+        self.policy.present("example.app")
+        self.assertEqual(len(self.queries), 1)
+        self.assertIn("example.app/.InfoActivity", self.writes[-1])
+        self.assertIn("android.intent.category.INFO", self.writes[-1])
+
+    def test_missing_or_foreign_activity_does_not_change_presentation(self):
+        self.activities = {"android.intent.category.LAUNCHER": ["other.package/.Activity", "No activities found"]}
+        self.policy.save("app")
+        with self.assertRaisesRegex(RuntimeError, "no launch activity"):
+            self.policy.present("example.app")
+        self.assertEqual(self.writes, [])
