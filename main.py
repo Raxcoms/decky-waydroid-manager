@@ -17,6 +17,7 @@ from typing import Any, Callable
 import decky
 from waydroid_manager.apps import PACKAGE_RE, app_exports
 from waydroid_manager.frame_limit import FrameLimiter
+from waydroid_manager.icon_cache import IconCache, source_digest
 from waydroid_manager.proc import clean_env, process_identity, steam_session, steam_wayland_socket
 from waydroid_manager.artwork import ARTWORK_TYPES, ARTWORK_VERSION, artwork_attached, artwork_filename, artwork_updates, prune_artwork
 from waydroid_manager.metrics import GpuMetrics
@@ -503,11 +504,44 @@ class Plugin:
         except RuntimeError:
             return []
         records = self._load_state(home)["artwork"]
-        return [{"key": key, "appId": app_id} for key, app_id in self._shortcut_ids(home, account_id).items()
-                if any(artwork_updates(home, grid, app_id, records))]
+        updates = {key: app_id for key, app_id in self._shortcut_ids(home, account_id).items()
+                   if any(artwork_updates(home, grid, app_id, records))}
+        if container_identity():
+            apps = {app["package"]: app for app in self._desktop_entries(include_icons=True)}
+            cache = IconCache(home)
+            for key, app_id in self._shortcut_ids(home, account_id).items():
+                app = apps.get(key)
+                if (app and not cache.get(key, source_digest(app["icon"]))
+                        and any(artwork_updates(home, grid, app_id, records, ARTWORK_VERSION + 1))):
+                    updates[key] = app_id
+        return [{"key": key, "appId": app_id} for key, app_id in updates.items()]
 
     async def pending_shortcut_artwork(self, account_id: int) -> list[dict[str, Any]]:
         return await asyncio.to_thread(self._pending_shortcut_artwork, account_id)
+
+    def _artwork_icon(self, home: Path, package: str, fallback: str) -> tuple[str, bool]:
+        source = source_digest(fallback)
+        cached = IconCache(home).get(package, source)
+        if cached:
+            return cached, False
+        identity = container_identity()
+        if not identity:
+            return fallback, False
+        try:
+            user = self._run(["waydroid", "shell", "--", "cmd", "activity", "get-current-user"]).strip()
+            if not user.isdecimal():
+                return fallback, False
+            helper = Path(decky.DECKY_PLUGIN_DIR) / "bin/waydroid-verifier.dex"
+            output = run_dex(self._run, helper, container_identity, identity,
+                             "waydroid.manager.ExportIcon", package, user)
+            encoded = next(line.removeprefix("ICON_PNG:") for line in output.splitlines() if line.startswith("ICON_PNG:"))
+            content = base64.b64decode(encoded, validate=True)
+            IconCache.validate(content)
+            self._user_files(home, "cache-icon", package, source, payload=content)
+            return "data:image/png;base64," + encoded, True
+        except (OSError, RuntimeError, ValueError, StopIteration, subprocess.SubprocessError) as error:
+            decky.logger.warning("Could not export the launcher icon for %s: %s", package, error)
+            return fallback, False
 
     def _shortcut_artwork(self, account_id: int, key: str, app_id: int) -> dict[str, Any]:
         self._validate_shortcut_key(key)
@@ -519,11 +553,14 @@ class Plugin:
             raise RuntimeError("The Steam artwork directory is outside the user home")
         roles, clear_logo = artwork_updates(home, grid, app_id, self._load_state(home)["artwork"])
         app = next(iter(self._desktop_entries(package=key, include_icons=True)), None) if key != WAYDROID_SHORTCUT_KEY else None
+        icon, upgraded = self._artwork_icon(home, key, app["icon"]) if app else ("", False)
+        if upgraded:
+            roles, clear_logo = artwork_updates(home, grid, app_id, self._load_state(home)["artwork"], ARTWORK_VERSION + 1)
         available = app is not None or key == WAYDROID_SHORTCUT_KEY
         return {
             "roles": roles if available else [], "clearLogo": clear_logo,
             "ready": available and not roles and artwork_attached(grid, app_id),
-            "name": app["name"] if app else "Waydroid", "icon": app["icon"] if app else "",
+            "name": app["name"] if app else "Waydroid", "icon": icon,
         }
 
     async def get_shortcut_artwork(self, account_id: int, key: str, app_id: int) -> dict[str, Any]:
