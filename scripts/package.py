@@ -28,8 +28,9 @@ def package(output: Path, revision: str | None = None, native: Path | None = Non
         shutil.copytree(native, target / "bin/display-native")
     if runtime_tools is not None:
         shutil.copytree(runtime_tools, target / "bin/display-tools")
-        for compiler in (target / "bin/display-tools").glob("*/aapt2"):
-            compiler.chmod(0o755)
+        for name in ("aapt2", "home-mount"):
+            for helper in (target / "bin/display-tools").glob(f"*/{name}"):
+                helper.chmod(0o755)
     resources = target / "resources/display"
     resources.mkdir(parents=True)
     for source, name in (("overlay", "framework"), ("navigation-overlay", "navigation")):

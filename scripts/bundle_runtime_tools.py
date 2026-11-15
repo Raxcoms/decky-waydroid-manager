@@ -50,6 +50,9 @@ def bundle(output: Path, expected_machine: int | None = None) -> Path:
             raise RuntimeError(f"Missing runtime compiler copyright: {package}")
         notices.append(package + "\n\n" + copyright.read_text())
     (target / "NOTICE.txt").write_text("\n\n".join(notices))
+    source = Path(__file__).resolve().parents[1] / "native/host/home-mount.c"
+    subprocess.run(["cc", "-O2", "-Wall", "-Wextra", "-Werror", str(source), "-o", str(target / "home-mount")],
+                   check=True)
     files = {path.relative_to(target).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
              for path in sorted(target.rglob("*")) if path.is_file()}
     (target / "manifest.json").write_text(json.dumps({"schemaVersion": 1, "elfMachine": machine, "files": files}, indent=2) + "\n")

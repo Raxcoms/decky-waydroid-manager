@@ -12,7 +12,7 @@ def entries() -> list[dict]:
                "key": f"display-native-Linux-{path.stem}-{recipe_digest(path)}"}
               for path in sorted((ROOT / "android/native/profiles").glob("*.json"))]
     digest = hashlib.sha256()
-    for name in ("scripts/bundle_runtime_tools.py", "android/native/runtime-tools.json"):
+    for name in ("scripts/bundle_runtime_tools.py", "android/native/runtime-tools.json", "native/host/home-mount.c"):
         digest.update((ROOT / name).read_bytes())
     tools = [{**tool, "path": "out/display-tools",
               "key": f"display-tools-{tool['runner']}-{digest.hexdigest()}"}
