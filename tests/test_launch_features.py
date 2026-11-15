@@ -107,3 +107,18 @@ class LaunchFeatureTests(unittest.IsolatedAsyncioTestCase):
             await self.plugin.present(self.launch, "app")
         self.assertEqual(self.plugin.display_users, {self.launch.process})
         self.plugin.policy.save.assert_called_once_with("app")
+
+    async def test_dual_display_session_presents_the_app_as_a_complete_output(self):
+        self.plugin.requests[self.launch.process] = True
+        self.plugin.capable = True
+        self.plugin.policy = Mock()
+        with patch.object(session, "session_uses_socket", return_value=True):
+            await self.plugin.show(self.launch)
+        self.plugin.policy.present.assert_called_once_with("example.app", whole_display=True)
+
+    async def test_departed_launch_cannot_change_the_presentation(self):
+        self.plugin.policy = Mock()
+        with patch.object(session, "session_uses_socket", return_value=True):
+            with self.assertRaisesRegex(RuntimeError, "no longer active"):
+                await self.plugin.show(self.launch)
+        self.plugin.policy.present.assert_not_called()

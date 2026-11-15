@@ -126,3 +126,9 @@ class LaunchPolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "NOT_RUNNING"):
             self.policy.present("example.app")
         self.assertEqual(self.writes, [])
+
+    def test_dual_display_app_renders_both_outputs_without_task_metadata(self):
+        self.policy.save("app")
+        self.policy.present("example.app", whole_display=True)
+        self.assertEqual(self.writes[0], ["setprop", "waydroid.active_apps", "Waydroid"])
+        self.assertEqual(self.writes[-1][-3:], ["-p", "example.app", "--activity-reset-task-if-needed"])

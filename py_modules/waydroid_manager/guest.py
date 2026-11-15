@@ -127,10 +127,12 @@ class LaunchPolicy:
                 self.android("settings", "put", "global", "policy_control", previous)
         self.saved = None
 
-    def present(self, package: str | None) -> None:
+    def present(self, package: str | None, whole_display: bool = False) -> None:
         if self.saved is None or self.identify() != self.saved[0]:
             raise RuntimeError("WAYDROID_NOT_RUNNING")
-        self.android("setprop", "waydroid.active_apps", package or "Waydroid")
+        # Dual-display sessions present Android outputs, without depending on task-layer metadata.
+        active = "Waydroid" if whole_display else package or "Waydroid"
+        self.android("setprop", "waydroid.active_apps", active)
         self.android("settings", "put", "global", "policy_control", self.saved[2])
         category = "android.intent.category.LAUNCHER" if package else "android.intent.category.HOME"
         command = ["am", "start", "--user", "current", "--display", DEFAULT_DISPLAY,

@@ -126,7 +126,7 @@ class LaunchSession:
         async with self.lock:
             if not session_uses_socket(launch.display) or launch.process not in self.requests:
                 raise RuntimeError("Waydroid launch is no longer active")
-            await asyncio.to_thread(self.policy.present, launch.request.package)
+            await asyncio.to_thread(self.policy.present, launch.request.package, whole_display=self.capable is True)
 
     async def release(self, launch: Launch) -> None:
         async with self.lock:
