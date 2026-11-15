@@ -53,7 +53,7 @@ class LaunchSession:
                 return
             await self.services.ensure_service()
             capable = False
-            if enabled or self.payloads.is_dir():
+            if enabled or self.payloads.is_dir() or self.payloads.with_name("display-native").is_dir():
                 if container_pid() is not None:
                     if enabled:
                         raise RuntimeError("Close the running Waydroid session before enabling its second screen")
@@ -61,21 +61,30 @@ class LaunchSession:
                     try:
                         _, uid, _ = self.services.user()
                         external = discover_external_display(uid, primary=steam_wayland_socket(uid))
-                        if external is None:
+                        if external is None and enabled:
                             raise RuntimeError("The host has no available external Wayland display")
                         identity = await asyncio.to_thread(inspect_vendor, self.config, self.services.run)
-                        files = select_payload(self.payloads, identity)
+                        files = {}
+                        if external is not None:
+                            try:
+                                files = select_payload(self.payloads, identity)
+                            except RuntimeError:
+                                if enabled:
+                                    raise
+                                external = None
                         native = select_native(self.payloads.with_name("display-native"), identity.sdk,
                                                identity.vndk, identity.machine)
-                        if "external-presentation" not in native.capabilities:
+                        if external is not None and "external-presentation" not in native.capabilities:
                             raise RuntimeError("The native display build does not support deferred presentation")
                         files[f"vendor/{HWC_PATH}"] = native.root / "hwcomposer.waydroid.so"
                         files["vendor/lib64/libhwc2on1adapter.so"] = native.root / "libhwc2on1adapter.so"
                         host = self.control.host if self.control else None
                         if host is None:
                             raise RuntimeError("The shared Waydroid relay is not registered")
-                        external_relay = host.display.parent / "external"
-                        self.control.identify_launch(host.process[0], external_relay)
+                        external_relay = None
+                        if external is not None:
+                            external_relay = host.display.parent / "external"
+                            self.control.identify_launch(host.process[0], external_relay)
                     except (OSError, RuntimeError, subprocess.SubprocessError) as error:
                         if enabled:
                             raise
@@ -83,7 +92,7 @@ class LaunchSession:
                     else:
                         await asyncio.to_thread(self.overlay.acquire, files, external_relay,
                                                 self.services.run, launch.display)
-                        capable = True
+                        capable = external_relay is not None
             self.capable = capable
             self.requests[launch.process] = enabled
 

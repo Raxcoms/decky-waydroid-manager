@@ -53,7 +53,7 @@ class RuntimeDisplayLease:
         return subprocess.check_output(["/usr/bin/python3", "-I", str(Path(__file__).with_name("display_settings.py")),
                                         str(existing)], env=clean_env(), timeout=5)
 
-    def acquire(self, files: dict[str, Path], external: Path, run, display: Path) -> None:
+    def acquire(self, files: dict[str, Path], external: Path | None, run, display: Path) -> None:
         from .session_config import SessionConfigLease
 
         if self.root.exists():
@@ -81,7 +81,7 @@ class RuntimeDisplayLease:
             base = configs.base_properties.read_bytes()
             if b"waydroid.wayland_display_ext=" in base:
                 raise RuntimeError("Waydroid's external display property is already configured")
-            contents = {
+            contents = {} if external is None else {
                 configs.config: configs.config.read_bytes().rstrip(b"\n") + b"\n"
                     + configs._fragment_config(external),
                 configs.settings: configs._property_config(configs.settings.read_bytes()),
@@ -98,15 +98,7 @@ class RuntimeDisplayLease:
             targets = [installed_overlay, *contents]
             mounts = [{"target": str(target), "previous": self._mount_id(target)} for target in targets]
             self._save(mounts)
-            guard = self.root / "guard.py"
-            shutil.copyfile(Path(__file__), guard)
-            backend = os.getpid()
-            identity = Path(f"/proc/{backend}/stat").read_text().rsplit(")", 1)[1].split()[19]
-            unit = f"waydroid-manager-display-guard-{backend}-{time.monotonic_ns()}"
-            run(["systemd-run", "--quiet", "--collect", f"--unit={unit}",
-                 "--property=Restart=on-failure", "--property=RestartSec=1s", "--property=StartLimitIntervalSec=0",
-                 "/usr/bin/python3", "-I", str(guard), str(self.config_dir), str(self.root),
-                 str(backend), identity, str(display)], timeout=10)
+            self.start_guard(run, display)
             run(["mount", "-t", "overlay", "overlay", "-o",
                  f"ro,lowerdir={overlay}:{installed_overlay}", str(installed_overlay)], timeout=10)
             for index, target in enumerate(contents):
@@ -114,6 +106,19 @@ class RuntimeDisplayLease:
         except Exception:
             self.recover()
             raise
+
+    def start_guard(self, run, display: Path) -> None:
+        if not self.manifest.exists():
+            self._save([])
+        guard = self.root / "guard.py"
+        shutil.copyfile(Path(__file__), guard)
+        backend = os.getpid()
+        identity = Path(f"/proc/{backend}/stat").read_text().rsplit(")", 1)[1].split()[19]
+        unit = f"waydroid-manager-session-guard-{backend}-{time.monotonic_ns()}"
+        run(["systemd-run", "--quiet", "--collect", f"--unit={unit}",
+             "--property=Restart=on-failure", "--property=RestartSec=1s", "--property=StartLimitIntervalSec=0",
+             "/usr/bin/python3", "-I", str(guard), str(self.config_dir), str(self.root),
+             str(backend), identity, str(display)], timeout=10)
 
     def recover(self) -> None:
         if not self.root.exists():

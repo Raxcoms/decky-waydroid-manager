@@ -25,6 +25,23 @@ class LaunchFeatureTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.plugin.capable)
         self.plugin.overlay.acquire.assert_not_called()
 
+    async def test_native_limiter_can_stage_without_an_external_display(self):
+        self.plugin.control = Mock(host=self.launch)
+        native = Mock(root=Path("native"), capabilities={"display-frame-limit"})
+        with (patch.object(Path, "is_dir", return_value=True),
+              patch.object(session, "container_pid", return_value=None),
+              patch.object(session, "discover_external_display", return_value=None),
+              patch.object(session, "inspect_vendor", return_value=Mock()),
+              patch.object(session, "select_native", return_value=native),
+              patch.object(session, "select_payload") as resource_overlay):
+            await self.plugin.start(self.launch, True)
+        resource_overlay.assert_not_called()
+        self.assertFalse(self.plugin.capable)
+        self.assertIsNone(self.plugin.overlay.acquire.call_args.args[1])
+        self.assertEqual(set(self.plugin.overlay.acquire.call_args.args[0]),
+                         {f"vendor/{session.HWC_PATH}", "vendor/lib64/libhwc2on1adapter.so"})
+        self.plugin.control.identify_launch.assert_not_called()
+
     async def test_join_with_different_settings_leaves_session_untouched(self):
         self.plugin.capable = False
         self.state["secondScreen"]["apps"]["example.app"] = True
