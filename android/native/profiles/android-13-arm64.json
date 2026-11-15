@@ -156,6 +156,10 @@
   "elfMachine": 183,
   "vndkVersion": "33",
   "capabilities": ["external-presentation"],
+  "exportedHeaderPatches": [
+    {"project": "system/libhwbinder", "include": "include/hwbinder/IBinder.h"}
+  ],
+  "runtimeSymbols": ["_ZN7android8hardware7IBinder14isHostHwBinderEv"],
   "ffiArch": "aarch64",
   "ffiConfig": "arm64",
   "upstreamPatchProjects": [

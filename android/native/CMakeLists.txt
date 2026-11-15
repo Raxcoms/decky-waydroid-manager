@@ -70,7 +70,7 @@ target_include_directories(hwcomposer.waydroid PRIVATE "${waydroid}"
     "${NATIVE_DEPS_DIR}/external/libdrm/android")
 target_compile_definitions(hwcomposer.waydroid PRIVATE LOG_TAG="hwcomposer" EGL_EGLEXT_PROTOTYPES)
 target_link_libraries(hwcomposer.waydroid PRIVATE android_platform waydroid_interfaces wayland_client xkbcommon sync_client)
-target_link_options(hwcomposer.waydroid PRIVATE -Wl,--no-undefined -Wl,--exclude-libs,ALL)
+target_link_options(hwcomposer.waydroid PRIVATE -Wl,--exclude-libs,ALL)
 
 set(adapter "${NATIVE_DEPS_DIR}/hardware/interfaces/graphics/composer/2.1/utils/hwc2on1adapter")
 add_library(hwc2on1adapter SHARED "${adapter}/HWC2On1Adapter.cpp" "${adapter}/MiniFence.cpp")

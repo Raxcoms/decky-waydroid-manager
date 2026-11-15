@@ -12,6 +12,7 @@ import tempfile
 from display_notices import collect
 from native_dependencies import file_digest, prepare
 from native_headers import generate
+from native_symbols import validate
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,7 +27,7 @@ def recipe_digest(profile: Path) -> str:
     metadata = json.loads(profile.read_text())
     paths = [*sorted((ROOT / "android/native").rglob("CMakeLists.txt")),
              *(ROOT / "scripts" / name for name in
-               ("build_native.py", "native_dependencies.py", "native_headers.py", "display_notices.py")),
+               ("build_native.py", "native_dependencies.py", "native_headers.py", "native_symbols.py", "display_notices.py")),
              *(ROOT / patch["file"] for patch in metadata["patches"])]
     for path in paths:
         checksum.update(path.read_bytes())
@@ -52,6 +53,12 @@ def patched_sources(profile: Path, cache: Path, work: Path) -> tuple[dict, Path]
             patches = staging / "vendor/extra/waydroid-patches" / f"base-patches-{metadata['sdk']}" / project
             for patch in sorted(patches.glob("*.patch")):
                 run("patch", "-d", staging / project, "-p1", "--batch", "--forward", "-i", patch)
+        # Waydroid extends Binder's vtable beyond the standard VNDK snapshot.
+        for entry in metadata.get("exportedHeaderPatches", []):
+            patches = staging / "vendor/extra/waydroid-patches" / f"base-patches-{metadata['sdk']}" / entry["project"]
+            for patch in sorted(patches.glob("*.patch")):
+                run("git", "apply", f"--include={entry['include']}", patch,
+                    cwd=staging / "vndk/include" / entry["project"])
         for patch in metadata["patches"]:
             run("patch", "-d", staging / patch["project"], "-p1", "--batch", "--forward", "-i", ROOT / patch["file"])
         staging.rename(source)
@@ -73,9 +80,11 @@ def build(profile: Path, cache: Path, directory: Path, output: Path, ndk: Path, 
         f"-DNATIVE_DEPS_DIR={source}", "-DCMAKE_BUILD_TYPE=Release")
     run("cmake", "--build", host, "--parallel", jobs)
     generate(source, native / "generated", host / "hidl-gen")
+    # Waydroid's extra runtime symbols are checked against the profile after linking.
     run("cmake", "-S", ROOT / "android/native", "-B", native, "-G", "Ninja",
         f"-DCMAKE_TOOLCHAIN_FILE={ndk.resolve() / 'build/cmake/android.toolchain.cmake'}",
         f"-DANDROID_ABI={metadata['abi']}", f"-DANDROID_PLATFORM=android-{metadata['sdk']}", "-DANDROID_STL=none",
+        "-DANDROID_ALLOW_UNDEFINED_SYMBOLS=TRUE",
         f"-DNATIVE_DEPS_DIR={source}", f"-DVNDK_ARCH={metadata['vndkArch']}",
         f"-DFFI_ARCH={metadata['ffiArch']}", f"-DFFI_CONFIG={metadata['ffiConfig']}", "-DCMAKE_BUILD_TYPE=Release")
     run("cmake", "--build", native, "--parallel", jobs)
@@ -88,11 +97,13 @@ def build(profile: Path, cache: Path, directory: Path, output: Path, ndk: Path, 
     for name in ("hwcomposer.waydroid.so", "libhwc2on1adapter.so"):
         run(toolchains[0], "--strip-unneeded", "-o", target / name, native / name)
         files[name] = file_digest(target / name)
+        validate(toolchains[0].with_name("llvm-nm"), target / name, source / "vndk" / metadata["vndkArch"],
+                 metadata.get("runtimeSymbols", []))
     collect(source, target / "NOTICE.txt")
     manifest = {"schemaVersion": 2, "sdk": metadata["sdk"], "vndkVersion": metadata["vndkVersion"],
                 "abi": metadata["abi"], "elfMachine": metadata["elfMachine"], "recipeSha256": identity,
                 "files": files, "dependencies": metadata["dependencies"],
-                "capabilities": metadata.get("capabilities", [])}
+                "capabilities": metadata.get("capabilities", []), "runtimeSymbols": metadata.get("runtimeSymbols", [])}
     (target / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
     return target
 
