@@ -108,6 +108,19 @@ class LaunchFeatureTests(unittest.IsolatedAsyncioTestCase):
         self.plugin.overlay.recover.assert_called_once()
         self.assertIsNone(self.plugin.capable)
 
+    async def test_session_unit_disappearing_during_stop_still_releases_relay(self):
+        def run_user(args, **kwargs):
+            if args[2:5] == ["stop", "--no-block", self.launch.unit]:
+                raise RuntimeError("Unit not loaded")
+
+        self.services.run_user.side_effect = run_user
+        with (patch.object(session, "session_uses_socket", return_value=False),
+              patch.object(session, "container_pid", return_value=None)):
+            await self.plugin.release(self.launch)
+        calls = [call.args[0] for call in self.services.run_user.call_args_list]
+        self.assertIn(["systemctl", "--user", "stop", "--no-block", "waydroid-manager-shared-relay"], calls)
+        self.plugin.overlay.recover.assert_called_once()
+
     async def test_failed_display_connection_rolls_back_without_recording_a_lease(self):
         self.plugin.requests[self.launch.process] = True
         self.services.run.return_value = ""

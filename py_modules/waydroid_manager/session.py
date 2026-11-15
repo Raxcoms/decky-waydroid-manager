@@ -190,7 +190,10 @@ class LaunchSession:
                         self.services.run_user(["systemctl", "--user", "is-active", "--quiet", unit], timeout=5)
                     except RuntimeError:
                         continue
-                    self.services.run_user(["systemctl", "--user", "stop", "--no-block", unit], timeout=5)
+                    try:
+                        self.services.run_user(["systemctl", "--user", "stop", "--no-block", unit], timeout=5)
+                    except RuntimeError as error:
+                        self.services.logger.warning("Could not stop %s: %s", unit, error)
             finally:
                 deadline = time.monotonic() + 15
                 while container_pid() is not None and time.monotonic() < deadline:
