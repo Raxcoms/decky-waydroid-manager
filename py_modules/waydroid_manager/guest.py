@@ -12,6 +12,8 @@ from .proc import clean_env, process_identity
 
 
 GUEST_STARTING = "WAYDROID_GUEST_STARTING"
+# Android reserves display 0 for its default display on every device.
+DEFAULT_DISPLAY = "0"
 
 
 def attach_command(*args: str) -> list[str]:
@@ -124,6 +126,20 @@ class LaunchPolicy:
             else:
                 self.android("settings", "put", "global", "policy_control", previous)
         self.saved = None
+
+    def present(self, package: str | None) -> None:
+        if self.saved is None or self.identify() != self.saved[0]:
+            raise RuntimeError("WAYDROID_NOT_RUNNING")
+        self.android("setprop", "waydroid.active_apps", package or "Waydroid")
+        self.android("settings", "put", "global", "policy_control", self.saved[2])
+        category = "android.intent.category.LAUNCHER" if package else "android.intent.category.HOME"
+        command = ["am", "start", "--user", "current", "--display", DEFAULT_DISPLAY,
+                   "-a", "android.intent.action.MAIN", "-c", category]
+        if package:
+            command.extend(["-p", package, "--activity-reset-task-if-needed"])
+        output = self.android(*command)
+        if re.search(r"^Error:", output, re.MULTILINE):
+            raise RuntimeError(output.strip())
 
 
 def run_dex(run, helper: Path, identify, identity, main_class: str, *args: str, uid: str | None = None) -> str:

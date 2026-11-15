@@ -101,3 +101,28 @@ class LaunchPolicyTests(unittest.TestCase):
         self.guest = (100, "new-boot")
         self.policy.restore()
         self.assertEqual(self.writes, [])
+
+    def test_full_launch_targets_primary_without_expanding_notifications(self):
+        self.policy.save("full")
+        self.policy.present(None)
+        self.assertEqual(self.writes, [
+            ["setprop", "waydroid.active_apps", "Waydroid"],
+            ["settings", "put", "global", "policy_control", "null*"],
+            ["am", "start", "--user", "current", "--display", "0", "-a", "android.intent.action.MAIN",
+             "-c", "android.intent.category.HOME"],
+        ])
+
+    def test_app_launch_targets_primary_and_preserves_immersive_policy(self):
+        self.policy.save("app")
+        self.policy.present("example.app")
+        self.assertEqual(self.writes[0], ["setprop", "waydroid.active_apps", "example.app"])
+        self.assertEqual(self.writes[1][-1], "immersive.status=*")
+        self.assertEqual(self.writes[2][1:7], ["start", "--user", "current", "--display", "0", "-a"])
+        self.assertEqual(self.writes[2][-3:], ["-p", "example.app", "--activity-reset-task-if-needed"])
+
+    def test_launch_is_rejected_if_the_guest_has_changed(self):
+        self.policy.save("app")
+        self.guest = (200, "new-boot")
+        with self.assertRaisesRegex(RuntimeError, "NOT_RUNNING"):
+            self.policy.present("example.app")
+        self.assertEqual(self.writes, [])

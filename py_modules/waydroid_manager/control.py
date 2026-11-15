@@ -79,7 +79,8 @@ class ServiceControl:
                  on_policy: Callable[[Launch, str], Awaitable[None]] | None = None,
                  on_release: Callable[[Launch], Awaitable[None]] | None = None,
                  start_launch: Callable[[Launch, bool], Awaitable[None]] | None = None,
-                 on_departure: Callable[[Launch], Awaitable[None]] | None = None):
+                 on_departure: Callable[[Launch], Awaitable[None]] | None = None,
+                 on_present: Callable[[Launch], Awaitable[None]] | None = None):
         self.path, self.uid, self.start_service = path, uid, start
         self.server = None
         self.inode = None
@@ -88,6 +89,7 @@ class ServiceControl:
         self.on_policy, self.on_release = on_policy, on_release
         self.start_launch = start_launch
         self.on_departure = on_departure
+        self.on_present = on_present
         self.host: Launch | None = None
         self.launches: dict[tuple[int, str], Launch] = {}
         self.release_task: asyncio.Task | None = None
@@ -197,12 +199,16 @@ class ServiceControl:
                     registered = self.identify_launch(pid, display)
                     launch = Launch(registered.process, self.host.display, request)
                     self.launches[launch.process] = launch
-                elif command in {b"POLICY full\n", b"POLICY app\n", b"RELEASE\n"}:
+                elif command in {b"POLICY full\n", b"POLICY app\n", b"PRESENT\n", b"RELEASE\n"}:
                     active = self._launch_for_pid(pid)
                     if active is None:
                         raise RuntimeError("Waydroid launch is no longer active")
                     if command == b"RELEASE\n":
                         await self.release(active)
+                    elif command == b"PRESENT\n":
+                        if self.on_present is None or self.release_task is not None:
+                            raise RuntimeError("Waydroid launch is closing")
+                        await self.on_present(active)
                     elif self.on_policy and self.release_task is None:
                         await self.on_policy(active, command[7:-1].decode("ascii"))
                     else:

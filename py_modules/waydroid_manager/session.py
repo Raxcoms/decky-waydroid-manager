@@ -122,6 +122,12 @@ class LaunchSession:
                 raise RuntimeError("Android did not connect the external display")
         self.policy.save(mode)
 
+    async def show(self, launch: Launch) -> None:
+        async with self.lock:
+            if not session_uses_socket(launch.display) or launch.process not in self.requests:
+                raise RuntimeError("Waydroid launch is no longer active")
+            await asyncio.to_thread(self.policy.present, launch.request.package)
+
     async def release(self, launch: Launch) -> None:
         async with self.lock:
             try:

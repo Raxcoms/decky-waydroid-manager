@@ -69,11 +69,7 @@ if [ "$ready" = 0 ] || { [ "$lease_owner" = 1 ] && ! unit_active; } || ! owned_s
 fi
 "$service_helper" --check-overlay || true
 
-if [ "$WAYDROID_MANAGER_MODE" = "app" ]; then
-  timeout 15 waydroid app launch "$WAYDROID_MANAGER_PACKAGE" >>"$WAYDROID_MANAGER_LOG_DIR/app.log" 2>&1
-else
-  timeout 15 waydroid show-full-ui
-fi
+"$service_helper" --present
 
 while owned_session_running; do
   if [ -n "$steam_owner_pid" ]; then

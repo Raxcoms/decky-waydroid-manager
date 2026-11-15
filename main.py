@@ -986,7 +986,7 @@ class Plugin:
         relay = Path(decky.DECKY_PLUGIN_DIR).resolve() / "bin/waydroid-wayland-relay"
         self._control = ServiceControl(control_path(uid), uid, self._ensure_service, relay, self._prepare_launch,
                                        self._session.present, self._session.release, self._session.start,
-                                       self._session.depart)
+                                       self._session.depart, self._session.show)
         self._session.control = self._control
         await self._control.open()
         decky.logger.info("Waydroid Manager loaded")
