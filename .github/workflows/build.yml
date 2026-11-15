@@ -79,7 +79,8 @@ jobs:
           NATIVE_CACHES: ${{ needs.native.outputs.caches }}
         run: |
           npm install --prefix "$RUNNER_TEMP/display-cache-client" --no-save --ignore-scripts @actions/cache@6.3.0
-          node scripts/restore_native_cache.mjs "$RUNNER_TEMP/display-cache-client"
+          cp scripts/restore_native_cache.mjs "$RUNNER_TEMP/display-cache-client/restore.mjs"
+          node "$RUNNER_TEMP/display-cache-client/restore.mjs"
       - name: Package plugin
         env:
           BUILD_REVISION: ${{ steps.version.outputs.revision }}
