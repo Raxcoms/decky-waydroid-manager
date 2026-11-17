@@ -212,6 +212,10 @@
       "file": "android/hwc/display-validation-adapter.patch"
     },
     {
+      "project": "hardware/interfaces",
+      "file": "android/hwc/adapter-locking.patch"
+    },
+    {
       "project": "system/tools/hidl",
       "file": "android/native/host-tools.patch"
     }
