@@ -2,6 +2,7 @@ package waydroid.manager.probe;
 
 import android.app.Activity;
 import android.app.Presentation;
+import android.content.Context;
 import android.hardware.display.DisplayManager;
 import android.os.Bundle;
 import android.util.Log;
@@ -13,16 +14,27 @@ public final class ProbeActivity extends Activity implements DisplayManager.Disp
     private DisplayManager displays;
     private Presentation presentation;
 
+    private TextView animatedLabel(Context context, String label, int color) {
+        TextView view = new TextView(context);
+        view.setTextSize(24);
+        view.setTextColor(0xffffffff);
+        view.setBackgroundColor(color);
+        view.setGravity(Gravity.CENTER);
+        view.post(new Runnable() {
+            private long frame;
+            public void run() {
+                if (!view.isAttachedToWindow()) return;
+                view.setText(label + "\nFrame " + frame++);
+                view.postOnAnimation(this);
+            }
+        });
+        return view;
+    }
+
     @Override
     public void onCreate(Bundle state) {
         super.onCreate(state);
-        TextView primary = new TextView(this);
-        primary.setText("Waydroid primary display\nThe external display should show a blue test screen.");
-        primary.setTextSize(24);
-        primary.setTextColor(0xffffffff);
-        primary.setBackgroundColor(0xff243629);
-        primary.setGravity(Gravity.CENTER);
-        setContentView(primary);
+        setContentView(animatedLabel(this, "Waydroid primary display", 0xff243629));
         displays = (DisplayManager) getSystemService(DISPLAY_SERVICE);
         displays.registerDisplayListener(this, null);
         updatePresentation();
@@ -37,13 +49,8 @@ public final class ProbeActivity extends Activity implements DisplayManager.Disp
         }
         if (external.length == 0) return;
         presentation = new Presentation(this, external[0]);
-        TextView content = new TextView(presentation.getContext());
-        content.setText("Waydroid external display\nDisplay " + external[0].getDisplayId());
-        content.setTextSize(24);
-        content.setTextColor(0xffffffff);
-        content.setBackgroundColor(0xff164e91);
-        content.setGravity(Gravity.CENTER);
-        presentation.setContentView(content);
+        presentation.setContentView(animatedLabel(presentation.getContext(),
+                "Waydroid external display " + external[0].getDisplayId(), 0xff164e91));
         presentation.show();
     }
 
