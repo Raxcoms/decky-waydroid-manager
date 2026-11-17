@@ -17,6 +17,7 @@ from .display_resources import prepare_payload
 from .guest import GUEST_STARTING, LaunchPolicy, android_user_ready
 from .proc import steam_wayland_socket
 from .native_payload import select_native
+from .provider_payload import PROVIDER_PATH, prepare_provider
 from .runtime_display import RuntimeDisplayLease
 from .second_screen import discover_external_display
 from .shared_storage import SharedStorage
@@ -62,50 +63,52 @@ class LaunchSession:
                 self.requests[launch.process] = enabled
                 return
             await self.services.ensure_service()
-            capable = False
+            if container_pid() is not None:
+                raise RuntimeError("Close the running Waydroid session before launching this shortcut")
+            provider = await complete_thread(prepare_provider, self.plugin, self.config)
+            files = {PROVIDER_PATH: provider}
+            external_relay = None
+            density_reference = None
             if enabled or (self.plugin / "bin/display-native").is_dir():
-                if container_pid() is not None:
-                    if enabled:
-                        raise RuntimeError("Close the running Waydroid session before enabling its second screen")
-                else:
-                    try:
-                        _, uid, _ = self.services.user()
-                        external = discover_external_display(uid, primary=steam_wayland_socket(uid))
-                        if external is None and enabled:
-                            raise RuntimeError("The host has no available external Wayland display")
-                        identity = await complete_thread(inspect_vendor, self.config, self.services.run)
-                        native = select_native(self.plugin / "bin/display-native", identity.sdk,
-                                               identity.vndk, identity.machine)
-                        native.validate_runtime(identity)
-                        files = {}
-                        if external is not None:
-                            try:
-                                files = await complete_thread(prepare_payload, self.plugin, self.config, identity,
+                try:
+                    _, uid, _ = self.services.user()
+                    external = discover_external_display(uid, primary=steam_wayland_socket(uid))
+                    if external is None and enabled:
+                        raise RuntimeError("The host has no available external Wayland display")
+                    identity = await complete_thread(inspect_vendor, self.config, self.services.run)
+                    native = select_native(self.plugin / "bin/display-native", identity.sdk,
+                                           identity.vndk, identity.machine)
+                    native.validate_runtime(identity)
+                    resources = {}
+                    if external is not None:
+                        try:
+                            resources = await complete_thread(prepare_payload, self.plugin, self.config, identity,
                                                               self.services.run)
-                            except RuntimeError:
-                                if enabled:
-                                    raise
-                                external = None
-                        if external is not None and "external-presentation" not in native.capabilities:
-                            raise RuntimeError("The native display build does not support deferred presentation")
-                        files[f"vendor/{HWC_PATH}"] = native.root / "hwcomposer.waydroid.so"
-                        files["vendor/lib64/libhwc2on1adapter.so"] = native.root / "libhwc2on1adapter.so"
-                        host = self.control.host if self.control else None
-                        if host is None:
-                            raise RuntimeError("The shared Waydroid relay is not registered")
-                        external_relay = None
-                        if external is not None:
-                            external_relay = host.display.parent / "external"
-                            self.control.identify_launch(host.process[0], external_relay)
-                    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
-                        if enabled:
-                            raise
-                        self.services.logger.info("Second screen unavailable for this session: %s", error)
-                    else:
-                        await complete_thread(self.overlay.acquire, files, external_relay,
-                                                self.services.run, launch.display,
-                                                density_reference=native.density_reference)
-                        capable = external_relay is not None
+                        except RuntimeError:
+                            if enabled:
+                                raise
+                            external = None
+                    if external is not None and "external-presentation" not in native.capabilities:
+                        raise RuntimeError("The native display build does not support deferred presentation")
+                    host = self.control.host if self.control else None
+                    if host is None:
+                        raise RuntimeError("The shared Waydroid relay is not registered")
+                    if external is not None:
+                        external_relay = host.display.parent / "external"
+                        self.control.identify_launch(host.process[0], external_relay)
+                    resources[f"vendor/{HWC_PATH}"] = native.root / "hwcomposer.waydroid.so"
+                    resources["vendor/lib64/libhwc2on1adapter.so"] = native.root / "libhwc2on1adapter.so"
+                except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                    if enabled:
+                        raise
+                    self.services.logger.info("Native display extensions unavailable for this session: %s", error)
+                    external_relay = None
+                else:
+                    files.update(resources)
+                    density_reference = native.density_reference
+            await complete_thread(self.overlay.acquire, files, external_relay,
+                                  self.services.run, launch.display, density_reference=density_reference)
+            capable = external_relay is not None
             self.capable = capable
             self.requests[launch.process] = enabled
 

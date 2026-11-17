@@ -5,6 +5,7 @@ out/
 __pycache__/
 *.pyc
 bin/*.dex
+bin/storage-provider/
 *.apk
 *.xapk
 *.apk.part

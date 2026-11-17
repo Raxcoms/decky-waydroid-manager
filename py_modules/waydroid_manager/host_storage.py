@@ -10,6 +10,7 @@ import re
 import subprocess
 
 from .proc import clean_env
+from .file_events import process_handle
 
 
 SERVICE = "org.freedesktop.UDisks2"
@@ -52,6 +53,34 @@ class StorageMonitor:
     def __init__(self, changed):
         self.changed = changed
         self.task = None
+        self.process = None
+        self.handle = None
+
+    def watch_process(self, identity):
+        if identity == self.process:
+            return
+        self._unwatch()
+        if identity is None:
+            return
+        try:
+            handle = process_handle(identity)
+        except ProcessLookupError:
+            self.changed()
+            return
+        self.process = identity
+        if handle is not None:
+            self.handle = handle
+            asyncio.get_running_loop().add_reader(handle, self._process_exited)
+
+    def _unwatch(self):
+        if self.handle is not None:
+            asyncio.get_running_loop().remove_reader(self.handle)
+            os.close(self.handle)
+        self.process = self.handle = None
+
+    def _process_exited(self):
+        self._unwatch()
+        self.changed()
 
     def start(self):
         self.task = asyncio.create_task(self._run())
@@ -78,6 +107,7 @@ class StorageMonitor:
                 await process.wait()
 
     async def close(self):
+        self._unwatch()
         if self.task is not None:
             self.task.cancel()
             try:

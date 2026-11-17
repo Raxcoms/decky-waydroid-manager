@@ -27,6 +27,8 @@ def build() -> Path:
                     *(str(output / "waydroid/manager" / (source.stem + ".class")) for source in sources)], check=True)
     target = ROOT / "bin/waydroid-verifier.dex"
     shutil.copyfile(dex / "classes.dex", target)
+    from build_storage_provider import build as build_storage_provider
+    build_storage_provider()
     return target
 
 

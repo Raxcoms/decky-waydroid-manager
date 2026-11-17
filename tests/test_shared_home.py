@@ -21,13 +21,14 @@ class SharedStorageTests(unittest.TestCase):
                 lease = SharedStorage(Path("config"), Path("tools"), Path("lease"))
                 lease.guard = Mock()
                 lease.guest = (123, "start")
-                lease.mounts = {"Home": (456, "/data/media/7/Host/Home", "99", "100")}
+                lease.process = (456, "provider")
+                lease.mounts = {"Home": (456, "/data/user/7/waydroid.manager.storage/files/Host/Home", "99", "100")}
                 run = Mock()
-                with patch("waydroid_manager.shared_storage.container_identity", return_value=current):
+                with patch("waydroid_manager.shared_storage.container_identity", return_value=current), patch("waydroid_manager.shared_storage.process_identity", return_value=lease.process):
                     lease.release(run)
                 if current == (123, "start"):
-                    run.assert_called_once_with(["lease/home-mount", "unmount", "123", "456",
-                                                 "/data/media/7/Host/Home", "99", "100"], timeout=10)
+                    run.assert_called_once_with(["lease/home-mount", "unmount", "456", "456",
+                                                 "/data/user/7/waydroid.manager.storage/files/Host/Home", "99", "100"], timeout=10)
                 else:
                     run.assert_not_called()
                 lease.guard.recover.assert_called_once()

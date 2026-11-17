@@ -24,6 +24,8 @@ def check(root: Path) -> None:
     for path in root.rglob("*"):
         if not path.name.lower().endswith((".apk", ".xapk", ".apk.part", ".xapk.part")):
             continue
+        if path == root / "bin/storage-provider/provider-unsigned.apk":
+            continue
         raise RuntimeError("Compiled Android packages must be prepared from the installed image, not shipped")
     helper = root / "bin/waydroid-verifier.dex"
     if not helper.is_file() or not helper.read_bytes().startswith(b"dex\n"):
@@ -40,6 +42,8 @@ def check(root: Path) -> None:
     backend = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(backend)
     backend.Plugin()
+    from waydroid_manager.provider_payload import unsigned_provider
+    unsigned_provider(root)
     from waydroid_manager.native_payload import NativePayload
     manifests = list((root / "bin/display-native").glob("*/manifest.json"))
     if not manifests:

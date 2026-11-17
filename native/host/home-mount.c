@@ -124,7 +124,11 @@ int main(int argc, char **argv) {
     if (!pid || pid > INT_MAX)
         return EXIT_FAILURE;
     const char *target = argv[attach ? 5 : 4];
-    if (strncmp(target, "/data/media/", strlen("/data/media/")))
+    const char *owned = strstr(target, "/waydroid.manager.storage/files/Host");
+    if ((!owned || (owned[strlen("/waydroid.manager.storage/files/Host")] != '\0'
+                    && owned[strlen("/waydroid.manager.storage/files/Host")] != '/'))
+            || (strncmp(target, "/data/data/", strlen("/data/data/"))
+                && strncmp(target, "/data/user/", strlen("/data/user/"))))
         return EXIT_FAILURE;
     char path[64];
     snprintf(path, sizeof(path), "/proc/%" PRIu64, pid);

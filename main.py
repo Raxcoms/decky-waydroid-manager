@@ -1148,6 +1148,7 @@ class Plugin:
                 except Exception:
                     self._storage_changed = True
                     raise
+            self._storage_monitor.watch_process(self._session.storage.process if guest else None)
             metrics = registration.display.with_name("metrics") if launch and registration else None
             try:
                 await complete_thread(self._gpu_metrics.sync, launch, uid, metrics, guest)

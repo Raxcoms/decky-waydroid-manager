@@ -49,6 +49,9 @@ class LaunchFeatureTests(unittest.IsolatedAsyncioTestCase):
                 finish.set()
 
     def setUp(self):
+        provider = patch.object(session, "prepare_provider", return_value=Path("provider.apk"))
+        provider.start()
+        self.addCleanup(provider.stop)
         self.state = StateStore.defaults()
         self.services = SessionServices(
             Mock(), Mock(), AsyncMock(), lambda: ("user", 1000, Path("home")),
@@ -59,10 +62,10 @@ class LaunchFeatureTests(unittest.IsolatedAsyncioTestCase):
         self.plugin.storage = Mock()
         self.launch = Launch((1, "start"), Path("wayland"), LaunchRequest("app", "example.app"))
 
-    async def test_standard_launch_never_stages_a_payload(self):
+    async def test_standard_launch_stages_only_the_storage_provider(self):
         await self.plugin.start(self.launch, True)
         self.assertFalse(self.plugin.capable)
-        self.plugin.overlay.acquire.assert_not_called()
+        self.assertEqual(self.plugin.overlay.acquire.call_args.args[0], {session.PROVIDER_PATH: Path("provider.apk")})
 
     async def test_native_limiter_can_stage_without_an_external_display(self):
         self.plugin.control = Mock(host=self.launch)
@@ -78,7 +81,7 @@ class LaunchFeatureTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.plugin.capable)
         self.assertIsNone(self.plugin.overlay.acquire.call_args.args[1])
         self.assertEqual(set(self.plugin.overlay.acquire.call_args.args[0]),
-                         {f"vendor/{session.HWC_PATH}", "vendor/lib64/libhwc2on1adapter.so"})
+                         {session.PROVIDER_PATH, f"vendor/{session.HWC_PATH}", "vendor/lib64/libhwc2on1adapter.so"})
         self.plugin.control.identify_launch.assert_not_called()
 
     async def test_join_with_different_settings_leaves_session_untouched(self):
@@ -131,7 +134,7 @@ class LaunchFeatureTests(unittest.IsolatedAsyncioTestCase):
               patch.object(session, "inspect_vendor", return_value=Mock()),
               patch.object(session, "select_native", return_value=native)):
             await self.plugin.start(self.launch, True)
-        self.plugin.overlay.acquire.assert_not_called()
+        self.assertEqual(self.plugin.overlay.acquire.call_args.args[0], {session.PROVIDER_PATH: Path("provider.apk")})
         self.assertFalse(self.plugin.capable)
 
     async def test_runtime_staging_failure_does_not_enable_the_session(self):
