@@ -11,7 +11,6 @@ import subprocess
 
 from .container import container_identity
 from .display_payload import digest, elf_machine
-from .guest import run_dex
 from .host_storage import folder_name, mounted_volumes
 from .proc import process_identity
 from .runtime_display import RuntimeDisplayLease
@@ -68,9 +67,11 @@ class SharedStorage:
         raise RuntimeError("Android's storage identity is not mapped to the host")
 
     def _connect_provider(self, run) -> None:
-        output = run_dex(run, self.plugin / "bin/waydroid-verifier.dex", container_identity, self.guest,
-                         "waydroid.manager.StorageIdentity", self.user)
-        values = dict(re.findall(r"^STORAGE_(UID|PID|PATH):([^\r\n]+)$", output, re.MULTILINE))
+        output = run(["waydroid", "shell", "--", "content", "query", "--user", self.user, "--uri",
+                      "content://waydroid.manager.storage.documents/document/__identity",
+                      "--projection", "uid:pid:path"], timeout=15)
+        values = {name.upper(): value.strip() for name, value in
+                  re.findall(r"\b(uid|pid|path)=([^,\r\n]+)", output)}
         if not values.get("UID", "").isdecimal() or not values.get("PID", "").isdecimal() or "PATH" not in values:
             raise RuntimeError("Android did not identify the Host storage provider: " + output[-2000:].strip())
         uid = self._mapped_id(self.guest[0], "uid_map", int(values["UID"]))
