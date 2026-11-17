@@ -79,3 +79,6 @@ target_link_libraries(hwc2on1adapter PRIVATE android_platform)
 target_link_options(hwc2on1adapter PRIVATE -Wl,--no-undefined)
 
 install(TARGETS hwcomposer.waydroid hwc2on1adapter LIBRARY DESTINATION .)
+
+add_library(abi_layout OBJECT abi_layout.cpp)
+target_link_libraries(abi_layout PRIVATE android_platform)

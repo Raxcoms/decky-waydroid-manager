@@ -75,6 +75,7 @@ class LaunchSession:
                                 external = None
                         native = select_native(self.payloads.with_name("display-native"), identity.sdk,
                                                identity.vndk, identity.machine)
+                        native.validate_runtime(identity)
                         if external is not None and "external-presentation" not in native.capabilities:
                             raise RuntimeError("The native display build does not support deferred presentation")
                         files[f"vendor/{HWC_PATH}"] = native.root / "hwcomposer.waydroid.so"

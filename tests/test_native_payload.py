@@ -4,11 +4,21 @@ from pathlib import Path
 import struct
 import tempfile
 import unittest
+from types import SimpleNamespace
 
 from waydroid_manager.native_payload import NativePayload, select_native
 
 
 class NativePayloadTests(unittest.TestCase):
+    def test_runtime_requires_both_extension_symbols_and_matching_layout(self):
+        payload = NativePayload(Path("native"), 33, "33", 183, "a" * 64,
+                                runtime_symbols=frozenset({"extension"}), binder_vtable_size=224)
+        identity = SimpleNamespace(runtime_symbols={"extension"}, binder_vtable_size=224)
+        payload.validate_runtime(identity)
+        for symbols, size in ((set(), 224), ({"extension"}, 216), ({"extension"}, 0)):
+            with self.assertRaisesRegex(RuntimeError, "Binder interface"):
+                payload.validate_runtime(SimpleNamespace(runtime_symbols=symbols, binder_vtable_size=size))
+
     def test_selection_uses_android_abi_and_validates_built_components(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -27,6 +27,7 @@ def recipe_digest(profile: Path) -> str:
     checksum = hashlib.sha256(profile.read_bytes())
     metadata = json.loads(profile.read_text())
     paths = [*sorted((ROOT / "android/native").rglob("CMakeLists.txt")),
+             *sorted((ROOT / "android/native").rglob("*.cpp")),
              *sorted((ROOT / "android/native").rglob("*.h")),
              *(ROOT / "scripts" / name for name in
                ("build_native.py", "native_dependencies.py", "native_headers.py", "native_symbols.py", "display_notices.py")),
@@ -107,11 +108,15 @@ def build(profile: Path, cache: Path, directory: Path, output: Path, ndk: Path, 
         validate(toolchains[0].with_name("llvm-nm"), target / name, source / "vndk" / metadata["vndkArch"],
                  metadata.get("runtimeSymbols", []), metadata.get("requiredRuntimeSymbols", {}).get(name, []))
     collect(source, target / "NOTICE.txt")
+    layout = subprocess.check_output([str(toolchains[0].with_name("llvm-nm")), "-S", "--format=posix",
+                                      str(native / "CMakeFiles/abi_layout.dir/abi_layout.cpp.o")], text=True)
+    binder_size = next(int(line.split()[3], 16) for line in layout.splitlines()
+                       if line.startswith("_ZTV20WaydroidBinderLayout "))
     manifest = {"schemaVersion": 2, "sdk": metadata["sdk"], "vndkVersion": metadata["vndkVersion"],
                 "abi": metadata["abi"], "elfMachine": metadata["elfMachine"], "recipeSha256": identity,
                 "files": files, "dependencies": metadata["dependencies"],
                 "capabilities": metadata.get("capabilities", []), "runtimeSymbols": metadata.get("runtimeSymbols", []),
-                "densityReference": metadata.get("densityReference")}
+                "densityReference": metadata.get("densityReference"), "binderVtableSize": binder_size}
     (target / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
     return target
 

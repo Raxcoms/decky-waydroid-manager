@@ -19,6 +19,8 @@ class NativePayload:
     recipe: str
     capabilities: frozenset[str] = frozenset()
     density_reference: tuple[int, int, int] | None = None
+    runtime_symbols: frozenset[str] = frozenset()
+    binder_vtable_size: int = 0
 
     @classmethod
     def load(cls, root: Path) -> "NativePayload":
@@ -44,8 +46,18 @@ class NativePayload:
                     or any(type(value) is not int or not 1 <= value <= 32767 for value in reference.values())):
                 raise RuntimeError("Invalid display density reference")
             reference = reference["width"], reference["height"], reference["dpi"]
+        symbols = metadata.get("runtimeSymbols", [])
+        size = metadata.get("binderVtableSize", 0)
+        if (not isinstance(symbols, list) or not all(isinstance(value, str) for value in symbols)
+                or type(size) is not int or size < 0):
+            raise RuntimeError("Invalid native runtime ABI requirements")
         return cls(root, metadata["sdk"], metadata["vndkVersion"], metadata["elfMachine"], metadata["recipeSha256"],
-                   frozenset(capabilities), reference)
+                   frozenset(capabilities), reference, frozenset(symbols), size)
+
+    def validate_runtime(self, identity) -> None:
+        if (not self.binder_vtable_size or self.binder_vtable_size != identity.binder_vtable_size
+                or not self.runtime_symbols.issubset(identity.runtime_symbols)):
+            raise RuntimeError("The installed Waydroid Binder interface is incompatible with the native display build")
 
 
 def select_native(directory: Path, sdk: int, vndk: str, machine: int) -> NativePayload:
