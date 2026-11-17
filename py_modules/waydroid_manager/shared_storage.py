@@ -72,7 +72,7 @@ class SharedStorage:
                          "waydroid.manager.StorageIdentity", self.user)
         values = dict(re.findall(r"^STORAGE_(UID|PID|PATH):([^\r\n]+)$", output, re.MULTILINE))
         if not values.get("UID", "").isdecimal() or not values.get("PID", "").isdecimal() or "PATH" not in values:
-            raise RuntimeError("Android did not identify the Host storage provider")
+            raise RuntimeError("Android did not identify the Host storage provider: " + output[-2000:].strip())
         uid = self._mapped_id(self.guest[0], "uid_map", int(values["UID"]))
         gid = self._mapped_id(self.guest[0], "gid_map", int(values["UID"]))
         namespace = Path(f"/proc/{self.guest[0]}/ns/pid").stat().st_ino

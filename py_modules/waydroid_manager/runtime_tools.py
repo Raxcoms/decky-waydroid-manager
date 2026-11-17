@@ -16,4 +16,3 @@ def resource_tools(plugin: Path) -> Path:
                 or not path.is_file() or digest(path) != expected):
             raise RuntimeError("The private Android resource tools failed validation")
     return tools
-
