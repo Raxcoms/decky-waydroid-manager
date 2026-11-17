@@ -10,6 +10,25 @@ from waydroid_manager.resource_builder import sign_apk
 
 
 class ResourceSigningTests(unittest.TestCase):
+    def test_android_verifier_accepts_the_signed_resource_package(self):
+        sdk = Path(os.environ.get("ANDROID_HOME", "/nonexistent-sdk"))
+        suffix = ".bat" if os.name == "nt" else ""
+        signers = sorted((sdk / "build-tools").glob("*/apksigner" + suffix), reverse=True)
+        libraries = sorted((sdk / "platforms").glob("*/android.jar"), reverse=True)
+        if not signers or not libraries or not shutil.which("openssl"):
+            self.skipTest("The Android SDK and OpenSSL are needed")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "AndroidManifest.xml"
+            manifest.write_text('<manifest xmlns:android="http://schemas.android.com/apk/res/android" '
+                                'package="waydroid.manager.test"><application android:hasCode="false" /></manifest>')
+            aapt = signers[0].with_name("aapt2.exe" if os.name == "nt" else "aapt2")
+            unsigned, signed = root / "unsigned.apk", root / "signed.apk"
+            subprocess.run([str(aapt), "link", "-I", str(libraries[0]), "--manifest", str(manifest),
+                            "--min-sdk-version", "26", "--target-sdk-version", "28", "-o", str(unsigned)], check=True)
+            sign_apk(unsigned, signed, root / "identity", Path(shutil.which("openssl")), dict(os.environ))
+            subprocess.run([str(signers[0]), "verify", "--min-sdk-version", "26", str(signed)], check=True)
+
     @unittest.skipUnless(shutil.which("openssl"), "OpenSSL is needed")
     def test_signature_verifies_and_uses_a_stable_private_identity(self):
         with tempfile.TemporaryDirectory() as directory:

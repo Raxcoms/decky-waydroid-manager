@@ -25,10 +25,14 @@ def sign_apk(unsigned: Path, target: Path, signing: Path, openssl: Path, environ
         raise RuntimeError("Invalid Android resource signing identity")
     with zipfile.ZipFile(unsigned) as source:
         entries = [(entry, source.read(entry)) for entry in source.infolist() if not entry.filename.startswith("META-INF/")]
-    manifest = b"Manifest-Version: 1.0\r\n\r\n"
+    sections = []
     for entry, content in entries:
-        manifest += f"Name: {entry.filename}\r\nSHA-256-Digest: {_digest(content)}\r\n\r\n".encode()
+        section = f"Name: {entry.filename}\r\nSHA-256-Digest: {_digest(content)}\r\n\r\n".encode()
+        sections.append((entry.filename, section))
+    manifest = b"Manifest-Version: 1.0\r\n\r\n" + b"".join(section for _, section in sections)
     signature = f"Signature-Version: 1.0\r\nSHA-256-Digest-Manifest: {_digest(manifest)}\r\n\r\n".encode()
+    for name, section in sections:
+        signature += f"Name: {name}\r\nSHA-256-Digest: {_digest(section)}\r\n\r\n".encode()
     sf, rsa = target.with_suffix(".sf"), target.with_suffix(".rsa")
     sf.write_bytes(signature)
     subprocess.run([str(openssl), "cms", "-sign", "-binary", "-noattr", "-md", "sha256", "-in", str(sf),
