@@ -4,8 +4,10 @@ import base64
 import hashlib
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
+import tempfile
 import zipfile
 
 
@@ -14,13 +16,26 @@ def _digest(value: bytes) -> str:
 
 
 def sign_apk(unsigned: Path, target: Path, signing: Path, openssl: Path, environment: dict) -> None:
-    signing.mkdir(mode=0o700, parents=True, exist_ok=True)
     key, certificate = signing / "key.pem", signing / "certificate.pem"
-    if not key.exists() and not certificate.exists():
-        subprocess.run([str(openssl), "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-sha256",
-                        "-subj", "/CN=Waydroid Manager/", "-days", "36500", "-keyout", str(key),
-                        "-out", str(certificate)], env=environment, check=True, capture_output=True, timeout=30)
-        key.chmod(0o600)
+    if signing.is_symlink():
+        raise RuntimeError("Invalid Android resource signing identity")
+    if not key.exists() or not certificate.exists():
+        signing.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="signing-", dir=signing.parent) as directory:
+            staged = Path(directory) / "identity"
+            staged.mkdir(mode=0o700)
+            subprocess.run([str(openssl), "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-sha256",
+                            "-subj", "/CN=Waydroid Manager/", "-days", "36500", "-keyout", str(staged / "key.pem"),
+                            "-out", str(staged / "certificate.pem")], env=environment, check=True, capture_output=True, timeout=30)
+            (staged / "key.pem").chmod(0o600)
+            for path in staged.iterdir():
+                with path.open("rb") as file:
+                    os.fsync(file.fileno())
+            if signing.exists():
+                if not signing.is_dir() or any(path.name not in {"key.pem", "certificate.pem"} for path in signing.iterdir()):
+                    raise RuntimeError("Invalid Android resource signing identity")
+                shutil.rmtree(signing)
+            staged.rename(signing)
     if key.is_symlink() or certificate.is_symlink() or not key.is_file() or not certificate.is_file():
         raise RuntimeError("Invalid Android resource signing identity")
     with zipfile.ZipFile(unsigned) as source:
@@ -70,7 +85,12 @@ def build(resources: Path, tools: Path, framework: Path, system_ui: Path, signin
 
 if __name__ == "__main__":
     try:
-        build(*map(Path, sys.argv[1:]))
+        if sys.argv[1:2] == ["--sign"]:
+            unsigned, target, signing, tools = map(Path, sys.argv[2:])
+            environment = dict(os.environ, LD_LIBRARY_PATH=str(tools / "lib"), OPENSSL_CONF="/dev/null")
+            sign_apk(unsigned, target, signing, tools / "openssl", environment)
+        else:
+            build(*map(Path, sys.argv[1:]))
     except subprocess.CalledProcessError as error:
         sys.stderr.buffer.write(error.stderr or b"Android resource build failed")
         raise SystemExit(1)

@@ -8,7 +8,8 @@ import shutil
 import subprocess
 import tempfile
 
-from .display_payload import digest, elf_machine
+from .display_payload import digest
+from .runtime_tools import resource_tools
 from .image_files import extract
 from .proc import clean_env
 
@@ -21,23 +22,10 @@ RESOURCE_FILES = {
 }
 
 
-def _tools(plugin: Path) -> Path:
-    machine = elf_machine(Path("/usr/bin/python3").resolve())
-    tools = plugin / "bin/display-tools" / str(machine)
-    metadata = json.loads((tools / "manifest.json").read_text())
-    if metadata.get("elfMachine") != machine or not {"aapt2", "openssl"}.issubset(metadata.get("files", {})):
-        raise RuntimeError("The plugin has no resource tools for this host")
-    for relative, expected in metadata["files"].items():
-        path = tools / relative
-        if (Path(relative).is_absolute() or ".." in Path(relative).parts or path.is_symlink()
-                or not path.is_file() or digest(path) != expected):
-            raise RuntimeError("The private Android resource tools failed validation")
-    return tools
-
 
 def prepare_payload(plugin: Path, config: Path, identity, run, progress=lambda stage: None) -> dict[str, Path]:
     progress("checking")
-    tools = _tools(plugin)
+    tools = resource_tools(plugin)
     resources = plugin / "resources/display"
     builder = Path(__file__).with_name("resource_builder.py")
     recipe = hashlib.sha256(builder.read_bytes())

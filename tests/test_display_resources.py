@@ -37,7 +37,7 @@ class DisplayResourceTests(unittest.TestCase):
                 for name in resources.RESOURCE_FILES.values():
                     if name.endswith(".apk"):
                         (output / name).write_bytes(b"built against " + base["SystemUI.apk"])
-            with patch.object(resources, "_tools", return_value=tools), patch.object(resources.subprocess, "run", side_effect=build):
+            with patch.object(resources, "resource_tools", return_value=tools), patch.object(resources.subprocess, "run", side_effect=build):
                 first = resources.prepare_payload(plugin, config, identity, run)
                 self.assertEqual(first, resources.prepare_payload(plugin, config, identity, run))
                 self.assertEqual(len(builds), 1)
@@ -61,7 +61,7 @@ class DisplayResourceTests(unittest.TestCase):
             (tools / "manifest.json").write_text('{}')
             def run(args, **kwargs):
                 Path(args[2].split(" ", 2)[2]).write_bytes(b"changed")
-            with patch.object(resources, "_tools", return_value=tools), patch.object(resources.subprocess, "run") as compiler:
+            with patch.object(resources, "resource_tools", return_value=tools), patch.object(resources.subprocess, "run") as compiler:
                 with self.assertRaisesRegex(RuntimeError, "image changed"):
                     resources.prepare_payload(root, root, SimpleNamespace(framework_digest="old", system_ui_digest="old"), run)
                 compiler.assert_not_called()

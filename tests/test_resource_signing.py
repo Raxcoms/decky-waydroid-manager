@@ -10,6 +10,19 @@ from waydroid_manager.resource_builder import sign_apk
 
 
 class ResourceSigningTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("openssl"), "OpenSSL is needed")
+    def test_incomplete_first_signing_identity_is_recovered_as_a_complete_pair(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            signing = root / "identity"
+            signing.mkdir()
+            (signing / "key.pem").write_text("interrupted")
+            unsigned = root / "unsigned.apk"
+            with zipfile.ZipFile(unsigned, "w") as archive:
+                archive.writestr("AndroidManifest.xml", b"manifest")
+            sign_apk(unsigned, root / "signed.apk", signing, Path(shutil.which("openssl")), dict(os.environ))
+            self.assertTrue((signing / "certificate.pem").is_file())
+            self.assertNotEqual((signing / "key.pem").read_text(), "interrupted")
     def test_android_verifier_accepts_the_signed_resource_package(self):
         sdk = Path(os.environ.get("ANDROID_HOME", "/nonexistent-sdk"))
         suffix = ".bat" if os.name == "nt" else ""
