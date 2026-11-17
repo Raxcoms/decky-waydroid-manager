@@ -9,6 +9,7 @@ import subprocess
 import time
 from typing import Callable
 
+from .async_work import complete_thread
 from .container import container_identity, container_pid, session_uses_socket
 from .control import Launch, ServiceControl
 from .display_payload import HWC_PATH, inspect_vendor, select_payload
@@ -63,7 +64,7 @@ class LaunchSession:
                         external = discover_external_display(uid, primary=steam_wayland_socket(uid))
                         if external is None and enabled:
                             raise RuntimeError("The host has no available external Wayland display")
-                        identity = await asyncio.to_thread(inspect_vendor, self.config, self.services.run)
+                        identity = await complete_thread(inspect_vendor, self.config, self.services.run)
                         files = {}
                         if external is not None:
                             try:
@@ -90,7 +91,7 @@ class LaunchSession:
                             raise
                         self.services.logger.info("Second screen unavailable for this session: %s", error)
                     else:
-                        await asyncio.to_thread(self.overlay.acquire, files, external_relay,
+                        await complete_thread(self.overlay.acquire, files, external_relay,
                                                 self.services.run, launch.display,
                                                 density_reference=native.density_reference)
                         capable = external_relay is not None
@@ -106,23 +107,23 @@ class LaunchSession:
                     shared = any(active.request and active.request.package == request.package
                                  for active in self.control.launches.values())
                     if not shared:
-                        await asyncio.to_thread(self.services.run,
+                        await complete_thread(self.services.run,
                                                 ["waydroid", "shell", "--", "am", "force-stop", request.package])
             finally:
                 if launch.process in self.presented_users:
                     self.presented_users.remove(launch.process)
                     if not self.presented_users and session_uses_socket(launch.display):
-                        await asyncio.to_thread(self.services.run, ["waydroid", "shell", "--", "setprop",
+                        await complete_thread(self.services.run, ["waydroid", "shell", "--", "setprop",
                                                                    "waydroid.external_display_visible", "0"])
                 if launch.process in self.display_users:
                     self.display_users.remove(launch.process)
                     if not self.display_users and session_uses_socket(launch.display):
-                        await asyncio.to_thread(self.services.run, ["waydroid", "shell", "--", "setprop",
+                        await complete_thread(self.services.run, ["waydroid", "shell", "--", "setprop",
                                                                    "waydroid.external_display_active", "0"])
 
     async def present(self, launch: Launch, mode: str) -> None:
         async with self.lock:
-            await asyncio.to_thread(self._prepare_presentation, launch, mode)
+            await complete_thread(self._prepare_presentation, launch, mode)
 
     def _prepare_presentation(self, launch: Launch, mode: str) -> None:
         if not session_uses_socket(launch.display):
@@ -153,20 +154,20 @@ class LaunchSession:
         async with self.lock:
             if not session_uses_socket(launch.display) or launch.process not in self.requests:
                 raise RuntimeError("Waydroid launch is no longer active")
-            await asyncio.to_thread(self.policy.present, launch.request.package, whole_display=self.capable is True)
+            await complete_thread(self.policy.present, launch.request.package, whole_display=self.capable is True)
             if self.control is not None and launch.process not in self.control.launches:
                 raise RuntimeError("Waydroid launch is no longer active")
             if self.requests.get(launch.process):
                 if launch.process not in self.display_users:
                     raise RuntimeError("The external Android display is not initialized")
-                await asyncio.to_thread(self.services.run, ["waydroid", "shell", "--", "setprop",
+                await complete_thread(self.services.run, ["waydroid", "shell", "--", "setprop",
                                                            "waydroid.external_display_visible", "1"])
                 self.presented_users.add(launch.process)
 
     async def release(self, launch: Launch) -> None:
         async with self.lock:
             try:
-                await asyncio.to_thread(self._stop, launch)
+                await complete_thread(self._stop, launch)
             finally:
                 self.capable = None
                 self.requests.clear()

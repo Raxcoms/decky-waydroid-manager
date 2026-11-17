@@ -1,4 +1,5 @@
 import asyncio
+import threading
 from pathlib import Path
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
@@ -10,6 +11,43 @@ from waydroid_manager.control import Launch, LaunchRequest
 
 
 class LaunchFeatureTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cancelled_acquisition_finishes_before_release_even_after_repeated_cancel(self):
+        started, finish = threading.Event(), threading.Event()
+        events = []
+        self.state["secondScreen"]["apps"]["example.app"] = True
+        self.plugin.control = Mock(host=self.launch)
+        def acquire(*args, **kwargs):
+            started.set()
+            if not finish.wait(5):
+                raise RuntimeError("Test did not release staging")
+            events.append("acquired")
+        self.plugin.overlay.acquire.side_effect = acquire
+        self.plugin.overlay.recover.side_effect = lambda: events.append("recovered")
+        with (patch.object(session, "container_pid", return_value=None),
+              patch.object(session, "session_uses_socket", return_value=False),
+              patch.object(session, "steam_wayland_socket", return_value=None),
+              patch.object(session, "discover_external_display", return_value=Mock()),
+              patch.object(session, "inspect_vendor", return_value=Mock()),
+              patch.object(session, "select_payload", return_value={}),
+              patch.object(session, "select_native", return_value=Mock(root=Path("native"), capabilities={"external-presentation"}))):
+            task = asyncio.create_task(self.plugin.start(self.launch, True))
+            try:
+                self.assertTrue(await asyncio.to_thread(started.wait, 3))
+                task.cancel()
+                await asyncio.sleep(0)
+                task.cancel()
+                cleanup = asyncio.create_task(self.plugin.release(self.launch))
+                await asyncio.sleep(0)
+                self.assertFalse(cleanup.done())
+                self.assertEqual(events, [])
+                finish.set()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+                await cleanup
+                self.assertEqual(events, ["acquired", "recovered"])
+            finally:
+                finish.set()
+
     def setUp(self):
         self.state = StateStore.defaults()
         self.services = SessionServices(
