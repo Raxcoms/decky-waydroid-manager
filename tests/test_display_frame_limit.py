@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import Mock
 
 from waydroid_manager.display_frame_limit import DisplayFrameLimiter, DisplayModes
 from waydroid_manager.frame_limit import FrameLimiter
@@ -44,6 +45,22 @@ class DisplayFrameLimitTests(unittest.TestCase):
         self.limiter.sync(47)
         self.assertEqual(self.writes, [(967, 51)])
         self.assertEqual(self.limit, "47")
+
+    def test_unchanged_caps_skip_cli_queries_and_changes_apply_immediately(self):
+        now = 0.0
+        android = Mock(wraps=self.android)
+        limiter = DisplayFrameLimiter(android, clock=lambda: now)
+        limiter.sync(47)
+        android.reset_mock()
+        now = 1.0
+        limiter.sync(47)
+        android.assert_not_called()
+        limiter.sync(14)
+        self.assertEqual(self.active, 9)
+        self.active = 3
+        now = 7.0
+        limiter.sync(14)
+        self.assertEqual(self.active, 9)
 
     def test_fourteen_fps_does_not_round_to_a_refresh_divisor(self):
         self.limiter.sync(14)

@@ -133,7 +133,7 @@ class ServiceControlTests(unittest.TestCase):
             control = ServiceControl(Path(directory) / "control.sock", os.getuid(), start)
             await control.open()
             try:
-                for command, expected in ((b"START\n", True), (b"STOP\n", False), (b"PRESENT\n", False)):
+                for command, expected in ((b"START\n", True), (b"STOP\n", False), (b"PRESENT\n", False), (b"CHECK\n", False)):
                     reader, writer = await asyncio.open_unix_connection(str(control.path))
                     writer.write(command)
                     await writer.drain()

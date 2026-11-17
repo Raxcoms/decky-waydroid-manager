@@ -14,6 +14,7 @@ import re
 from typing import Awaitable, Callable
 
 from .proc import descends_from, process_identity
+from .container import registered_guest
 
 
 @dataclass(frozen=True)
@@ -215,11 +216,14 @@ class ServiceControl:
                     registered = self.identify_launch(pid, display)
                     launch = Launch(registered.process, self.host.display, request)
                     self.launches[launch.process] = launch
-                elif command in {b"POLICY full\n", b"POLICY app\n", b"PRESENT\n", b"RELEASE\n"}:
+                elif command in {b"POLICY full\n", b"POLICY app\n", b"PRESENT\n", b"RELEASE\n", b"CHECK\n"}:
                     active = self._launch_for_pid(pid)
                     if active is None:
                         raise RuntimeError("Waydroid launch is no longer active")
-                    if command == b"RELEASE\n":
+                    if command == b"CHECK\n":
+                        if await asyncio.to_thread(registered_guest, active.display) is None:
+                            raise RuntimeError("Waydroid launch is no longer running")
+                    elif command == b"RELEASE\n":
                         await self.release(active)
                     elif command == b"PRESENT\n":
                         if self.on_present is None or self.release_task is not None:

@@ -17,10 +17,7 @@ unit_active() {
 }
 
 owned_session_running() {
-  local status
-  status=$(timeout 5 waydroid status 2>/dev/null) || return 1
-  grep -qE '^Container:[[:space:]]*(RUNNING|FREEZING|FROZEN)$' <<<"$status" &&
-    awk -v display="$WAYLAND_DISPLAY" '/^Wayland display:/ {sub(/^Wayland display:[[:space:]]*/, ""); found = ($0 == display)} END {exit !found}' <<<"$status"
+  timeout 5 "$service_helper" --check-session 2>/dev/null
 }
 
 cleanup_session() {

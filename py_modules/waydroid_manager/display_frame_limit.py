@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 import re
+import time
 
 
 @dataclass(frozen=True)
@@ -32,8 +33,12 @@ class DisplayModes:
 
 
 class DisplayFrameLimiter:
-    def __init__(self, android):
+    POLICY_CHECK_INTERVAL = 5.0
+
+    def __init__(self, android, clock=time.monotonic):
         self.android = android
+        self.clock = clock
+        self.next_check = 0.0
         self.original: tuple[int, int] | None = None
         self.applied: tuple[int, int] | None = None
         self.previous_limit: str | None = None
@@ -49,9 +54,12 @@ class DisplayFrameLimiter:
             raise RuntimeError("Android rejected the display frame limit")
 
     def sync(self, fps: int) -> None:
+        value = str(fps)
+        now = self.clock()
+        if self.limit == value and self.applied is not None and now < self.next_check:
+            return
         modes = self.modes()
         selected = modes.select(fps)
-        value = str(fps)
         if self.previous_limit is None:
             self.previous_limit = self.android("getprop", "waydroid.frame_limit").strip()
         if self.limit != value:
@@ -63,6 +71,7 @@ class DisplayFrameLimiter:
         if self.applied != target or modes.active != selected:
             self.set_mode(*target)
             self.applied = target
+        self.next_check = now + self.POLICY_CHECK_INTERVAL
 
     def restore(self) -> None:
         if self.limit is not None and self.android("getprop", "waydroid.frame_limit").strip() == self.limit:
@@ -76,3 +85,4 @@ class DisplayFrameLimiter:
     def clear(self) -> None:
         self.original = self.applied = None
         self.previous_limit = self.limit = None
+        self.next_check = 0.0

@@ -15,8 +15,8 @@ if sys.argv[1:] == ["--check-overlay"]:
 
 try:
     path = control_path(os.getuid())
-    if sys.argv[1:] in (["--release"], ["--present"]):
-        command = b"RELEASE" if sys.argv[1] == "--release" else b"PRESENT"
+    if sys.argv[1:] in (["--release"], ["--present"], ["--check-session"]):
+        command = {"--release": b"RELEASE", "--present": b"PRESENT", "--check-session": b"CHECK"}[sys.argv[1]]
         with service_connection(path, command, timeout=60 if command == b"PRESENT" else 35):
             pass
     elif len(sys.argv) == 3 and sys.argv[1] == "--policy":

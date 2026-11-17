@@ -1,4 +1,5 @@
 from pathlib import Path
+import stat
 import subprocess
 
 from .proc import clean_env, process_identity
@@ -51,19 +52,20 @@ def container_identity() -> tuple[int, str] | None:
 
 
 def session_uses_socket(display: Path) -> bool:
-    try:
-        result = subprocess.run(["waydroid", "status"], env=clean_env(), capture_output=True,
-                                text=True, timeout=5, check=False)
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return result.returncode == 0 and any(
-        line.partition(":")[2].strip() == str(display)
-        for line in result.stdout.splitlines() if line.startswith("Wayland display:")
-    )
+    return registered_guest(display) is not None
 
 
-def registered_guest(display: Path) -> tuple[int, str] | None:
+def registered_guest(display: Path, proc: Path = Path("/proc")) -> tuple[int, str] | None:
     identity = container_identity()
-    if identity and session_uses_socket(display) and process_identity(identity[0]) == identity:
+    if identity is None:
+        return None
+    try:
+        expected = display.stat()
+        # Waydroid binds the primary host socket at this guest-side interface.
+        actual = (proc / str(identity[0]) / "root/run/xdg/wayland-0").stat()
+    except OSError:
+        return None
+    if (stat.S_ISSOCK(expected.st_mode) and (expected.st_dev, expected.st_ino) == (actual.st_dev, actual.st_ino)
+            and process_identity(identity[0]) == identity):
         return identity
     return None

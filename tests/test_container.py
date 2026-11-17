@@ -2,9 +2,36 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+import os
+import socket
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
 from waydroid_manager.container import vendor_overlay_warning
+from waydroid_manager import container
+
+
+@unittest.skipUnless(sys.platform.startswith("linux"), "Requires Unix socket hard links")
+class RegisteredGuestTests(unittest.TestCase):
+    def test_matches_the_bound_socket_without_running_the_waydroid_cli(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            guest = root / "33/root/run/xdg"
+            guest.mkdir(parents=True)
+            display = root / "host"
+            identity = (33, "start")
+            with socket.socket(socket.AF_UNIX) as listener:
+                listener.bind(str(display))
+                os.link(display, guest / "wayland-0")
+                with (patch.object(container, "container_identity", return_value=identity),
+                      patch.object(container, "process_identity", return_value=identity),
+                      patch.object(container.subprocess, "run", side_effect=AssertionError("Unexpected CLI"))):
+                    self.assertEqual(container.registered_guest(display, root), identity)
+                    with patch.object(container, "process_identity", return_value=(33, "reused")):
+                        self.assertIsNone(container.registered_guest(display, root))
+                    (guest / "wayland-0").unlink()
+                    (guest / "wayland-0").touch()
+                    self.assertIsNone(container.registered_guest(display, root))
 
 
 class VendorOverlayTests(unittest.TestCase):

@@ -57,6 +57,7 @@ class GameSessionTests(unittest.TestCase):
             service = directory / "waydroid-service"
             service.write_text(
                 '#!/bin/sh\n'
+                'if [ "$1" = --check-session ]; then test -f "$WAYDROID_MANAGER_LOG_DIR/running"; exit $?; fi\n'
                 'if [ "$1" = --release ]; then echo release >> "$WAYDROID_MANAGER_LOG_DIR/calls"; exit 0; fi\n'
                 'if [ "$1" = --present ]; then\n'
                 '  echo present >> "$WAYDROID_MANAGER_LOG_DIR/calls"\n'
