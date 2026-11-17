@@ -33,6 +33,10 @@ from waydroid_manager.overlay import OverlayLease
 from waydroid_manager.session_config import SessionConfigLease
 from waydroid_manager.session import LaunchSession, SessionServices
 from waydroid_manager.state import StateStore
+from waydroid_manager.async_work import complete_thread
+from waydroid_manager.display_payload import inspect_vendor
+from waydroid_manager.display_resources import prepare_payload
+from waydroid_manager.native_payload import select_native
 from waydroid_manager.user_files import open_as_user, run_as_user
 
 
@@ -53,7 +57,7 @@ class Plugin:
         self._overlay = OverlayLease(WAYDROID_DIR)
         self._session_config = SessionConfigLease(WAYDROID_DIR)
         self._session = LaunchSession(
-            WAYDROID_DIR, Path(decky.DECKY_PLUGIN_DIR) / "bin/display-payloads",
+            WAYDROID_DIR, Path(decky.DECKY_PLUGIN_DIR),
             SessionServices(self._run, self._run_user_session, self._ensure_service,
                             self._user, self._second_screen_enabled),
         )
@@ -354,6 +358,8 @@ class Plugin:
         if type(enabled) is not bool:
             raise RuntimeError("Invalid second screen setting")
         _, _, home = self._user()
+        if enabled:
+            await self._prepare_second_screen()
         with self._edit_state(home) as state:
             StateStore.second_screen(state)["container"] = enabled
 
@@ -361,12 +367,31 @@ class Plugin:
         if not PACKAGE_RE.fullmatch(package) or type(enabled) is not bool:
             raise RuntimeError("Invalid second screen setting")
         _, _, home = self._user()
+        if enabled:
+            await self._prepare_second_screen()
         with self._edit_state(home) as state:
             settings = StateStore.second_screen(state)
             if enabled:
                 settings["apps"][package] = enabled
             else:
                 settings["apps"].pop(package, None)
+
+    async def _prepare_second_screen(self) -> None:
+        async with self._package_lock:
+            try:
+                await complete_thread(self._build_second_screen)
+            finally:
+                self._image_progress = None
+
+    def _build_second_screen(self) -> None:
+        plugin = Path(decky.DECKY_PLUGIN_DIR)
+        self._set_image_progress("checking", 5)
+        identity = inspect_vendor(WAYDROID_DIR, self._run)
+        native = select_native(plugin / "bin/display-native", identity.sdk, identity.vndk, identity.machine)
+        native.validate_runtime(identity)
+        phases = {"checking": 15, "extracting": 35, "building": 60, "ready": 100}
+        prepare_payload(plugin, WAYDROID_DIR, identity, self._run,
+                        lambda stage: self._set_image_progress(stage, phases[stage]))
 
     def _pending_auto_shortcuts(self, account_id: int, live_ids: list[int] | None = None) -> list[dict[str, Any]]:
         if self._initialized() and container_pid() is not None:

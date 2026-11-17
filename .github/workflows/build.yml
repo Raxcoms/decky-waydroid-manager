@@ -94,7 +94,7 @@ jobs:
           MACHINE: ${{ matrix.tool.machine }}
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends aapt
+          sudo apt-get install -y --no-install-recommends aapt openssl
           python3 scripts/bundle_runtime_tools.py out/display-tools --machine "$MACHINE"
       - uses: actions/cache/save@v6
         if: steps.tools-cache.outputs.cache-hit != 'true'

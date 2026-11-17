@@ -12,8 +12,9 @@ import subprocess
 
 def bundle(output: Path, expected_machine: int | None = None) -> Path:
     compiler = Path(shutil.which("aapt2") or "")
-    if not compiler.is_file():
-        raise RuntimeError("Install the host's aapt package first")
+    signer = Path(shutil.which("openssl") or "")
+    if not compiler.is_file() or not signer.is_file():
+        raise RuntimeError("Install the build runner's aapt and openssl packages first")
     with compiler.open("rb") as file:
         header = file.read(20)
     machine = struct.unpack_from("<H", header, 18)[0]
@@ -24,9 +25,11 @@ def bundle(output: Path, expected_machine: int | None = None) -> Path:
     libraries.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(compiler, target / "aapt2")
     (target / "aapt2").chmod(0o755)
-    linked = subprocess.check_output(["ldd", str(compiler)], text=True)
+    shutil.copyfile(signer, target / "openssl")
+    (target / "openssl").chmod(0o755)
+    linked = "\n".join(subprocess.check_output(["ldd", str(tool)], text=True) for tool in (compiler, signer))
     system_libraries = {"libc.so.6", "libm.so.6", "libdl.so.2", "libpthread.so.0", "librt.so.1"}
-    sources = [compiler]
+    sources = [compiler, signer]
     for line in linked.splitlines():
         match = re.search(r"=>\s+(/\S+)", line)
         if not match:

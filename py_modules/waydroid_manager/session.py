@@ -12,7 +12,8 @@ from typing import Callable
 from .async_work import complete_thread
 from .container import container_identity, container_pid, session_uses_socket
 from .control import Launch, ServiceControl
-from .display_payload import HWC_PATH, inspect_vendor, select_payload
+from .display_payload import HWC_PATH, inspect_vendor
+from .display_resources import prepare_payload
 from .guest import GUEST_STARTING, LaunchPolicy, android_user_ready
 from .proc import steam_wayland_socket
 from .native_payload import select_native
@@ -31,8 +32,8 @@ class SessionServices:
 
 
 class LaunchSession:
-    def __init__(self, config: Path, payloads: Path, services: SessionServices):
-        self.config, self.payloads, self.services = config, payloads, services
+    def __init__(self, config: Path, plugin: Path, services: SessionServices):
+        self.config, self.plugin, self.services = config, plugin, services
         self.overlay = RuntimeDisplayLease(config)
         self.policy = LaunchPolicy(services.run, container_identity)
         self.control: ServiceControl | None = None
@@ -54,7 +55,7 @@ class LaunchSession:
                 return
             await self.services.ensure_service()
             capable = False
-            if enabled or self.payloads.is_dir() or self.payloads.with_name("display-native").is_dir():
+            if enabled or (self.plugin / "bin/display-native").is_dir():
                 if container_pid() is not None:
                     if enabled:
                         raise RuntimeError("Close the running Waydroid session before enabling its second screen")
@@ -65,17 +66,18 @@ class LaunchSession:
                         if external is None and enabled:
                             raise RuntimeError("The host has no available external Wayland display")
                         identity = await complete_thread(inspect_vendor, self.config, self.services.run)
+                        native = select_native(self.plugin / "bin/display-native", identity.sdk,
+                                               identity.vndk, identity.machine)
+                        native.validate_runtime(identity)
                         files = {}
                         if external is not None:
                             try:
-                                files = select_payload(self.payloads, identity)
+                                files = await complete_thread(prepare_payload, self.plugin, self.config, identity,
+                                                              self.services.run)
                             except RuntimeError:
                                 if enabled:
                                     raise
                                 external = None
-                        native = select_native(self.payloads.with_name("display-native"), identity.sdk,
-                                               identity.vndk, identity.machine)
-                        native.validate_runtime(identity)
                         if external is not None and "external-presentation" not in native.capabilities:
                             raise RuntimeError("The native display build does not support deferred presentation")
                         files[f"vendor/{HWC_PATH}"] = native.root / "hwcomposer.waydroid.so"

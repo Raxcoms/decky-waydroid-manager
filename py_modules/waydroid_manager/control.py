@@ -48,8 +48,10 @@ def control_path(uid: int) -> Path:
 
 
 @contextmanager
-def service_connection(path: Path, command: bytes, timeout: int = 35):
+def service_connection(path: Path, command: bytes, timeout: int | None = None):
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+        if timeout is None:
+            timeout = 200 if command.startswith(b"LAUNCH ") else 35
         connection.settimeout(timeout)
         connection.connect(str(path))
         _, uid, _ = struct.unpack("3i", connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
@@ -231,7 +233,7 @@ class ServiceControl:
                     raise RuntimeError("Invalid Waydroid Manager service request")
                 if launch or command == b"START\n":
                     if launch and self.start_launch:
-                        await asyncio.wait_for(self.start_launch(launch, owner), 30)
+                        await asyncio.wait_for(self.start_launch(launch, owner), 180)
                     else:
                         await asyncio.wait_for(self.start_service(), 30)
                     if launch and owner and self.on_launch:

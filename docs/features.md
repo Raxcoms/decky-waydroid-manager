@@ -67,7 +67,12 @@ When Android is running, the plugin requests a 512-pixel version of the icon fro
 Choose **Enable second screen support** from an app's menu or **Waydroid actions**.
 Each app has its own setting, disabled by default. The setting in **Waydroid
 actions** applies only to the full Waydroid shortcut.
-Confirm the reboot notice, then close existing launches before starting the
+On first enable, a progress dialog checks the installed Android interfaces and
+builds the resource overlays from that image's framework and System UI. This uses
+private tools shipped with the plugin and requires no downloads or host OS changes.
+Later enables reuse a validated cache. An image or resource update rebuilds it.
+
+Confirm the restart notice, then close existing launches before starting the
 enabled shortcut. Android starts a secondary launcher on the host's other screen.
 The menu offers **Disable second screen support** after enabling it.
 

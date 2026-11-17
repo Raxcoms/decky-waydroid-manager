@@ -28,7 +28,7 @@ class LaunchFeatureTests(unittest.IsolatedAsyncioTestCase):
               patch.object(session, "steam_wayland_socket", return_value=None),
               patch.object(session, "discover_external_display", return_value=Mock()),
               patch.object(session, "inspect_vendor", return_value=Mock()),
-              patch.object(session, "select_payload", return_value={}),
+              patch.object(session, "prepare_payload", return_value={}),
               patch.object(session, "select_native", return_value=Mock(root=Path("native"), capabilities={"external-presentation"}))):
             task = asyncio.create_task(self.plugin.start(self.launch, True))
             try:
@@ -71,7 +71,7 @@ class LaunchFeatureTests(unittest.IsolatedAsyncioTestCase):
               patch.object(session, "discover_external_display", return_value=None),
               patch.object(session, "inspect_vendor", return_value=Mock()),
               patch.object(session, "select_native", return_value=native),
-              patch.object(session, "select_payload") as resource_overlay):
+              patch.object(session, "prepare_payload") as resource_overlay):
             await self.plugin.start(self.launch, True)
         resource_overlay.assert_not_called()
         self.assertFalse(self.plugin.capable)
@@ -115,10 +115,23 @@ class LaunchFeatureTests(unittest.IsolatedAsyncioTestCase):
         with (patch.object(session, "container_pid", return_value=None),
               patch.object(session, "discover_external_display", return_value=Mock(socket=Path("external"))),
               patch.object(session, "inspect_vendor", return_value=Mock()),
-              patch.object(session, "select_payload", side_effect=RuntimeError("No compatible payload"))):
+              patch.object(session, "select_native", return_value=Mock(root=Path("native"))),
+              patch.object(session, "prepare_payload", side_effect=RuntimeError("No compatible payload"))):
             with self.assertRaisesRegex(RuntimeError, "No compatible"):
                 await self.plugin.start(self.launch, True)
         self.plugin.overlay.acquire.assert_not_called()
+
+    async def test_incompatible_native_interface_keeps_an_ordinary_launch_on_the_fallback(self):
+        native = Mock()
+        native.validate_runtime.side_effect = RuntimeError("Incompatible Binder interface")
+        with (patch.object(Path, "is_dir", return_value=True),
+              patch.object(session, "container_pid", return_value=None),
+              patch.object(session, "discover_external_display", return_value=None),
+              patch.object(session, "inspect_vendor", return_value=Mock()),
+              patch.object(session, "select_native", return_value=native)):
+            await self.plugin.start(self.launch, True)
+        self.plugin.overlay.acquire.assert_not_called()
+        self.assertFalse(self.plugin.capable)
 
     async def test_runtime_staging_failure_does_not_enable_the_session(self):
         self.state["secondScreen"]["apps"]["example.app"] = True
@@ -128,7 +141,7 @@ class LaunchFeatureTests(unittest.IsolatedAsyncioTestCase):
               patch.object(session, "discover_external_display", return_value=Mock(socket=Path("external"))),
               patch.object(session, "inspect_vendor", return_value=Mock()),
               patch.object(session, "select_native", return_value=Mock(root=Path("native"), capabilities={"external-presentation"})),
-              patch.object(session, "select_payload", return_value={"vendor/lib.so": Path("source")})):
+              patch.object(session, "prepare_payload", return_value={"vendor/lib.so": Path("source")})):
             with self.assertRaisesRegex(RuntimeError, "Could not stage config"):
                 await self.plugin.start(self.launch, True)
         self.plugin.overlay.acquire.assert_called_once()

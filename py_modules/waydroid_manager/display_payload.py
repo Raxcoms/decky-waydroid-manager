@@ -7,6 +7,7 @@ import struct
 import tempfile
 
 from .elf_symbols import dynamic_symbols
+from .image_files import extract
 
 
 HWC_PATH = "lib64/hw/hwcomposer.waydroid.so"
@@ -23,6 +24,7 @@ class VendorIdentity:
     vndk: str = ""
     runtime_symbols: frozenset[str] = frozenset()
     binder_vtable_size: int = 0
+    framework_digest: str = ""
 
 
 def elf_machine(path: Path) -> int:
@@ -60,8 +62,10 @@ def inspect_vendor(config_dir: Path, run) -> VendorIdentity:
         adapter = Path(directory) / "adapter.so"
         run(["debugfs", "-R", f"dump /lib64/libhwc2on1adapter.so {adapter}", str(image)], timeout=15)
         system_ui = Path(directory) / "SystemUI.apk"
-        run(["debugfs", "-R", f"dump /system_ext/priv-app/SystemUI/SystemUI.apk {system_ui}",
-             str(image.with_name("system.img"))], timeout=15)
+        extract(config_dir, "system.img", ("/system_ext/priv-app/SystemUI/SystemUI.apk",
+                "/system/system_ext/priv-app/SystemUI/SystemUI.apk"), system_ui, run)
+        framework = extract(config_dir, "system.img", ("/system/framework/framework-res.apk",),
+                            Path(directory) / "framework-res.apk", run)
         runtime = Path(directory) / "libhidlbase.so"
         for path in ("/system/apex/com.android.vndk.current/lib64/libhidlbase.so",
                      f"/system/apex/com.android.vndk.v{vndk}/lib64/libhidlbase.so",
@@ -72,7 +76,7 @@ def inspect_vendor(config_dir: Path, run) -> VendorIdentity:
         symbols = dynamic_symbols(runtime) if runtime.is_file() else {}
         return VendorIdentity(fingerprint, int(sdk), digest(library), elf_machine(library), digest(adapter),
                               digest(system_ui), vndk, frozenset(symbols),
-                              symbols.get("_ZTVN7android8hardware7IBinderE", 0))
+                              symbols.get("_ZTVN7android8hardware7IBinderE", 0), digest(framework))
 
 
 def select_payload(directory: Path, identity: VendorIdentity) -> dict[str, Path]:

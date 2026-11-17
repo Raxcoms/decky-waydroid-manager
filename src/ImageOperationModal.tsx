@@ -4,7 +4,7 @@ import { t } from "./i18n";
 import { OperationDialog } from "./OperationDialog";
 
 type Props = {
-  operation: "install" | "setup" | "remove";
+  operation: "install" | "setup" | "remove" | "enableDisplay" | "disableDisplay";
   perform: (showLibraryProgress: () => void) => Promise<void>;
   onError: (error: unknown) => string;
   closeModal?: () => void;
@@ -15,12 +15,15 @@ const stageLabels = {
   starting: "packageStarting", booting: "packageBooting", audio: "imageAudio", language: "imageLanguage",
   apps: "imageAppEntries", cleaning: "packageCleaning",
   stopping: "imageStopping", deleting: "imageDeleting",
+  checking: "displayChecking", extracting: "displayExtracting", building: "displayBuilding", ready: "displayReady",
 } as const;
 
 const dialogLabels = {
   install: { title: "installGapps", description: "installGappsDescription", action: "install", busy: "installing" },
   setup: { title: "finishImageSetup", description: "installGappsDescription", action: "finishImageSetup", busy: "installing" },
   remove: { title: "removeWaydroid", description: "removeWaydroidDescription", action: "removeWaydroid", busy: "imageRemoving" },
+  enableDisplay: { title: "enableSecondScreen", description: "secondScreenReboot", action: "enableSecondScreen", busy: "displayPreparing" },
+  disableDisplay: { title: "disableSecondScreen", description: "secondScreenReboot", action: "disableSecondScreen", busy: "displayPreparing" },
 } as const;
 
 export function ImageOperationModal({ operation, perform, onError, closeModal }: Props) {

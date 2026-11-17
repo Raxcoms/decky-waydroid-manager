@@ -3,7 +3,6 @@ import { addToSteam, removeFromSteam, launchSteamShortcut, requireSteamAccount, 
 import { definePlugin, FileSelectionType, openFilePicker, toaster, useQuickAccessVisible } from "@decky/api";
 import {
   ButtonItem,
-  ConfirmModal,
   Field,
   Focusable,
   Menu,
@@ -229,14 +228,13 @@ function AppRow({ app, accountId, isLast, rowRef, setShortcutId, onUninstalled, 
             <MenuItem onSelected={run(add, async () => {}, setMessage)}>{t("addToSteam")}</MenuItem>
           )}
           <MenuItem onSelected={() => {
-            showModal(<ConfirmModal
-              strTitle={app.secondScreen ? t("disableSecondScreen") : t("enableSecondScreen")}
-              strDescription={t("secondScreenReboot")}
-              strOKButtonText={app.secondScreen ? t("disableSecondScreen") : t("enableSecondScreen")}
-              strCancelButtonText={t("cancel")}
-              onOK={() => void setSecondScreenApp(app.package, !app.secondScreen)
-                .then(() => setSecondScreen(!app.secondScreen))
-                .catch((error) => reportError(error, setMessage))}
+            openModal(<ImageOperationModal
+              operation={app.secondScreen ? "disableDisplay" : "enableDisplay"}
+              onError={(error) => reportError(error, setMessage)}
+              perform={async () => {
+                await setSecondScreenApp(app.package, !app.secondScreen);
+                setSecondScreen(!app.secondScreen);
+              }}
             />);
           }}>{app.secondScreen ? t("disableSecondScreen") : t("enableSecondScreen")}</MenuItem>
           {app.removable && (
@@ -404,14 +402,13 @@ function Content() {
             {status.waydroidShortcutId ? t("removeWaydroidShortcut") : t("addWaydroid")}
           </MenuItem>
           <MenuItem onSelected={() => {
-            showModal(<ConfirmModal
-              strTitle={status.secondScreen ? t("disableSecondScreen") : t("enableSecondScreen")}
-              strDescription={t("secondScreenReboot")}
-              strOKButtonText={status.secondScreen ? t("disableSecondScreen") : t("enableSecondScreen")}
-              strCancelButtonText={t("cancel")}
-              onOK={() => void setSecondScreenContainer(!status.secondScreen)
-                .then(() => setStatus((current) => current ? { ...current, secondScreen: !status.secondScreen } : current))
-                .catch((error) => reportError(error, setMessage))}
+            openModal(<ImageOperationModal
+              operation={status.secondScreen ? "disableDisplay" : "enableDisplay"}
+              onError={(error) => reportError(error, setMessage)}
+              perform={async () => {
+                await setSecondScreenContainer(!status.secondScreen);
+                setStatus((current) => current ? { ...current, secondScreen: !status.secondScreen } : current);
+              }}
             />);
           }}>{status.secondScreen ? t("disableSecondScreen") : t("enableSecondScreen")}</MenuItem>
         </AppMenu>,
