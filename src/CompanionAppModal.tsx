@@ -52,9 +52,11 @@ export function CompanionAppModal({ app, apps, onSelect, onError, closeModal }: 
     onCancel={close}
     onOK={() => void save()}
   >
-    <DropdownItem label={t("companionApp")} menuLabel={t("companionApp")}
-      strDefaultLabel={t("selectCompanion")} rgOptions={options} selectedOption={selected}
-      onChange={(option) => setSelected(option.data)} disabled={busy || !options.length} />
+    <div style={{ marginBlockStart: 24 }}>
+      <DropdownItem label={t("companionApp")} menuLabel={t("companionApp")}
+        strDefaultLabel={t("selectCompanion")} rgOptions={options} selectedOption={selected}
+        onChange={(option) => setSelected(option.data)} disabled={busy || !options.length} />
+    </div>
     {!options.length && <DialogBodyText>{t("noCompanionApps")}</DialogBodyText>}
     {error && <div role="alert"><DialogBodyText>{error}</DialogBodyText></div>}
   </ConfirmModal>;
