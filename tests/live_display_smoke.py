@@ -11,7 +11,9 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
 from waydroid_manager.container import CONFIG_DIR, container_pid
-from waydroid_manager.display_payload import inspect_vendor, select_payload
+from waydroid_manager.display_payload import HWC_PATH, inspect_vendor
+from waydroid_manager.display_resources import prepare_payload
+from waydroid_manager.native_payload import select_native
 from waydroid_manager.guest import android_user_ready, keep_package_guest_running
 from waydroid_manager.packages import install_apks
 from waydroid_manager.verification import InstallVerification, commit_install
@@ -38,7 +40,11 @@ def smoke(root: Path, user: str, abandoned_sessions: list[str]):
     if container_pid() is not None or "STOPPED" not in run(["waydroid", "status"]):
         raise RuntimeError("Close the Android session before running this test")
     identity = inspect_vendor(CONFIG_DIR, run)
-    files = select_payload(root / "display-payloads", identity)
+    native = select_native(root / "bin/display-native", identity.sdk, identity.vndk, identity.machine)
+    native.validate_runtime(identity)
+    files = prepare_payload(root, CONFIG_DIR, identity, run)
+    files[f"vendor/{HWC_PATH}"] = native.root / "hwcomposer.waydroid.so"
+    files["vendor/lib64/libhwc2on1adapter.so"] = native.root / "libhwc2on1adapter.so"
     user_command = ["runuser", "-u", user, "--", "env", f"HOME={account.pw_dir}",
                     f"XDG_RUNTIME_DIR=/run/user/{uid}",
                     f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus",

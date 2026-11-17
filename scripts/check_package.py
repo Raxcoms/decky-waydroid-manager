@@ -24,9 +24,7 @@ def check(root: Path) -> None:
     for path in root.rglob("*"):
         if not path.name.lower().endswith((".apk", ".xapk", ".apk.part", ".xapk.part")):
             continue
-        if (path.name not in {"WaydroidManagerExternalDisplay.apk", "WaydroidManagerNavigationBar.apk"}
-                or not path.is_relative_to(root / "bin/display-payloads")):
-            raise RuntimeError("Android test packages must not be shipped")
+        raise RuntimeError("Compiled Android packages must be prepared from the installed image, not shipped")
     helper = root / "bin/waydroid-verifier.dex"
     if not helper.is_file() or not helper.read_bytes().startswith(b"dex\n"):
         raise RuntimeError("Build the Android verification helper before packaging")
@@ -43,25 +41,34 @@ def check(root: Path) -> None:
     spec.loader.exec_module(backend)
     backend.Plugin()
     from waydroid_manager.native_payload import NativePayload
-    for manifest in (root / "bin/display-native").glob("*/manifest.json"):
-        NativePayload.load(manifest.parent)
-    from waydroid_manager.display_payload import VendorIdentity, digest, select_payload
-    payloads = root / "bin/display-payloads"
-    identities = set()
-    for manifest in payloads.glob("*/manifest.json"):
-        metadata = json.loads(manifest.read_text(encoding="utf-8"))
-        identity = VendorIdentity(metadata["vendorFingerprint"], metadata["sdk"],
-                                  metadata["stockComposerSha256"], metadata["elfMachine"],
-                                  metadata["stockAdapterSha256"], metadata["stockSystemUiSha256"])
-        if identity in identities:
-            raise RuntimeError("Multiple payloads target the same Waydroid vendor image")
-        identities.add(identity)
-        select_payload(payloads, identity)
-        if digest(manifest.parent / "source-manifest.xml") != metadata["sourceManifestSha256"]:
-            raise RuntimeError("The payload source manifest failed validation")
-        for name in ("NOTICE.txt", "composer-source.patch", "adapter-source.patch"):
-            if not (manifest.parent / name).is_file() or not (manifest.parent / name).stat().st_size:
-                raise RuntimeError(f"Missing payload provenance: {name}")
+    manifests = list((root / "bin/display-native").glob("*/manifest.json"))
+    if not manifests:
+        raise RuntimeError("The packaged native builds are missing")
+    for manifest in manifests:
+        payload = NativePayload.load(manifest.parent)
+        if not payload.binder_vtable_size or not (manifest.parent / "NOTICE.txt").is_file():
+            raise RuntimeError("The native ABI contract or license notices are missing")
+    from waydroid_manager.display_payload import digest, elf_machine
+    tools = list((root / "bin/display-tools").glob("*/manifest.json"))
+    if not tools:
+        raise RuntimeError("The private resource tools are missing")
+    for manifest in tools:
+        metadata = json.loads(manifest.read_text())
+        if not {"aapt2", "openssl", "NOTICE.txt"}.issubset(metadata.get("files", {})):
+            raise RuntimeError("The private resource tool bundle is incomplete")
+        for name, checksum in metadata["files"].items():
+            path = manifest.parent / name
+            if Path(name).is_absolute() or ".." in Path(name).parts or path.is_symlink() or digest(path) != checksum:
+                raise RuntimeError("A packaged runtime tool failed validation")
+        for name in ("aapt2", "openssl"):
+            if elf_machine(manifest.parent / name) != metadata["elfMachine"]:
+                raise RuntimeError("A resource tool has the wrong architecture")
+    for name in ("framework/AndroidManifest.xml", "framework/res/values/config.xml",
+                 "navigation/AndroidManifest.xml", "navigation/res/layout/navigation_bar.xml",
+                 "navigation/res/layout/recent_apps.xml", "navigation/res/drawable/ic_sysbar_recent.xml",
+                 "display_settings.xml", "wayland_tablet.idc"):
+        if not (root / "resources/display" / name).is_file():
+            raise RuntimeError("The display resource sources are incomplete")
 
 
 if __name__ == "__main__":

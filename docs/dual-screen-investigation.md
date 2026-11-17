@@ -12,11 +12,12 @@ switcher on the primary screen, using Android's native app-switch key.
 
 1. Open an Android app's menu, or **Waydroid actions** for the full container.
 2. Select **Enable second screen support**.
-3. Confirm the dialog. It explains that the feature works after a reboot.
+3. Confirm the dialog and wait for local resource preparation to finish.
 4. Close existing Waydroid launches before starting the enabled shortcut.
 
-The menu then offers **Disable second screen support**. An app's choice overrides
-the container default. Removing an app removes its saved choice.
+The menu then offers **Disable second screen support**. Each app has its own
+choice; the container setting applies only to the full Waydroid shortcut.
+Removing an app removes its saved choice.
 
 Only launches through Waydroid Manager use these settings. Starting ordinary
 Waydroid outside the plugin continues to use its installed image and settings.
@@ -24,7 +25,7 @@ Waydroid outside the plugin continues to use its installed image and settings.
 ## Sharing and returning the screen
 
 Enabled and ordinary Steam shortcuts can share one plugin-owned Android session
-when its matching display payload is available. Joining an existing session does
+when its display resources are available. Joining an existing session does
 not restart Android. The external display remains connected while at least one
 enabled shortcut is open. Closing the final enabled shortcut withdraws it and
 returns the secondary output to the host's previous window. Other ordinary
@@ -37,17 +38,16 @@ compositor or change Armada's display configuration.
 
 ## Compatibility
 
-This requires a host-provided secondary Wayland socket and a payload matching the
-installed Waydroid vendor image. The bundled payload targets the tested 64-bit
-Android 13 image with vendor fingerprint:
+This requires a host-provided secondary Wayland socket and a compatible native
+profile. The current profile supports Android 13 ARM64 with the declared VNDK
+and Waydroid Binder interface. Startup checks required exports and vtable size
+rather than assuming all Android 13 images have the same native ABI.
 
-```text
-waydroid/lineage_waydroid_arm64/waydroid_arm64:13/TQ3A.230901.001/aleasto10221218:userdebug/test-keys
-```
-
-Selection also checks the original composer and adapter hashes and the payload's
-architecture, System UI APK hash, and payload file hashes. A different image needs a separately built and
-validated payload. Rebooting cannot resolve an image mismatch.
+First enable builds resource overlays against the installed framework and System
+UI with tools stored privately in the plugin. A matching cache avoids rebuilding;
+resource, image, or recipe changes invalidate it. This does not download
+dependencies or modify Armada's immutable base. An unsupported native interface
+requires a matching tested profile; it is not replaced or patched in the image.
 
 Display discovery uses the current user's host environment snapshots. Integrators
 can provide `WAYDROID_MANAGER_EXTERNAL_WAYLAND_DISPLAY` or

@@ -39,6 +39,7 @@ To publish an official release, merge the `package.json` version bump into `main
 
 [Creative Commons Attribution 4.0 International](LICENSE) (CC BY 4.0).
 
-Bundled Android display libraries retain their upstream licenses. Each payload
-includes its source revisions, patches, and third-party notices in
-[`bin/display-payloads`](bin/display-payloads).
+CI-built Android display libraries retain their upstream licenses. Packaged native
+builds and private host tools include their checksums and third-party notices.
+See the [native build guide](android/native/README.md). Image-specific resource
+overlays are built locally from the installed image; compiled outputs stay outside Git.

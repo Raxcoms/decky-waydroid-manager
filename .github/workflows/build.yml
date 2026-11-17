@@ -154,6 +154,7 @@ jobs:
         run: python3 scripts/build_android.py
       - name: Run tests
         run: |
+          python3 scripts/check_sources.py
           python3 -m unittest discover -s tests -v
           node --experimental-strip-types --test tests/*.test.mts
           for script in bin/waydroid-launcher bin/waydroid-game-session bin/waydroid-session; do

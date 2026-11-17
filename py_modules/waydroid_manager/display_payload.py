@@ -1,7 +1,6 @@
 import configparser
 from dataclasses import dataclass
 import hashlib
-import json
 from pathlib import Path
 import struct
 import tempfile
@@ -77,46 +76,3 @@ def inspect_vendor(config_dir: Path, run) -> VendorIdentity:
         return VendorIdentity(fingerprint, int(sdk), digest(library), elf_machine(library), digest(adapter),
                               digest(system_ui), vndk, frozenset(symbols),
                               symbols.get("_ZTVN7android8hardware7IBinderE", 0), digest(framework))
-
-
-def select_payload(directory: Path, identity: VendorIdentity) -> dict[str, Path]:
-    if not directory.is_dir():
-        raise RuntimeError("No external display payload is bundled for this Waydroid image")
-    for manifest in sorted(directory.glob("*/manifest.json")):
-        try:
-            if manifest.stat().st_size > 1024 * 1024:
-                raise ValueError("Payload manifest is too large")
-            metadata = json.loads(manifest.read_text(encoding="utf-8"))
-            if not isinstance(metadata, dict):
-                raise ValueError("Payload manifest must contain an object")
-        except (OSError, ValueError) as error:
-            raise RuntimeError("The external display payload manifest is invalid") from error
-        expected = {
-            "vendorFingerprint": identity.fingerprint,
-            "sdk": identity.sdk,
-            "stockComposerSha256": identity.composer_digest,
-            "elfMachine": identity.machine,
-            "stockAdapterSha256": identity.adapter_digest,
-            "stockSystemUiSha256": identity.system_ui_digest,
-        }
-        if any(metadata.get(key) != value for key, value in expected.items()):
-            continue
-        payload_files = {
-            f"vendor/{HWC_PATH}": ("hwcomposer.waydroid.so", "composerSha256"),
-            "vendor/lib64/libhwc2on1adapter.so": ("libhwc2on1adapter.so", "adapterSha256"),
-            "system/product/overlay/WaydroidManagerExternalDisplay.apk":
-                ("WaydroidManagerExternalDisplay.apk", "overlaySha256"),
-            "system/usr/idc/wayland_tablet.idc": ("wayland_tablet.idc", "inputConfigSha256"),
-            "vendor/etc/display_settings.xml": ("display_settings.xml", "displaySettingsSha256"),
-            "system/product/overlay/WaydroidManagerNavigationBar.apk":
-                ("WaydroidManagerNavigationBar.apk", "navigationOverlaySha256"),
-        }
-        result = {}
-        for target, (name, checksum) in payload_files.items():
-            source = manifest.parent / name
-            if (source.is_symlink() or not source.is_file() or digest(source) != metadata.get(checksum)
-                    or (name.endswith(".so") and elf_machine(source) != identity.machine)):
-                raise RuntimeError("The bundled external display payload failed validation")
-            result[target] = source
-        return result
-    raise RuntimeError("No compatible external display payload is bundled for this Waydroid image")

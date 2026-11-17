@@ -18,7 +18,7 @@ export ANDROID_NDK_HOME=/path/to/the/required/ndk
 python3 scripts/build_native.py android/native/profiles/android-13-arm64.json out/display-native
 ```
 
-The native CI workflow discovers profiles from `profiles/` and builds each one.
+The regular plugin build discovers profiles from `profiles/` and builds each one.
 Build outputs and third-party dependencies stay outside Git.
 
 ## What gets built
@@ -43,4 +43,6 @@ native build output and 7 MB for host tools. Its standalone NDK occupied 1.7 GB.
 The two stripped native libraries totalled about 1.4 MB. These are development
 measurements; CI artifacts report their actual contents.
 
-The device does not need this build environment or its downloads.
+The device does not need this native build environment or its downloads. It only
+compiles the small image-specific resource overlays, using the compiler and
+signer already packaged privately with the plugin.
