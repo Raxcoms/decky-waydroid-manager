@@ -5,6 +5,7 @@ import { OperationDialog } from "./OperationDialog";
 
 type Props = {
   operation: "install" | "setup" | "remove" | "enableDisplay" | "disableDisplay";
+  title?: string;
   perform: (showLibraryProgress: () => void) => Promise<void>;
   onError: (error: unknown) => string;
   closeModal?: () => void;
@@ -26,7 +27,7 @@ const dialogLabels = {
   disableDisplay: { title: "disableSecondScreen", description: "secondScreenReboot", action: "disableSecondScreen", busy: "displayPreparing" },
 } as const;
 
-export function ImageOperationModal({ operation, perform, onError, closeModal }: Props) {
+export function ImageOperationModal({ operation, title, perform, onError, closeModal }: Props) {
   const running = useRef(false);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<ImageProgress | null>(null);
@@ -78,7 +79,7 @@ export function ImageOperationModal({ operation, perform, onError, closeModal }:
   if (stage === "downloading" && percent !== undefined) label = t("imageDownloadPercent", { percent });
   if (removingShortcuts) label = t("imageRemovingShortcuts");
   return <OperationDialog
-    title={t(labels.title)}
+    title={title ?? t(labels.title)}
     description={t(labels.description)}
     action={t(busy ? labels.busy : labels.action)}
     busy={busy}

@@ -405,13 +405,19 @@ function Content() {
           {(status.secondScreenAvailable || status.secondScreen) && <MenuItem onSelected={() => {
             openModal(<ImageOperationModal
               operation={status.secondScreen ? "disableDisplay" : "enableDisplay"}
+              title={t(status.secondScreen ? "disableFullSecondScreen" : "enableFullSecondScreen")}
               onError={(error) => reportError(error, setMessage)}
               perform={async () => {
                 await setSecondScreenContainer(!status.secondScreen);
                 setStatus((current) => current ? { ...current, secondScreen: !status.secondScreen } : current);
               }}
             />);
-          }}>{status.secondScreen ? t("disableSecondScreen") : t("enableSecondScreen")}</MenuItem>}
+          }}>{status.secondScreen ? t("disableFullSecondScreen") : t("enableFullSecondScreen")}</MenuItem>}
+          <MenuItem onSelected={() => openModal(<ImageOperationModal
+            operation="remove"
+            perform={removeWaydroid}
+            onError={(error) => reportError(error, setMessage)}
+          />)}>{t("removeWaydroidButton")}</MenuItem>
         </AppMenu>,
       );
     } catch (error) {
@@ -459,21 +465,6 @@ function Content() {
               </ButtonItem>
             </PanelSectionRow>
           </>
-        )}
-        {status?.initialized && (
-          <PanelSectionRow>
-            <ButtonItem
-              layout="below"
-              bottomSeparator="none"
-              onClick={() => openModal(<ImageOperationModal
-                operation="remove"
-                perform={removeWaydroid}
-                onError={(error) => reportError(error, setMessage)}
-              />)}
-            >
-              {t("removeWaydroidButton")}
-            </ButtonItem>
-          </PanelSectionRow>
         )}
       </PanelSection>
       </Focusable>
