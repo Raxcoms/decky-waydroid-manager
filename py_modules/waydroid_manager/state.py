@@ -17,7 +17,7 @@ class StateStore:
     @staticmethod
     def defaults() -> dict:
         return {"accounts": {}, "removableApps": [], "artwork": {}, "secondScreen": StateStore.second_screen_defaults(),
-                "companions": {}}
+                "companions": {}, "sharedHome": False}
 
     @staticmethod
     def second_screen_defaults() -> dict:
@@ -97,6 +97,7 @@ class StateStore:
                                    if isinstance(package, str) and self.PACKAGE.fullmatch(package)
                                    and isinstance(companion, str) and self.PACKAGE.fullmatch(companion)
                                    and package != companion}
+        state["sharedHome"] = saved.get("sharedHome") is True
         accounts = saved.get("accounts")
         if isinstance(accounts, dict):
             state["accounts"] = {key: self._shortcut_state(value) for key, value in accounts.items()

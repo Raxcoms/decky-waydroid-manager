@@ -61,7 +61,7 @@ class Plugin:
         self._session = LaunchSession(
             WAYDROID_DIR, Path(decky.DECKY_PLUGIN_DIR),
             SessionServices(self._run, self._run_user_session, self._ensure_service,
-                            self._user, self._second_screen_enabled, companion=self._companion_app),
+                            self._user, self._second_screen_enabled, companion=self._companion_app, shared_home=self._shared_home_enabled),
         )
 
     def _run_user_session(self, command: list[str], timeout: int = 30) -> str:
@@ -79,6 +79,10 @@ class Plugin:
     def _companion_app(self, package: str | None) -> str | None:
         _, _, home = self._user()
         return self._load_state(home)["companions"].get(package)
+
+    def _shared_home_enabled(self) -> bool:
+        _, _, home = self._user()
+        return self._load_state(home)["sharedHome"]
 
     @contextmanager
     def _edit_state(self, home: Path):
@@ -294,6 +298,7 @@ class Plugin:
             "autoAddApps": history["autoAddApps"],
             "secondScreen": StateStore.second_screen_enabled(state),
             "secondScreenAvailable": self._second_screen_available(),
+            "sharedHome": state["sharedHome"],
             "accountId": account_id,
             "userHome": str(home),
             "waydroidShortcutId": shortcut_ids.get(WAYDROID_SHORTCUT_KEY),
@@ -375,6 +380,13 @@ class Plugin:
             await self._prepare_second_screen()
         with self._edit_state(home) as state:
             StateStore.second_screen(state)["container"] = enabled
+
+    async def set_shared_home(self, enabled: bool) -> None:
+        if type(enabled) is not bool:
+            raise RuntimeError("Invalid shared home setting")
+        _, _, home = self._user()
+        with self._edit_state(home) as state:
+            state["sharedHome"] = enabled
 
     async def set_second_screen_app(self, package: str, enabled: bool) -> None:
         if not PACKAGE_RE.fullmatch(package) or type(enabled) is not bool:
@@ -932,10 +944,11 @@ class Plugin:
     async def _ensure_service(self) -> None:
         if not self._initialized():
             raise RuntimeError("WAYDROID_NOT_INSTALLED")
-        if self._session.overlay.root.exists():
-            if container_pid() is not None:
-                raise RuntimeError("A previous second-screen session is still closing")
-            await asyncio.to_thread(self._session.overlay.recover)
+        for lease in (self._session.overlay, self._session.home):
+            if lease.root.exists():
+                if container_pid() is not None:
+                    raise RuntimeError("A previous plugin session is still closing")
+                await asyncio.to_thread(lease.recover)
         if self._overlay.manifest.exists() or self._session_config.manifest.exists():
             if container_pid() is not None:
                 raise RuntimeError("Waydroid has a pending second-screen transaction. Stop Waydroid before launching it again.")

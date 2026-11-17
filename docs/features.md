@@ -101,6 +101,21 @@ The menu then shows **Unlink companion app**, with the linked app's icon on the 
 
 Both apps use the same Steam shortcut and frame-limit settings. Closing the shortcut also closes its companion, unless another active plugin shortcut still uses that app. Companion links are available only for individual apps.
 
+## Access your host home folder
+
+Choose **Share home folder with Android** in **Waydroid actions**, then close and
+reopen your Waydroid shortcuts. Open **Internal storage > HostHome** in Android's
+file picker. Apps can read and write files there, including through Android's
+folder-access picker.
+
+This setting applies to all plugin launches. Changes in Android also change the
+files in your host home folder. The mount belongs to the plugin's Android session
+and disappears when that container exits. Choose **Stop sharing home folder** to
+disable it for future sessions.
+
+The host kernel and home filesystem must support idmapped mounts. Sharing does
+not change your host files' ownership or permissions.
+
 ## Manage Waydroid
 
 Use **Start**, **Restart**, or **Stop** under **Waydroid Service** to manage the container service. To delete Waydroid, its Android apps and data, and the associated Steam shortcuts, select **Uninstall Waydroid** under **Waydroid Status**.

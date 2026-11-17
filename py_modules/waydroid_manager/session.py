@@ -19,6 +19,7 @@ from .proc import steam_wayland_socket
 from .native_payload import select_native
 from .runtime_display import RuntimeDisplayLease
 from .second_screen import discover_external_display
+from .shared_home import SharedHome
 
 
 @dataclass
@@ -30,6 +31,7 @@ class SessionServices:
     enabled: Callable
     logger: logging.Logger = field(default_factory=lambda: logging.getLogger(__name__))
     companion: Callable = lambda package: None
+    shared_home: Callable = lambda: False
 
 
 class LaunchSession:
@@ -45,6 +47,7 @@ class LaunchSession:
         self.external_display: str | None = None
         self.display_users: set[tuple[int, str]] = set()
         self.presented_users: set[tuple[int, str]] = set()
+        self.home = SharedHome(config, plugin / "bin/display-tools")
 
     async def start(self, launch: Launch, owner: bool) -> None:
         async with self.lock:
@@ -141,6 +144,9 @@ class LaunchSession:
             raise RuntimeError("Waydroid launch is no longer active")
         if not android_user_ready(self.services.run):
             raise RuntimeError(GUEST_STARTING)
+        if self.services.shared_home():
+            _, uid, home = self.services.user()
+            self.home.ensure(home, uid, launch.display, self.services.run)
         self._initialize_external(launch)
         self.policy.save(mode)
 
@@ -193,6 +199,10 @@ class LaunchSession:
         try:
             if session_uses_socket(launch.display):
                 try:
+                    self.home.release(self.services.run)
+                except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                    self.services.logger.warning("Could not detach the shared home: %s", error)
+                try:
                     self.policy.restore()
                 except (OSError, RuntimeError, subprocess.SubprocessError) as error:
                     self.services.logger.warning("Could not restore Android display policy: %s", error)
@@ -217,3 +227,4 @@ class LaunchSession:
                     time.sleep(0.1)
                 if container_pid() is None:
                     self.overlay.recover()
+                    self.home.recover()

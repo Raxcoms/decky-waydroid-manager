@@ -54,13 +54,13 @@ def check(root: Path) -> None:
         raise RuntimeError("The private resource tools are missing")
     for manifest in tools:
         metadata = json.loads(manifest.read_text())
-        if not {"aapt2", "openssl", "NOTICE.txt"}.issubset(metadata.get("files", {})):
+        if not {"aapt2", "openssl", "home-mount", "NOTICE.txt"}.issubset(metadata.get("files", {})):
             raise RuntimeError("The private resource tool bundle is incomplete")
         for name, checksum in metadata["files"].items():
             path = manifest.parent / name
             if Path(name).is_absolute() or ".." in Path(name).parts or path.is_symlink() or digest(path) != checksum:
                 raise RuntimeError("A packaged runtime tool failed validation")
-        for name in ("aapt2", "openssl"):
+        for name in ("aapt2", "openssl", "home-mount"):
             if elf_machine(manifest.parent / name) != metadata["elfMachine"]:
                 raise RuntimeError("A resource tool has the wrong architecture")
             if not os.access(manifest.parent / name, os.X_OK):
