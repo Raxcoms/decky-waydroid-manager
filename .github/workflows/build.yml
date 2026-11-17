@@ -150,7 +150,7 @@ jobs:
           packages: ''
       - name: Install Android build dependencies
         run: android --sdk="$ANDROID_HOME" sdk install build-tools/35.0.0 platforms/android-35
-      - name: Build Android verification helper
+      - name: Build Android runtime helpers
         run: python3 scripts/build_android.py
       - name: Run tests
         run: |

@@ -27,6 +27,15 @@ class NativePayloadTests(unittest.TestCase):
             (payload / "manifest.json").write_text(json.dumps(metadata))
             self.assertEqual(select_native(root, 33, "33", 183).root, payload)
             self.assertIn("external-presentation", select_native(root, 33, "33", 183).capabilities)
+            metadata["densityReference"] = {"width": 1280, "height": 720, "dpi": 180}
+            (payload / "manifest.json").write_text(json.dumps(metadata))
+            self.assertEqual(NativePayload.load(payload).density_reference, (1280, 720, 180))
+            metadata["densityReference"]["dpi"] = True
+            (payload / "manifest.json").write_text(json.dumps(metadata))
+            with self.assertRaisesRegex(RuntimeError, "density reference"):
+                NativePayload.load(payload)
+            metadata["densityReference"]["dpi"] = 180
+            (payload / "manifest.json").write_text(json.dumps(metadata))
             with self.assertRaisesRegex(RuntimeError, "compatible"):
                 select_native(root, 33, "32", 183)
             with self.assertRaisesRegex(RuntimeError, "compatible"):

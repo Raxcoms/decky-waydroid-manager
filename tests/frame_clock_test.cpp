@@ -1,17 +1,10 @@
 #include "frame_clock.h"
-#include "display_density.h"
 #include <algorithm>
 #include <cassert>
 
 using waydroid_manager::FrameClock;
 
 int main() {
-    assert(waydroid_manager::display_density(180, 1, 1280, 720, 720) == 180);
-    assert(waydroid_manager::display_density(180, 1, 1920, 1080, 720) == 270);
-    assert(waydroid_manager::display_density(180, 1, 1080, 1920, 720) == 270);
-    assert(waydroid_manager::display_density(180, 2, 960, 540, 720) == 270);
-    assert(waydroid_manager::display_density(240, 1, 1920, 1080, 720) == 360);
-    assert(waydroid_manager::display_density(180, 1, 0, 0, 720) == 180);
     // Mixed refresh rates must keep their own cadence over many wake-ups.
     FrameClock primary, external;
     const int64_t primary_period = 1000000000LL / 144;

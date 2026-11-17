@@ -52,6 +52,16 @@ The composer overlay and frame-limit policy are temporary. Closing the last plug
 
 Without a compatible native build, the existing Android 13 per-app limiter remains available. That fallback only supports refresh-rate divisors and does not cap every Android UI surface. Other Android versions need a compatible native profile before display-wide limiting can be enabled.
 
+### Interface scaling
+
+Compatible images scale Android's interface with the launch resolution, using the 720p layout as a reference. On the default image, 720p uses 180 DPI and Full HD uses 270 DPI. Existing image density curves and explicit custom DPI settings take priority. The scaling applies only to plugin launches.
+
+### Generated artwork
+
+Generated covers, banners and heroes use twice Steam's standard image dimensions. They use a stronger color gradient over a softened app-icon background, and the hero icon is centered.
+
+When Android is running, the plugin requests a 512-pixel version of the icon from the app's actual launcher activity, including aliases and adaptive icons. It caches that icon for offline artwork generation. Existing exported icons remain the fallback. Only untouched plugin-generated artwork is refreshed; custom artwork is preserved.
+
 ## Use a second screen
 
 Choose **Enable second screen support** from an app's menu or **Waydroid actions**.

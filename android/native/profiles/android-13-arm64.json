@@ -155,6 +155,7 @@
   "ndkVersion": "25.2.9519653",
   "elfMachine": 183,
   "vndkVersion": "33",
+  "densityReference": {"width": 1280, "height": 720, "dpi": 180},
   "capabilities": ["external-presentation", "display-frame-limit"],
   "exportedHeaderPatches": [
     {"project": "system/libhwbinder", "include": "include/hwbinder/IBinder.h"}
@@ -209,10 +210,6 @@
     {
       "project": "hardware/interfaces",
       "file": "android/hwc/display-validation-adapter.patch"
-    },
-    {
-      "project": "hardware/waydroid",
-      "file": "android/hwc/display-density.patch"
     },
     {
       "project": "system/tools/hidl",

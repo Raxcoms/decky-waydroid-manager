@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 from pathlib import Path
 import shutil
@@ -53,7 +54,8 @@ class RuntimeDisplayLease:
         return subprocess.check_output(["/usr/bin/python3", "-I", str(Path(__file__).with_name("display_settings.py")),
                                         str(existing)], env=clean_env(), timeout=5)
 
-    def acquire(self, files: dict[str, Path], external: Path | None, run, display: Path) -> None:
+    def acquire(self, files: dict[str, Path], external: Path | None, run, display: Path,
+                *, density_reference: tuple[int, int, int] | None = None) -> None:
         from .session_config import SessionConfigLease
 
         if self.root.exists():
@@ -63,6 +65,13 @@ class RuntimeDisplayLease:
         overlay.mkdir()
         mounts = []
         try:
+            if density_reference:
+                from .density import CONFIG, prepare_density
+                try:
+                    prepare_density(self.config_dir, overlay, density_reference, run)
+                except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+                    (overlay / CONFIG).unlink(missing_ok=True)
+                    logging.getLogger(__name__).warning("Automatic Android density unavailable: %s", error)
             for name, source in files.items():
                 relative = Path(name)
                 if relative.is_absolute() or ".." in relative.parts:

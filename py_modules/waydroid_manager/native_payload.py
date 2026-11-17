@@ -18,6 +18,7 @@ class NativePayload:
     machine: int
     recipe: str
     capabilities: frozenset[str] = frozenset()
+    density_reference: tuple[int, int, int] | None = None
 
     @classmethod
     def load(cls, root: Path) -> "NativePayload":
@@ -37,8 +38,14 @@ class NativePayload:
         capabilities = metadata.get("capabilities", [])
         if not isinstance(capabilities, list) or not all(isinstance(value, str) for value in capabilities):
             raise RuntimeError("Invalid native display capabilities")
+        reference = metadata.get("densityReference")
+        if reference is not None:
+            if (not isinstance(reference, dict) or set(reference) != {"width", "height", "dpi"}
+                    or any(type(value) is not int or not 1 <= value <= 32767 for value in reference.values())):
+                raise RuntimeError("Invalid display density reference")
+            reference = reference["width"], reference["height"], reference["dpi"]
         return cls(root, metadata["sdk"], metadata["vndkVersion"], metadata["elfMachine"], metadata["recipeSha256"],
-                   frozenset(capabilities))
+                   frozenset(capabilities), reference)
 
 
 def select_native(directory: Path, sdk: int, vndk: str, machine: int) -> NativePayload:

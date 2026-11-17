@@ -91,7 +91,8 @@ class LaunchSession:
                         self.services.logger.info("Second screen unavailable for this session: %s", error)
                     else:
                         await asyncio.to_thread(self.overlay.acquire, files, external_relay,
-                                                self.services.run, launch.display)
+                                                self.services.run, launch.display,
+                                                density_reference=native.density_reference)
                         capable = external_relay is not None
             self.capable = capable
             self.requests[launch.process] = enabled
