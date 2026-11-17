@@ -50,9 +50,10 @@ class HostStorageTests(unittest.TestCase):
             storage.ready = True
             storage.guest = (123, "boot")
             storage.process = (456, "provider")
+            storage.user = "7"
             storage.uid, storage.gid = os.getuid(), os.getgid()
             storage.home = root / "home"
-            storage.mounts = {"Home": (1, "/data/media/0/Host/Home", "2", "0")}
+            storage.mounts = {"Home": (1, "/data/user/7/waydroid.manager.storage/files/Host/Home", "2", "0")}
             (root / "view").mkdir()
             storage._unmount = Mock(side_effect=lambda name, run: storage.mounts.pop(name))
             storage._mount = Mock(side_effect=lambda name, source, run: storage.mounts.update({name: (1, str(source), "3", "0")}))
