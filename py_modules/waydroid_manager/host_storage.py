@@ -37,7 +37,7 @@ def mounted_volumes(run) -> list[HostVolume]:
         for value in mounts:
             path = Path(os.fsdecode(bytes(value).rstrip(b"\0")))
             if path.is_absolute() and path.is_dir():
-                result.append(HostVolume(properties.get("IdUUID") or identifier,
+                result.append(HostVolume(identifier,
                                          properties.get("IdLabel") or path.name, path.resolve()))
                 break
     return result
@@ -61,7 +61,7 @@ class StorageMonitor:
         try:
             match = f"type='signal',sender='{SERVICE}',interface='org.freedesktop.DBus.Properties',member='PropertiesChanged'"
             process = await asyncio.create_subprocess_exec(
-                "busctl", "--system", "--json=short", f"--match={match}", "monitor", SERVICE,
+                "busctl", "--system", "--json=short", f"--match={match}", "monitor",
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL, env=clean_env())
             while line := await process.stdout.readline():
                 message = json.loads(line)

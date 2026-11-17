@@ -29,6 +29,16 @@ class HostStorageTests(unittest.TestCase):
         self.assertEqual(folder_name("../Games/SD\\Card\x00"), "_Games_SD_Card_")
         self.assertEqual(folder_name(".."), "Storage")
 
+    def test_cloned_volume_uuids_do_not_merge_two_drives(self):
+        with tempfile.TemporaryDirectory() as directory:
+            mount = list(os.fsencode(directory) + b"\0")
+            objects = {name: {
+                BLOCK: {"HintSystem": {"data": False}, "IdUUID": {"data": "same-uuid"}},
+                FILESYSTEM: {"MountPoints": {"data": [mount]}},
+            } for name in ("first", "second")}
+            run = Mock(return_value=json.dumps({"data": [objects]}))
+            self.assertEqual({volume.identity for volume in mounted_volumes(run)}, {"first", "second"})
+
     def test_duplicate_labels_keep_distinct_mounts_and_removal_releases_only_that_volume(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

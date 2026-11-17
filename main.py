@@ -1142,8 +1142,12 @@ class Plugin:
                 guest = await complete_thread(registered_guest, registration.display)
             launch = registration.process if guest and registration else None
             if guest and self._storage_changed:
-                await self._session.refresh_storage()
                 self._storage_changed = False
+                try:
+                    await self._session.refresh_storage()
+                except Exception:
+                    self._storage_changed = True
+                    raise
             metrics = registration.display.with_name("metrics") if launch and registration else None
             try:
                 await complete_thread(self._gpu_metrics.sync, launch, uid, metrics, guest)
