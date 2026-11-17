@@ -57,6 +57,17 @@ class DensityTests(unittest.TestCase):
             vendor.write_text("<displayConfiguration />")
             original = "<displayConfiguration><densityMapping><density><width>1280</width><height>720</height><density>240</density></density></densityMapping></displayConfiguration>"
             def run(args, **kwargs):
-                return original if args[2] == "cat /product/etc/displayconfig/default.xml" else ""
+                if args[2].startswith("dump /product/etc/displayconfig/default.xml "):
+                    Path(args[2].split(" ", 2)[2]).write_text(original)
+                return "debugfs 1.47.0"
             prepare_density(config, config / "staging", (1280, 720, 180), run)
             self.assertEqual((config / "staging" / CONFIG).read_text(), original)
+
+    def test_missing_image_configuration_ignores_debugfs_diagnostics(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory)
+            (config / "waydroid.cfg").write_text("[waydroid]\nimages_path=/images\n")
+            prepare_density(config, config / "staging", (1280, 720, 180),
+                            lambda *args, **kwargs: "debugfs 1.47.0\nFile not found by ext2_lookup")
+            root = ET.parse(config / "staging" / CONFIG).getroot()
+            self.assertEqual(root.findtext("densityMapping/density/density"), "180")

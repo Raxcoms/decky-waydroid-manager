@@ -2,11 +2,23 @@ import configparser
 from pathlib import Path
 import re
 import subprocess
+import tempfile
 
 from .proc import clean_env
 
 
 CONFIG = "system/product/etc/displayconfig/default.xml"
+
+
+def _image_configuration(images: Path, image: str, path: str, run) -> bytes:
+    with tempfile.TemporaryDirectory(prefix="waydroid-density-") as directory:
+        target = Path(directory) / "display.xml"
+        run(["debugfs", "-R", f"dump {path} {target}", str(images / image)], timeout=10)
+        if not target.exists():
+            return b""
+        if target.stat().st_size > 1024 * 1024:
+            raise RuntimeError("The image's display configuration is too large")
+        return target.read_bytes()
 
 
 def prepare_density(config_dir: Path, overlay: Path, reference: tuple[int, int, int], run) -> None:
@@ -40,11 +52,8 @@ def prepare_density(config_dir: Path, overlay: Path, reference: tuple[int, int, 
             source = existing.read_bytes()
             break
         for image, path in image_paths:
-            text = run(["debugfs", "-R", f"cat {path}", str(images / image)], timeout=10).strip()
-            if text:
-                if len(text) > 1024 * 1024:
-                    raise RuntimeError("The image's display configuration is too large")
-                source = text.encode()
+            source = _image_configuration(images, image, path, run)
+            if source:
                 break
         if source:
             break
