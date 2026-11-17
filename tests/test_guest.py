@@ -123,6 +123,24 @@ class LaunchPolicyTests(unittest.TestCase):
              "-c", "android.intent.category.HOME"],
         ])
 
+    def test_companion_starts_on_discovered_display_before_primary_focus(self):
+        self.activities["android.intent.category.INFO"] = ["companion.app/.MainActivity"]
+        self.policy.save("app")
+        self.policy.present("example.app", whole_display=True, companion="companion.app", secondary_display="7")
+        starts = [command for command in self.writes if command[:2] == ["am", "start"]]
+        self.assertEqual([command[command.index("--display") + 1] for command in starts], ["7", "0"])
+        self.assertIn("companion.app/.MainActivity", starts[0])
+        self.assertIn("example.app/.MainActivity", starts[1])
+        self.assertEqual(self.writes[0], ["setprop", "waydroid.active_apps", "Waydroid"])
+
+    def test_companion_cannot_target_primary_or_full_container(self):
+        self.policy.save("app")
+        for package, display in ((None, "7"), ("example.app", None), ("example.app", "0")):
+            with self.subTest(package=package, display=display):
+                with self.assertRaisesRegex(RuntimeError, "secondary display"):
+                    self.policy.present(package, companion="companion.app", secondary_display=display)
+        self.assertEqual(self.writes, [])
+
     def test_app_launch_targets_primary_and_preserves_immersive_policy(self):
         self.policy.save("app")
         self.policy.present("example.app")

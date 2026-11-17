@@ -127,18 +127,29 @@ class LaunchPolicy:
                 self.android("settings", "put", "global", "policy_control", previous)
         self.saved = None
 
-    def present(self, package: str | None, whole_display: bool = False) -> None:
+    def present(self, package: str | None, whole_display: bool = False,
+                companion: str | None = None, secondary_display: str | None = None) -> None:
         if self.saved is None or self.identify() != self.saved[0]:
             raise RuntimeError("WAYDROID_NOT_RUNNING")
         intent = ["-a", "android.intent.action.MAIN", "-c", "android.intent.category.HOME"]
         if package:
             intent = self._app_intent(package)
+        companion_intent = None
+        if companion:
+            if not package or companion == package or not secondary_display or secondary_display == DEFAULT_DISPLAY:
+                raise RuntimeError("The companion app requires a secondary display")
+            companion_intent = self._app_intent(companion)
         # Dual-display sessions present Android outputs, without depending on task-layer metadata.
         active = "Waydroid" if whole_display else package or "Waydroid"
         self.android("setprop", "waydroid.active_apps", active)
         self.android("settings", "put", "global", "policy_control", self.saved[2])
-        command = ["am", "start", "-W", "--user", "current", "--display", DEFAULT_DISPLAY,
-                   *intent]
+        if companion_intent:
+            self._start_activity(companion, secondary_display, companion_intent)
+        # Present the primary app last so Android keeps it as the focused display.
+        self._start_activity(package, DEFAULT_DISPLAY, intent)
+
+    def _start_activity(self, package: str | None, display: str, intent: list[str]) -> None:
+        command = ["am", "start", "-W", "--user", "current", "--display", display, *intent]
         output = self.android(*command, timeout=30)
         if re.search(r"^Error:", output, re.MULTILINE):
             raise RuntimeError(output.strip())

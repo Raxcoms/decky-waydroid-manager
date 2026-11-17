@@ -200,7 +200,7 @@ class LaunchFeatureTests(unittest.IsolatedAsyncioTestCase):
         self.services.run.return_value = "Display id 7: external display"
         with patch.object(session, "session_uses_socket", return_value=True):
             await self.plugin.show(self.launch)
-        self.plugin.policy.present.assert_called_once_with("example.app", whole_display=True)
+        self.plugin.policy.present.assert_called_once_with("example.app", whole_display=True, companion=None, secondary_display=None)
 
     async def test_departed_launch_cannot_change_the_presentation(self):
         self.plugin.policy = Mock()
@@ -249,7 +249,7 @@ class LaunchFeatureTests(unittest.IsolatedAsyncioTestCase):
               patch.object(session, "android_user_ready", return_value=True)):
             await self.plugin.present(launch, "full")
             await self.plugin.show(launch)
-        self.plugin.policy.present.assert_called_once_with(None, whole_display=False)
+        self.plugin.policy.present.assert_called_once_with(None, whole_display=False, companion=None, secondary_display="7")
         self.assertIn(launch.process, self.plugin.presented_users)
 
     async def test_failed_primary_start_never_acquires_the_external_display(self):

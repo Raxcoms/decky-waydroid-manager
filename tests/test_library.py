@@ -46,6 +46,20 @@ class LibraryTests(unittest.TestCase):
     def tearDown(self):
         self.directory.cleanup()
 
+    def test_companion_link_requires_enabled_screen_and_installed_distinct_apps(self):
+        self.plugin._desktop_entries = lambda: [{"package": "example.app"}, {"package": "other.app"}]
+        with self.assertRaisesRegex(RuntimeError, "Enable"):
+            asyncio.run(self.plugin.set_companion_app("example.app", "other.app"))
+        self.state["secondScreen"]["apps"]["example.app"] = True
+        for companion in ("example.app", "missing.app", "bad/package", 12):
+            with self.subTest(companion=companion), self.assertRaises(RuntimeError):
+                asyncio.run(self.plugin.set_companion_app("example.app", companion))
+        asyncio.run(self.plugin.set_companion_app("example.app", "other.app"))
+        self.assertEqual(self.state["companions"], {"example.app": "other.app"})
+        self.state["secondScreen"]["apps"].clear()
+        asyncio.run(self.plugin.set_companion_app("example.app", None))
+        self.assertEqual(self.state["companions"], {})
+
     def test_app_list_uses_cached_package_metadata_and_ignores_invalid_exports(self):
         applications = self.home / ".local/share/applications"
         applications.mkdir(parents=True)

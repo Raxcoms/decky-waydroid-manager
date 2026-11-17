@@ -11,6 +11,16 @@ from waydroid_manager.state import StateStore
 
 
 class StateStoreTests(unittest.TestCase):
+    def test_companion_links_filter_invalid_and_self_references(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = StateStore(Path(directory))
+            store.path.parent.mkdir(parents=True)
+            store.path.write_text(json.dumps({"companions": {
+                "example.app": "other.app", "self.app": "self.app", "bad/package": "other.app",
+                "bad.value": 12, "other.bad": "invalid/package",
+            }}))
+            self.assertEqual(store.load()["companions"], {"example.app": "other.app"})
+
     def test_malformed_values_are_filtered_before_use(self):
         with tempfile.TemporaryDirectory() as directory:
             store = StateStore(Path(directory))

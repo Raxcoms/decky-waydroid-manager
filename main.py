@@ -61,7 +61,7 @@ class Plugin:
         self._session = LaunchSession(
             WAYDROID_DIR, Path(decky.DECKY_PLUGIN_DIR),
             SessionServices(self._run, self._run_user_session, self._ensure_service,
-                            self._user, self._second_screen_enabled),
+                            self._user, self._second_screen_enabled, companion=self._companion_app),
         )
 
     def _run_user_session(self, command: list[str], timeout: int = 30) -> str:
@@ -75,6 +75,10 @@ class Plugin:
     def _second_screen_available(self) -> bool:
         _, uid, _ = self._user()
         return discover_external_display(uid, primary=steam_wayland_socket(uid)) is not None
+
+    def _companion_app(self, package: str | None) -> str | None:
+        _, _, home = self._user()
+        return self._load_state(home)["companions"].get(package)
 
     @contextmanager
     def _edit_state(self, home: Path):
@@ -268,6 +272,7 @@ class Plugin:
             "shortcutId": shortcut_ids.get(app.package),
             "removable": app.package in removable,
             "secondScreen": StateStore.second_screen_enabled(state, app.package),
+            "companionPackage": state["companions"].get(app.package),
         } for app in app_exports(home, package, data_home=data_home)]
         return sorted(apps, key=lambda app: app["name"].casefold())
 
@@ -383,6 +388,24 @@ class Plugin:
                 settings["apps"][package] = enabled
             else:
                 settings["apps"].pop(package, None)
+
+    async def set_companion_app(self, package: str, companion: str | None) -> None:
+        if not isinstance(package, str) or not PACKAGE_RE.fullmatch(package):
+            raise RuntimeError("Invalid primary app")
+        if companion is not None and (not isinstance(companion, str) or not PACKAGE_RE.fullmatch(companion)
+                                      or companion == package):
+            raise RuntimeError("Invalid companion app")
+        _, _, home = self._user()
+        installed = {app["package"] for app in self._desktop_entries()}
+        if companion is not None and (package not in installed or companion not in installed):
+            raise RuntimeError("The selected app is no longer installed")
+        with self._edit_state(home) as state:
+            if companion is None:
+                state["companions"].pop(package, None)
+            else:
+                if not StateStore.second_screen_enabled(state, package):
+                    raise RuntimeError("Enable the app's second screen before linking a companion")
+                state["companions"][package] = companion
 
     async def _prepare_second_screen(self) -> None:
         async with self._package_lock:
@@ -981,8 +1004,11 @@ class Plugin:
                 self._forget_app_history(state["legacy"], package)
         if package is None:
             state["secondScreen"] = StateStore.second_screen_defaults()
+            state["companions"] = {}
         else:
             StateStore.second_screen(state)["apps"].pop(package, None)
+            state["companions"] = {primary: companion for primary, companion in state["companions"].items()
+                                   if package not in (primary, companion)}
         return active_ids
 
     @staticmethod

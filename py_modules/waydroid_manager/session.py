@@ -29,6 +29,7 @@ class SessionServices:
     user: Callable
     enabled: Callable
     logger: logging.Logger = field(default_factory=lambda: logging.getLogger(__name__))
+    companion: Callable = lambda package: None
 
 
 class LaunchSession:
@@ -40,6 +41,8 @@ class LaunchSession:
         self.lock = asyncio.Lock()
         self.capable: bool | None = None
         self.requests: dict[tuple[int, str], bool] = {}
+        self.companions: dict[tuple[int, str], str] = {}
+        self.external_display: str | None = None
         self.display_users: set[tuple[int, str]] = set()
         self.presented_users: set[tuple[int, str]] = set()
 
@@ -48,6 +51,9 @@ class LaunchSession:
             if launch.request is None:
                 raise RuntimeError("The Waydroid launch request is missing")
             enabled = self.services.enabled(launch.request.package)
+            companion = self.services.companion(launch.request.package) if enabled and launch.request.package else None
+            if companion:
+                self.companions[launch.process] = companion
             if not owner:
                 if self.capable is None or (enabled and not self.capable):
                     raise RuntimeError("Close the running Waydroid shortcuts before enabling the second screen")
@@ -104,14 +110,16 @@ class LaunchSession:
     async def depart(self, launch: Launch) -> None:
         async with self.lock:
             registered = self.requests.pop(launch.process, None) is not None
+            companion = self.companions.pop(launch.process, None)
             try:
                 request = launch.request
                 if registered and request and request.package and self.control and session_uses_socket(launch.display):
-                    shared = any(active.request and active.request.package == request.package
-                                 for active in self.control.launches.values())
-                    if not shared:
-                        await complete_thread(self.services.run,
-                                                ["waydroid", "shell", "--", "am", "force-stop", request.package])
+                    used = {active.request.package for active in self.control.launches.values() if active.request}
+                    used.update(self.companions.values())
+                    for package in dict.fromkeys(filter(None, (request.package, companion))):
+                        if package not in used:
+                            await complete_thread(self.services.run,
+                                                  ["waydroid", "shell", "--", "am", "force-stop", package])
             finally:
                 if launch.process in self.presented_users:
                     self.presented_users.remove(launch.process)
@@ -145,6 +153,7 @@ class LaunchSession:
                                             "android.hardware.display.category.PRESENTATION"], timeout=5)
                 display = re.search(r"Display id ([1-9][0-9]*)", output)
                 if display and self.policy.display_ready(display[1]):
+                    self.external_display = display[1]
                     self.display_users.add(launch.process)
                     break
                 time.sleep(0.1)
@@ -157,7 +166,8 @@ class LaunchSession:
         async with self.lock:
             if not session_uses_socket(launch.display) or launch.process not in self.requests:
                 raise RuntimeError("Waydroid launch is no longer active")
-            await complete_thread(self.policy.present, launch.request.package, whole_display=self.capable is True)
+            await complete_thread(self.policy.present, launch.request.package, whole_display=self.capable is True,
+                                  companion=self.companions.get(launch.process), secondary_display=self.external_display)
             if self.control is not None and launch.process not in self.control.launches:
                 raise RuntimeError("Waydroid launch is no longer active")
             if self.requests.get(launch.process):
@@ -174,6 +184,8 @@ class LaunchSession:
             finally:
                 self.capable = None
                 self.requests.clear()
+                self.companions.clear()
+                self.external_display = None
                 self.display_users.clear()
                 self.presented_users.clear()
 
