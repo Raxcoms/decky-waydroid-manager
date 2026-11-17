@@ -104,9 +104,8 @@ class SharedStorage:
         self._folder("Home")
         self._mount("Home", self.home, run)
 
-    @staticmethod
-    def _notify(run) -> None:
-        run(["waydroid", "shell", "--", "content", "query", "--uri",
+    def _notify(self, run) -> None:
+        run(["waydroid", "shell", "--", "content", "query", "--user", self.user, "--uri",
              "content://waydroid.manager.storage.documents/document/__refresh", "--projection", "document_id"], timeout=5)
 
     def ensure(self, home: Path, uid: int, display: Path, run) -> None:

@@ -2,6 +2,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import time
@@ -129,6 +130,14 @@ class RuntimeDisplayLease:
              "/usr/bin/python3", "-I", str(guard), str(self.config_dir), str(self.root),
              str(backend), identity, str(display)], timeout=10)
 
+    def _remove_staging(self) -> None:
+        root = self.root.resolve()
+        for line in Path("/proc/self/mountinfo").read_text().splitlines():
+            target = Path(re.sub(r"\\([0-7]{3})", lambda match: chr(int(match[1], 8)), line.split()[4]))
+            if target == root or root in target.parents:
+                raise RuntimeError(f"Waydroid staging still contains a mount: {target}")
+        shutil.rmtree(self.root)
+
     def recover(self) -> None:
         if not self.root.exists():
             return
@@ -137,7 +146,7 @@ class RuntimeDisplayLease:
         with (self.root / "cleanup.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             if not self.manifest.exists():
-                shutil.rmtree(self.root)
+                self._remove_staging()
                 return
             mounts = json.loads(self.manifest.read_text())
             for index in reversed(range(len(mounts))):
@@ -150,7 +159,7 @@ class RuntimeDisplayLease:
                     subprocess.run(["umount", str(target)], check=True, timeout=10,
                                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
             self.manifest.unlink()
-        shutil.rmtree(self.root)
+        self._remove_staging()
 
 
 def guard(config: Path, root: Path, backend: int, identity: str, display: str) -> None:

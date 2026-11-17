@@ -176,7 +176,9 @@ int main(int argc, char **argv) {
         if (source < 0 || tree < 0)
             fail("Clone host home mount");
         int mapping = user_namespace(argv + 6);
-        struct mount_attr attributes = {.attr_set = MOUNT_ATTR_IDMAP, .userns_fd = (uint64_t)mapping};
+        // Keep Android child mounts out of the host staging directory.
+        struct mount_attr attributes = {.attr_set = MOUNT_ATTR_IDMAP, .propagation = MS_PRIVATE,
+                                        .userns_fd = (uint64_t)mapping};
         if (syscall(SYS_mount_setattr, tree, "", AT_EMPTY_PATH, &attributes, sizeof(attributes)) < 0)
             fail("Map shared home ownership");
         close(mapping);

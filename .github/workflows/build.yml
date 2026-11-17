@@ -160,6 +160,10 @@ jobs:
           for script in bin/waydroid-launcher bin/waydroid-game-session bin/waydroid-session; do
             bash -n "$script"
           done
+      - name: Test storage mount isolation
+        run: |
+          cc -O2 -Wall -Wextra -Werror native/host/home-mount.c -o "$RUNNER_TEMP/storage-mount-test"
+          sudo unshare --mount --propagation private python3 tests/storage_mount_integration.py "$RUNNER_TEMP/storage-mount-test"
       - name: Install internal cache client
         run: |
           npm install --prefix "$RUNNER_TEMP/display-cache-client" --no-save --ignore-scripts @actions/cache@6.3.0
