@@ -7,13 +7,45 @@ import sys
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
-from waydroid_manager.control import ServiceControl
+from waydroid_manager.control import Launch, ServiceControl
 
 
 @unittest.skipUnless(hasattr(socket, "SO_PEERCRED"), "Requires Linux peer credentials")
 class ServiceControlTests(unittest.TestCase):
+    def test_persistent_leases_leave_capacity_for_lifecycle_commands(self):
+        async def exercise(directory):
+            control = ServiceControl(Path(directory) / "control", os.getuid(), AsyncMock(), on_policy=AsyncMock())
+            identities = [Launch((index, "start"), Path("display")) for index in range(1, 5)]
+            connections = []
+            await control.open()
+            try:
+                with patch.object(control, "identify_launch", side_effect=identities):
+                    commands = [b"HOST display", *[b'LAUNCH {"display":"display","mode":"app","package":"example.app"}'] * 3]
+                    for command in commands:
+                        reader, writer = await asyncio.open_unix_connection(str(control.path))
+                        connections.append(writer)
+                        writer.write(command + b"\n")
+                        await writer.drain()
+                        self.assertTrue(json.loads(await reader.readline())["ok"])
+                with patch.object(control, "_launch_for_pid", return_value=control.launch):
+                    reader, writer = await asyncio.open_unix_connection(str(control.path))
+                    connections.append(writer)
+                    writer.write(b"POLICY app\n")
+                    await writer.drain()
+                    self.assertEqual(json.loads(await reader.readline()), {"ok": True})
+                    control.on_policy.assert_awaited_once()
+            finally:
+                for writer in connections:
+                    writer.close()
+                for writer in connections:
+                    await writer.wait_closed()
+                await control.close()
+        with tempfile.TemporaryDirectory() as directory:
+            asyncio.run(exercise(directory))
+
     def test_relay_lease_uses_peer_identity_and_releases_on_disconnect(self):
         async def exercise(directory):
             root = Path(directory)

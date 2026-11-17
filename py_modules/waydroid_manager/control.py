@@ -74,6 +74,10 @@ def request_service_start(path: Path) -> None:
 
 
 class ServiceControl:
+    MAX_PENDING = 16
+    MAX_COMMANDS = 8
+    MAX_LAUNCHES = 64
+
     def __init__(self, path: Path, uid: int, start: Callable[[], Awaitable[None]],
                  relay: Path | None = None, on_launch: Callable[[Launch], Awaitable[None]] | None = None,
                  on_policy: Callable[[Launch, str], Awaitable[None]] | None = None,
@@ -85,6 +89,8 @@ class ServiceControl:
         self.server = None
         self.inode = None
         self.clients = set()
+        self.pending_clients = set()
+        self.commands = set()
         self.relay, self.on_launch = relay, on_launch
         self.on_policy, self.on_release = on_policy, on_release
         self.start_launch = start_launch
@@ -176,20 +182,28 @@ class ServiceControl:
         host = None
         try:
             try:
-                if len(self.clients) >= 4:
+                if len(self.pending_clients) >= self.MAX_PENDING:
                     raise RuntimeError("Waydroid Manager service control is busy")
                 self.clients.add(task)
+                self.pending_clients.add(task)
                 peer = writer.get_extra_info("socket")
                 pid, uid, _ = struct.unpack("3i", peer.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
-                command = await asyncio.wait_for(reader.readline(), 5)
                 if uid != self.uid:
                     raise RuntimeError("Invalid Waydroid Manager service request")
+                command = await asyncio.wait_for(reader.readline(), 5)
+                self.pending_clients.discard(task)
+                if not command.startswith((b"HOST ", b"LAUNCH ")):
+                    if len(self.commands) >= self.MAX_COMMANDS:
+                        raise RuntimeError("Waydroid Manager service control is busy")
+                    self.commands.add(task)
                 if command.startswith(b"HOST ") and command.endswith(b"\n"):
                     if self.host is not None:
                         raise RuntimeError("The shared Waydroid relay is already running")
                     host = self.identify_launch(pid, Path(os.fsdecode(command[5:-1])))
                     self.host = host
                 elif command.startswith(b"LAUNCH ") and command.endswith(b"\n"):
+                    if len(self.launches) >= self.MAX_LAUNCHES:
+                        raise RuntimeError("Waydroid Manager has reached its active launch limit")
                     if self.release_task is not None:
                         raise RuntimeError("Waydroid launch is closing. Try again after it stops.")
                     if self.host is None:
@@ -254,6 +268,8 @@ class ServiceControl:
             if not self.launches and self.release_task is not None and self.release_task.done():
                 self.release_task = None
             self.clients.discard(task)
+            self.pending_clients.discard(task)
+            self.commands.discard(task)
             writer.close()
             try:
                 await writer.wait_closed()
