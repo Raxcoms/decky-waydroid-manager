@@ -8,7 +8,6 @@ export type Status = {
   autoAddApps: boolean;
   secondScreen: boolean;
   secondScreenAvailable: boolean;
-  sharedHome: boolean;
   accountId: number | null;
   userHome: string;
   waydroidShortcutId?: number;
@@ -36,7 +35,6 @@ export const setAutoAddApps = callable<[number, boolean], void>("set_auto_add_ap
 export const setSecondScreenContainer = callable<[boolean], void>("set_second_screen_container");
 export const setSecondScreenApp = callable<[string, boolean], void>("set_second_screen_app");
 export const setCompanionApp = callable<[string, string | null], void>("set_companion_app");
-export const setSharedHome = callable<[boolean], void>("set_shared_home");
 export const pendingAutoShortcuts = callable<[number, number[] | null], Shortcut[]>("pending_auto_shortcuts");
 export const pendingShortcutRemovals = callable<[number, number[] | null], { ids: number[]; waiting: boolean }>("pending_shortcut_removals");
 export const legacyShortcuts = callable<[number], { appId: number; launchOptions?: string; name?: string }[]>("legacy_shortcuts");

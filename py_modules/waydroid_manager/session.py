@@ -31,7 +31,6 @@ class SessionServices:
     enabled: Callable
     logger: logging.Logger = field(default_factory=lambda: logging.getLogger(__name__))
     companion: Callable = lambda package: None
-    shared_home: Callable = lambda: False
 
 
 class LaunchSession:
@@ -144,9 +143,8 @@ class LaunchSession:
             raise RuntimeError("Waydroid launch is no longer active")
         if not android_user_ready(self.services.run):
             raise RuntimeError(GUEST_STARTING)
-        if self.services.shared_home():
-            _, uid, home = self.services.user()
-            self.home.ensure(home, uid, launch.display, self.services.run)
+        _, uid, home = self.services.user()
+        self.home.ensure(home, uid, launch.display, self.services.run)
         self._initialize_external(launch)
         self.policy.save(mode)
 

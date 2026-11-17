@@ -103,15 +103,14 @@ Both apps use the same Steam shortcut and frame-limit settings. Closing the shor
 
 ## Access your host home folder
 
-Choose **Share home folder with Android** in **Waydroid actions**, then close and
-reopen your Waydroid shortcuts. Open **Internal storage > HostHome** in Android's
-file picker. Apps can read and write files there, including through Android's
-folder-access picker.
+Your host home folder is shared automatically whenever you launch Waydroid or an
+Android app through the plugin. Open **Internal storage > HostHome** in Android's
+file picker. Apps can read and write files there through Android's folder-access
+picker.
 
-This setting applies to all plugin launches. Changes in Android also change the
-files in your host home folder. The mount belongs to the plugin's Android session
-and disappears when that container exits. Choose **Stop sharing home folder** to
-disable it for future sessions.
+Changes in Android also change the files in your host home folder. The mount
+belongs to the plugin's Android session and disappears when that container exits.
+Ordinary Waydroid sessions started outside the plugin keep their original mounts.
 
 The host kernel and home filesystem must support idmapped mounts. Sharing does
 not change your host files' ownership or permissions.

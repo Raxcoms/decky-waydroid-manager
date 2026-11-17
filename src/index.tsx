@@ -1,9 +1,8 @@
-import { getStatus, listApps, installGapps, startService, stopService, restartService, uninstallApp, getWaydroidShortcut, getAppShortcut, removeShortcutRecord, setAutoAddApps, setSecondScreenContainer, setSecondScreenApp, setCompanionApp, setSharedHome, pendingAutoShortcuts, legacyShortcuts, removeWaydroidImage, installPackage, type Status, type AndroidApp } from "./backend";
+import { getStatus, listApps, installGapps, startService, stopService, restartService, uninstallApp, getWaydroidShortcut, getAppShortcut, removeShortcutRecord, setAutoAddApps, setSecondScreenContainer, setSecondScreenApp, setCompanionApp, pendingAutoShortcuts, legacyShortcuts, removeWaydroidImage, installPackage, type Status, type AndroidApp } from "./backend";
 import { addToSteam, removeFromSteam, launchSteamShortcut, requireSteamAccount, retrySteamShortcutRemovals, updateSteamShortcut } from "./steam";
 import { definePlugin, FileSelectionType, openFilePicker, toaster, useQuickAccessVisible } from "@decky/api";
 import {
   ButtonItem,
-  ConfirmModal,
   Field,
   Focusable,
   Menu,
@@ -436,17 +435,6 @@ function Content() {
             perform={removeWaydroid}
             onError={(error) => reportError(error, setMessage)}
           />)}>{t("removeWaydroidButton")}</MenuItem>
-          <MenuItem onSelected={() => {
-            openModal(<ConfirmModal
-              strTitle={status.sharedHome ? t("disableSharedHome") : t("enableSharedHome")}
-              strDescription={t("sharedHomeDescription")}
-              strOKButtonText={status.sharedHome ? t("disableSharedHome") : t("enableSharedHome")}
-              strCancelButtonText={t("cancel")}
-              onOK={() => void setSharedHome(!status.sharedHome)
-                .then(() => setStatus((current) => current ? { ...current, sharedHome: !status.sharedHome } : current))
-                .catch((error) => reportError(error, setMessage))}
-            />);
-          }}>{status.sharedHome ? t("disableSharedHome") : t("enableSharedHome")}</MenuItem>
         </AppMenu>,
       );
     } catch (error) {
