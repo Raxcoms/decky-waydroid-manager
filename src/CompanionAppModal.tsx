@@ -18,7 +18,10 @@ export function CompanionAppModal({ app, apps, onSelect, onError, closeModal }: 
   const running = useRef(false);
   const options = apps.filter((candidate) => candidate.package !== app.package).map((candidate) => ({
     data: candidate.package,
-    label: candidate.name,
+    label: <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      {candidate.icon && <img src={candidate.icon} alt="" width={24} height={24} style={{ objectFit: "contain" }} />}
+      <span>{candidate.name}</span>
+    </span>,
   }));
   const save = async () => {
     if (!selected || running.current) return;
