@@ -96,7 +96,7 @@ public final class HostDocumentsProvider extends DocumentsProvider {
         add(cursor, row, Root.COLUMN_ROOT_ID, SharePolicy.ROOT);
         add(cursor, row, Root.COLUMN_DOCUMENT_ID, SharePolicy.ROOT);
         add(cursor, row, Root.COLUMN_TITLE, "Host");
-        add(cursor, row, Root.COLUMN_FLAGS, Root.FLAG_LOCAL_ONLY | Root.FLAG_SUPPORTS_IS_CHILD);
+        add(cursor, row, Root.COLUMN_FLAGS, Root.FLAG_LOCAL_ONLY | Root.FLAG_SUPPORTS_IS_CHILD | Root.FLAG_SUPPORTS_CREATE);
         add(cursor, row, Root.COLUMN_ICON, android.R.drawable.ic_menu_save);
         add(cursor, row, Root.COLUMN_AVAILABLE_BYTES, new File(host(), "Home").getUsableSpace());
         add(cursor, row, Root.COLUMN_MIME_TYPES, "*/*");
