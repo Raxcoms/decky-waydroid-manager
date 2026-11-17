@@ -91,6 +91,16 @@ configuration. A compatible Waydroid image and host secondary output are require
 see [second screen support](dual-screen-investigation.md) for compatibility and
 cleanup details.
 
+### Link a companion app
+
+1. Enable second-screen support for the primary app.
+2. Open that app's menu, choose **Link companion app**, and select another installed Android app.
+3. Launch the primary app's Steam shortcut. The companion opens on the second screen, while input focus stays on the primary screen.
+
+The menu then shows **Unlink companion app**, with the linked app's icon on the right. Changes apply on the next launch. Disabling second-screen support leaves the saved link inactive until you enable it again.
+
+Both apps use the same Steam shortcut and frame-limit settings. Closing the shortcut also closes its companion, unless another active plugin shortcut still uses that app. Companion links are available only for individual apps.
+
 ## Manage Waydroid
 
 Use **Start**, **Restart**, or **Stop** under **Waydroid Service** to manage the container service. To delete Waydroid, its Android apps and data, and the associated Steam shortcuts, select **Uninstall Waydroid** under **Waydroid Status**.

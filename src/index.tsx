@@ -1,4 +1,4 @@
-import { getStatus, listApps, installGapps, startService, stopService, restartService, uninstallApp, getWaydroidShortcut, getAppShortcut, removeShortcutRecord, setAutoAddApps, setSecondScreenContainer, setSecondScreenApp, pendingAutoShortcuts, legacyShortcuts, removeWaydroidImage, installPackage, type Status, type AndroidApp } from "./backend";
+import { getStatus, listApps, installGapps, startService, stopService, restartService, uninstallApp, getWaydroidShortcut, getAppShortcut, removeShortcutRecord, setAutoAddApps, setSecondScreenContainer, setSecondScreenApp, setCompanionApp, pendingAutoShortcuts, legacyShortcuts, removeWaydroidImage, installPackage, type Status, type AndroidApp } from "./backend";
 import { addToSteam, removeFromSteam, launchSteamShortcut, requireSteamAccount, retrySteamShortcutRemovals, updateSteamShortcut } from "./steam";
 import { definePlugin, FileSelectionType, openFilePicker, toaster, useQuickAccessVisible } from "@decky/api";
 import {
@@ -23,6 +23,7 @@ import { operationError } from "./errors";
 import { currentSteamAccount, liveShortcutIds } from "./library";
 import { PackageOperationModal } from "./PackageOperationModal";
 import { ImageOperationModal } from "./ImageOperationModal";
+import { CompanionAppModal } from "./CompanionAppModal";
 import { AppListState } from "./panelState";
 
 function AndroidRobotIcon() {
@@ -192,10 +193,12 @@ type AppRowProps = {
   onUninstalled: () => void;
   setSecondScreen: (enabled: boolean) => void;
   secondScreenAvailable: boolean;
+  apps: AndroidApp[];
+  setCompanion: (packageName?: string) => void;
   setMessage: (message: string | null) => void;
 };
 
-function AppRow({ app, accountId, isLast, rowRef, setShortcutId, onUninstalled, setSecondScreen, secondScreenAvailable, setMessage }: AppRowProps) {
+function AppRow({ app, accountId, isLast, rowRef, setShortcutId, onUninstalled, setSecondScreen, secondScreenAvailable, apps, setCompanion, setMessage }: AppRowProps) {
   const add = async () => {
     const account = requireSteamAccount(accountId);
     const shortcut = await getAppShortcut(account, app.package);
@@ -216,6 +219,11 @@ function AppRow({ app, accountId, isLast, rowRef, setShortcutId, onUninstalled, 
       throw new Error(t("shortcutStateUnavailable"));
     }
     launchSteamShortcut(app.shortcutId, requireSteamAccount(accountId));
+  };
+  const companion = apps.find((candidate) => candidate.package === app.companionPackage);
+  const saveCompanion = async (packageName: string | null) => {
+    await setCompanionApp(app.package, packageName);
+    setCompanion(packageName ?? undefined);
   };
   const openMenu = () => {
     const release = appListState.retainForOverlay();
@@ -238,6 +246,15 @@ function AppRow({ app, accountId, isLast, rowRef, setShortcutId, onUninstalled, 
               }}
             />);
           }}>{app.secondScreen ? t("disableSecondScreen") : t("enableSecondScreen")}</MenuItem>}
+          {app.secondScreen && <MenuItem onSelected={app.companionPackage
+            ? run(() => saveCompanion(null), async () => {}, setMessage)
+            : () => openModal(<CompanionAppModal app={app} apps={apps} onSelect={saveCompanion}
+                onError={(error) => reportError(error, setMessage)} />)}>
+            <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, width: "100%" }}>
+              <span>{t(app.companionPackage ? "unlinkCompanion" : "linkCompanion")}</span>
+              {companion?.icon && <img src={companion.icon} alt={companion.name} width={24} height={24} style={{ objectFit: "contain" }} />}
+            </span>
+          </MenuItem>}
           {app.removable && (
             <MenuItem onSelected={() => openModal(
               <PackageOperationModal name={app.name} operation="uninstall" target={app.package} onError={(error) => reportError(error, setMessage)} perform={async () => {
@@ -518,11 +535,13 @@ function Content() {
             <AppRow
               key={app.package}
               app={app}
+              apps={sortedApps}
+              setCompanion={(companionPackage) => setApps((current) => current.map((item) => item.package === app.package ? { ...item, companionPackage } : item))}
               accountId={status.accountId}
               isLast={index === shownApps.length - 1}
               rowRef={app.package === appToFocus ? nextAppRow : undefined}
               setShortcutId={(id) => setApps((current) => current.map((item) => item.package === app.package ? { ...item, shortcutId: id } : item))}
-              onUninstalled={() => setApps((current) => current.filter((item) => item.package !== app.package))}
+              onUninstalled={() => setApps((current) => current.filter((item) => item.package !== app.package).map((item) => item.companionPackage === app.package ? { ...item, companionPackage: undefined } : item))}
               setSecondScreen={(enabled) => setApps((current) => current.map((item) => item.package === app.package ? { ...item, secondScreen: enabled } : item))}
               secondScreenAvailable={status?.secondScreenAvailable === true}
               setMessage={setMessage}
