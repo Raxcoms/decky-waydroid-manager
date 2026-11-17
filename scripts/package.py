@@ -28,7 +28,7 @@ def package(output: Path, revision: str | None = None, native: Path | None = Non
         shutil.copytree(native, target / "bin/display-native")
     if runtime_tools is not None:
         shutil.copytree(runtime_tools, target / "bin/display-tools")
-        for name in ("aapt2", "home-mount"):
+        for name in ("aapt2", "openssl", "home-mount"):
             for helper in (target / "bin/display-tools").glob(f"*/{name}"):
                 helper.chmod(0o755)
     resources = target / "resources/display"

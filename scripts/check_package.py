@@ -63,6 +63,8 @@ def check(root: Path) -> None:
         for name in ("aapt2", "openssl"):
             if elf_machine(manifest.parent / name) != metadata["elfMachine"]:
                 raise RuntimeError("A resource tool has the wrong architecture")
+            if not os.access(manifest.parent / name, os.X_OK):
+                raise RuntimeError("A private resource tool is not executable")
     for name in ("framework/AndroidManifest.xml", "framework/res/values/config.xml",
                  "navigation/AndroidManifest.xml", "navigation/res/layout/navigation_bar.xml",
                  "navigation/res/layout/recent_apps.xml", "navigation/res/drawable/ic_sysbar_recent.xml",
