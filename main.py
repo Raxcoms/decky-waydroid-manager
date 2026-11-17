@@ -37,6 +37,7 @@ from waydroid_manager.async_work import complete_thread
 from waydroid_manager.display_payload import inspect_vendor
 from waydroid_manager.display_resources import prepare_payload
 from waydroid_manager.native_payload import select_native
+from waydroid_manager.second_screen import discover_external_display
 from waydroid_manager.user_files import open_as_user, run_as_user
 
 
@@ -69,6 +70,10 @@ class Plugin:
     def _second_screen_enabled(self, package: str | None) -> bool:
         _, _, home = self._user()
         return StateStore.second_screen_enabled(self._load_state(home), package)
+
+    def _second_screen_available(self) -> bool:
+        _, uid, _ = self._user()
+        return discover_external_display(uid, primary=steam_wayland_socket(uid)) is not None
 
     @contextmanager
     def _edit_state(self, home: Path):
@@ -281,6 +286,7 @@ class Plugin:
             "sessionAvailable": steam_wayland_socket(uid) is not None,
             "autoAddApps": history["autoAddApps"],
             "secondScreen": StateStore.second_screen_enabled(state),
+            "secondScreenAvailable": self._second_screen_available(),
             "accountId": account_id,
             "userHome": str(home),
             "waydroidShortcutId": shortcut_ids.get(WAYDROID_SHORTCUT_KEY),
@@ -378,6 +384,8 @@ class Plugin:
 
     async def _prepare_second_screen(self) -> None:
         async with self._package_lock:
+            if not self._second_screen_available():
+                raise RuntimeError("The host has no available secondary Wayland output")
             try:
                 await complete_thread(self._build_second_screen)
             finally:

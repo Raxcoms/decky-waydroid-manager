@@ -7,6 +7,7 @@ export type Status = {
   sessionAvailable: boolean;
   autoAddApps: boolean;
   secondScreen: boolean;
+  secondScreenAvailable: boolean;
   accountId: number | null;
   userHome: string;
   waydroidShortcutId?: number;

@@ -65,6 +65,8 @@ When Android is running, the plugin requests a 512-pixel version of the icon fro
 ## Use a second screen
 
 Choose **Enable second screen support** from an app's menu or **Waydroid actions**.
+The enable action appears when the host advertises a secondary Wayland output.
+An enabled shortcut keeps its disable action if that output becomes unavailable.
 Each app has its own setting, disabled by default. The setting in **Waydroid
 actions** applies only to the full Waydroid shortcut.
 On first enable, a progress dialog checks the installed Android interfaces and

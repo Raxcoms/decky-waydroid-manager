@@ -191,10 +191,11 @@ type AppRowProps = {
   setShortcutId: (id?: number) => void;
   onUninstalled: () => void;
   setSecondScreen: (enabled: boolean) => void;
+  secondScreenAvailable: boolean;
   setMessage: (message: string | null) => void;
 };
 
-function AppRow({ app, accountId, isLast, rowRef, setShortcutId, onUninstalled, setSecondScreen, setMessage }: AppRowProps) {
+function AppRow({ app, accountId, isLast, rowRef, setShortcutId, onUninstalled, setSecondScreen, secondScreenAvailable, setMessage }: AppRowProps) {
   const add = async () => {
     const account = requireSteamAccount(accountId);
     const shortcut = await getAppShortcut(account, app.package);
@@ -227,7 +228,7 @@ function AppRow({ app, accountId, isLast, rowRef, setShortcutId, onUninstalled, 
           ) : (
             <MenuItem onSelected={run(add, async () => {}, setMessage)}>{t("addToSteam")}</MenuItem>
           )}
-          <MenuItem onSelected={() => {
+          {(secondScreenAvailable || app.secondScreen) && <MenuItem onSelected={() => {
             openModal(<ImageOperationModal
               operation={app.secondScreen ? "disableDisplay" : "enableDisplay"}
               onError={(error) => reportError(error, setMessage)}
@@ -236,7 +237,7 @@ function AppRow({ app, accountId, isLast, rowRef, setShortcutId, onUninstalled, 
                 setSecondScreen(!app.secondScreen);
               }}
             />);
-          }}>{app.secondScreen ? t("disableSecondScreen") : t("enableSecondScreen")}</MenuItem>
+          }}>{app.secondScreen ? t("disableSecondScreen") : t("enableSecondScreen")}</MenuItem>}
           {app.removable && (
             <MenuItem onSelected={() => openModal(
               <PackageOperationModal name={app.name} operation="uninstall" target={app.package} onError={(error) => reportError(error, setMessage)} perform={async () => {
@@ -401,7 +402,7 @@ function Content() {
             : run(addWaydroid, async () => {}, setMessage)}>
             {status.waydroidShortcutId ? t("removeWaydroidShortcut") : t("addWaydroid")}
           </MenuItem>
-          <MenuItem onSelected={() => {
+          {(status.secondScreenAvailable || status.secondScreen) && <MenuItem onSelected={() => {
             openModal(<ImageOperationModal
               operation={status.secondScreen ? "disableDisplay" : "enableDisplay"}
               onError={(error) => reportError(error, setMessage)}
@@ -410,7 +411,7 @@ function Content() {
                 setStatus((current) => current ? { ...current, secondScreen: !status.secondScreen } : current);
               }}
             />);
-          }}>{status.secondScreen ? t("disableSecondScreen") : t("enableSecondScreen")}</MenuItem>
+          }}>{status.secondScreen ? t("disableSecondScreen") : t("enableSecondScreen")}</MenuItem>}
         </AppMenu>,
       );
     } catch (error) {
@@ -532,6 +533,7 @@ function Content() {
               setShortcutId={(id) => setApps((current) => current.map((item) => item.package === app.package ? { ...item, shortcutId: id } : item))}
               onUninstalled={() => setApps((current) => current.filter((item) => item.package !== app.package))}
               setSecondScreen={(enabled) => setApps((current) => current.map((item) => item.package === app.package ? { ...item, secondScreen: enabled } : item))}
+              secondScreenAvailable={status?.secondScreenAvailable === true}
               setMessage={setMessage}
             />
           ))}
