@@ -39,6 +39,7 @@ from waydroid_manager.display_resources import prepare_payload
 from waydroid_manager.native_payload import select_native
 from waydroid_manager.second_screen import discover_external_display
 from waydroid_manager.runtime_updates import RuntimeUpdates
+from waydroid_manager.host_storage import StorageMonitor
 from waydroid_manager.user_files import open_as_user, run_as_user
 
 
@@ -932,7 +933,7 @@ class Plugin:
     async def _ensure_service(self) -> None:
         if not self._initialized():
             raise RuntimeError("WAYDROID_NOT_INSTALLED")
-        for lease in (self._session.overlay, self._session.home):
+        for lease in (self._session.overlay, self._session.storage):
             if lease.root.exists():
                 if container_pid() is not None:
                     raise RuntimeError("A previous plugin session is still closing")
@@ -1095,9 +1096,13 @@ class Plugin:
         self._session.control = self._control
         await self._control.open()
         self._runtime_updates.start()
+        self._storage_changed = False
+        self._storage_monitor = StorageMonitor(self._storage_updated)
+        self._storage_monitor.start()
         decky.logger.info("Waydroid Manager loaded")
 
     async def _unload(self):
+        await self._storage_monitor.close()
         await self._runtime_updates.close()
         await self._control.close()
         try:
@@ -1124,6 +1129,10 @@ class Plugin:
         finally:
             self._runtime_updates.notify()
 
+    def _storage_updated(self):
+        self._storage_changed = True
+        self._runtime_updates.notify()
+
     async def _sync_runtime(self) -> None:
         async with self._runtime_lock:
             _, uid, _ = self._user()
@@ -1132,6 +1141,9 @@ class Plugin:
             if registration and self._control.release_task is None and process_identity(registration.process[0]) == registration.process:
                 guest = await complete_thread(registered_guest, registration.display)
             launch = registration.process if guest and registration else None
+            if guest and self._storage_changed:
+                await self._session.refresh_storage()
+                self._storage_changed = False
             metrics = registration.display.with_name("metrics") if launch and registration else None
             try:
                 await complete_thread(self._gpu_metrics.sync, launch, uid, metrics, guest)

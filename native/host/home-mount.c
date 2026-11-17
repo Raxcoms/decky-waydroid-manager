@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/mount.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -188,7 +189,7 @@ int main(int argc, char **argv) {
             fail("Attach shared home");
         printf("%" PRIu64 " %" PRIu64 "\n", mount_id(openat(parent, name, O_PATH | O_DIRECTORY)), created);
     } else {
-        if (fchdir(root) < 0 || chroot(".") < 0 || syscall(SYS_umount2, target, 0) < 0)
+        if (fchdir(root) < 0 || chroot(".") < 0 || syscall(SYS_umount2, target, MNT_DETACH) < 0)
             fail("Detach shared home");
         created = number(argv[6]);
         if (created && fstatat(parent, name, &info, AT_SYMLINK_NOFOLLOW) == 0 && info.st_ino == created

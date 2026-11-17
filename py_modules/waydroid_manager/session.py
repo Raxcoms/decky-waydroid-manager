@@ -19,7 +19,7 @@ from .proc import steam_wayland_socket
 from .native_payload import select_native
 from .runtime_display import RuntimeDisplayLease
 from .second_screen import discover_external_display
-from .shared_home import SharedHome
+from .shared_storage import SharedStorage
 
 
 @dataclass
@@ -46,7 +46,7 @@ class LaunchSession:
         self.external_display: str | None = None
         self.display_users: set[tuple[int, str]] = set()
         self.presented_users: set[tuple[int, str]] = set()
-        self.home = SharedHome(config, plugin / "bin/display-tools")
+        self.storage = SharedStorage(config, plugin)
 
     async def start(self, launch: Launch, owner: bool) -> None:
         async with self.lock:
@@ -138,13 +138,17 @@ class LaunchSession:
         async with self.lock:
             await complete_thread(self._prepare_presentation, launch, mode)
 
+    async def refresh_storage(self) -> None:
+        async with self.lock:
+            await complete_thread(self.storage.refresh, self.services.run)
+
     def _prepare_presentation(self, launch: Launch, mode: str) -> None:
         if not session_uses_socket(launch.display):
             raise RuntimeError("Waydroid launch is no longer active")
         if not android_user_ready(self.services.run):
             raise RuntimeError(GUEST_STARTING)
         _, uid, home = self.services.user()
-        self.home.ensure(home, uid, launch.display, self.services.run)
+        self.storage.ensure(home, uid, launch.display, self.services.run)
         self._initialize_external(launch)
         self.policy.save(mode)
 
@@ -197,7 +201,7 @@ class LaunchSession:
         try:
             if session_uses_socket(launch.display):
                 try:
-                    self.home.release(self.services.run)
+                    self.storage.release(self.services.run)
                 except (OSError, RuntimeError, subprocess.SubprocessError) as error:
                     self.services.logger.warning("Could not detach the shared home: %s", error)
                 try:
@@ -225,4 +229,4 @@ class LaunchSession:
                     time.sleep(0.1)
                 if container_pid() is None:
                     self.overlay.recover()
-                    self.home.recover()
+                    self.storage.recover()

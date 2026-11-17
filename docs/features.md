@@ -104,13 +104,18 @@ Both apps use the same Steam shortcut and frame-limit settings. Closing the shor
 ## Access your host home folder
 
 Your host home folder is shared automatically whenever you launch Waydroid or an
-Android app through the plugin. Open **Internal storage > HostHome** in Android's
+Android app through the plugin. Open **Internal storage > Host > Home** in Android's
 file picker. Apps can read and write files there through Android's folder-access
 picker.
 
 Changes in Android also change the files in your host home folder. The mount
 belongs to the plugin's Android session and disappears when that container exits.
 Ordinary Waydroid sessions started outside the plugin keep their original mounts.
+
+Mounted external drives appear as separate folders inside **Host**, named after
+their volume labels. Mounting or unmounting a drive on the host updates Android's
+folders while the session is running. The plugin uses the host's UDisks storage
+service and keeps system partitions out of this list.
 
 The host kernel and home filesystem must support idmapped mounts. Sharing does
 not change your host files' ownership or permissions.

@@ -9,8 +9,6 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
-import android.os.Looper;
-import android.os.UserHandle;
 import android.util.Base64;
 import android.util.DisplayMetrics;
 import java.io.ByteArrayOutputStream;
@@ -21,13 +19,7 @@ import java.nio.charset.StandardCharsets;
 public final class ExportIcon {
     public static void main(String[] args) throws Exception {
         if (args.length != 2) throw new IllegalArgumentException("Expected package and Android user");
-        if (Looper.getMainLooper() == null) Looper.prepareMainLooper();
-        Class<?> threadClass = Class.forName("android.app.ActivityThread");
-        Object thread = threadClass.getMethod("systemMain").invoke(null);
-        Context context = (Context) threadClass.getMethod("getSystemContext").invoke(thread);
-        Object user = UserHandle.class.getMethod("of", int.class).invoke(null, Integer.parseInt(args[1]));
-        context = (Context) Context.class.getMethod("createContextAsUser", UserHandle.class, int.class)
-                .invoke(context, user, 0);
+        Context context = AndroidContext.forUser(Integer.parseInt(args[1]));
         PackageManager packages = context.getPackageManager();
         Intent launch = packages.getLaunchIntentForPackage(args[0]);
         if (launch == null) throw new IllegalArgumentException("The app has no launcher activity");

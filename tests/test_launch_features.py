@@ -56,7 +56,7 @@ class LaunchFeatureTests(unittest.IsolatedAsyncioTestCase):
         )
         self.plugin = LaunchSession(Path("waydroid"), Path("missing-payloads"), self.services)
         self.plugin.overlay = Mock()
-        self.plugin.home = Mock()
+        self.plugin.storage = Mock()
         self.launch = Launch((1, "start"), Path("wayland"), LaunchRequest("app", "example.app"))
 
     async def test_standard_launch_never_stages_a_payload(self):
@@ -222,7 +222,7 @@ class LaunchFeatureTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(any(call.args[0][-2:] == ["waydroid.external_display_visible", "1"]
                              for call in self.services.run.call_args_list))
         self.plugin.policy.save.assert_called_once_with("app")
-        self.plugin.home.ensure.assert_called_once_with(Path("home"), 1000, self.launch.display, self.services.run)
+        self.plugin.storage.ensure.assert_called_once_with(Path("home"), 1000, self.launch.display, self.services.run)
 
     async def test_external_display_waits_for_primary_activity_confirmation(self):
         events = []
