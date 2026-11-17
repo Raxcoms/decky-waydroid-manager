@@ -38,6 +38,7 @@ from waydroid_manager.display_payload import inspect_vendor
 from waydroid_manager.display_resources import prepare_payload
 from waydroid_manager.native_payload import select_native
 from waydroid_manager.second_screen import discover_external_display
+from waydroid_manager.runtime_updates import RuntimeUpdates
 from waydroid_manager.user_files import open_as_user, run_as_user
 
 
@@ -151,6 +152,7 @@ class Plugin:
         ])
 
     async def _prepare_launch(self, launch: Launch) -> None:
+        self._runtime_updates.notify()
         try:
             await asyncio.to_thread(self._start_input_sync, self._control.host or launch)
         except (OSError, RuntimeError, subprocess.SubprocessError) as error:
@@ -1051,20 +1053,25 @@ class Plugin:
         self._gpu_metrics = GpuMetrics()
         self._metrics_error = None
         self._runtime_lock = asyncio.Lock()
+        self._desired_fps = None
+        self._runtime_updates = RuntimeUpdates(self._sync_runtime,
+            lambda: bool(self._control and self._control.launch and self._control.release_task is None))
         self._package_lock = asyncio.Lock()
         _, uid, _ = self._user()
         relay = Path(decky.DECKY_PLUGIN_DIR).resolve() / "bin/waydroid-wayland-relay"
         self._control = ServiceControl(
             control_path(uid), uid, self._ensure_service, relay=relay,
             on_launch=self._prepare_launch, on_policy=self._session.present,
-            on_release=self._session.release, start_launch=self._session.start,
-            on_departure=self._session.depart, on_present=self._session.show,
+            on_release=self._release_launch, start_launch=self._session.start,
+            on_departure=self._session.depart, on_present=self._present_launch,
         )
         self._session.control = self._control
         await self._control.open()
+        self._runtime_updates.start()
         decky.logger.info("Waydroid Manager loaded")
 
     async def _unload(self):
+        await self._runtime_updates.close()
         await self._control.close()
         try:
             async with self._runtime_lock:
@@ -1077,19 +1084,33 @@ class Plugin:
     async def sync_runtime(self, fps: int | None) -> None:
         if fps is not None and (type(fps) is not int or not 0 <= fps <= 1000):
             raise RuntimeError("Invalid frame limit")
+        self._desired_fps = fps
+        self._runtime_updates.notify()
+
+    async def _present_launch(self, launch: Launch) -> None:
+        await self._session.show(launch)
+        self._runtime_updates.notify()
+
+    async def _release_launch(self, launch: Launch) -> None:
+        try:
+            await self._session.release(launch)
+        finally:
+            self._runtime_updates.notify()
+
+    async def _sync_runtime(self) -> None:
         async with self._runtime_lock:
             _, uid, _ = self._user()
             registration = self._control.host
             guest = None
             if registration and self._control.release_task is None and process_identity(registration.process[0]) == registration.process:
-                guest = await asyncio.to_thread(registered_guest, registration.display)
+                guest = await complete_thread(registered_guest, registration.display)
             launch = registration.process if guest and registration else None
             metrics = registration.display.with_name("metrics") if launch and registration else None
             try:
-                await asyncio.to_thread(self._gpu_metrics.sync, launch, uid, metrics, guest)
+                await complete_thread(self._gpu_metrics.sync, launch, uid, metrics, guest)
                 self._metrics_error = None
             except (OSError, RuntimeError, subprocess.SubprocessError) as error:
                 if str(error) != self._metrics_error:
                     decky.logger.warning("GPU metrics unavailable: %s", error)
                 self._metrics_error = str(error)
-            await asyncio.to_thread(self._frame_limiter.sync, fps, launch, guest)
+            await complete_thread(self._frame_limiter.sync, self._desired_fps, launch, guest)

@@ -58,7 +58,7 @@ class DisplayFrameLimitTests(unittest.TestCase):
         limiter.sync(14)
         self.assertEqual(self.active, 9)
         self.active = 3
-        now = 7.0
+        now = DisplayFrameLimiter.POLICY_CHECK_INTERVAL + 2
         limiter.sync(14)
         self.assertEqual(self.active, 9)
 

@@ -24,3 +24,34 @@ export function currentFrameLimit(): number | null {
   };
   return frameLimit(runtime.settingsStore, runtime.SystemPerfStore?.msgSettingsPerApp);
 }
+
+type Subscription = { unregister(): void };
+type FrameEvents = {
+  Settings?: { RegisterForSettingsArrayChanges?(callback: () => void): Subscription };
+  System?: { Perf?: { RegisterForStateChanges?(callback: () => void): Subscription } };
+};
+
+export function observeFrameLimit(changed: (fps: number | null) => void,
+  client: FrameEvents = window.SteamClient, read = currentFrameLimit) {
+  let disposed = false;
+  let queued = false;
+  let previous: number | null | undefined;
+  const update = () => {
+    if (disposed || queued) return;
+    queued = true;
+    queueMicrotask(() => {
+      queued = false;
+      if (disposed) return;
+      const fps = read();
+      if (fps !== previous) {
+        previous = fps;
+        changed(fps);
+      }
+    });
+  };
+  const subscriptions = [client.Settings?.RegisterForSettingsArrayChanges?.(update),
+    client.System?.Perf?.RegisterForStateChanges?.(update)].filter((value): value is Subscription => !!value);
+  if (!subscriptions.length) console.warn("Steam frame settings change notifications are unavailable");
+  update();
+  return () => { disposed = true; subscriptions.forEach((subscription) => subscription.unregister()); };
+}

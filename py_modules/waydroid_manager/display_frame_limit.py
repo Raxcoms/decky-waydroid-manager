@@ -33,7 +33,7 @@ class DisplayModes:
 
 
 class DisplayFrameLimiter:
-    POLICY_CHECK_INTERVAL = 5.0
+    POLICY_CHECK_INTERVAL = 30.0
 
     def __init__(self, android, clock=time.monotonic):
         self.android = android
