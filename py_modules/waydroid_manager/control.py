@@ -183,6 +183,7 @@ class ServiceControl:
         task = asyncio.current_task()
         launch = None
         host = None
+        guest = None
         try:
             try:
                 if len(self.pending_clients) >= self.MAX_PENDING:
@@ -221,7 +222,8 @@ class ServiceControl:
                     if active is None:
                         raise RuntimeError("Waydroid launch is no longer active")
                     if command == b"CHECK\n":
-                        if await asyncio.to_thread(registered_guest, active.display) is None:
+                        guest = await asyncio.to_thread(registered_guest, active.display)
+                        if guest is None:
                             raise RuntimeError("Waydroid launch is no longer running")
                     elif command == b"RELEASE\n":
                         await self.release(active)
@@ -243,6 +245,8 @@ class ServiceControl:
                     if launch and owner and self.on_launch:
                         await self.on_launch(launch)
                 result = {"ok": True}
+                if guest is not None:
+                    result["guest"] = guest
                 if launch:
                     if self.host is None or launch.process not in self.launches:
                         raise RuntimeError("The shared Waydroid relay stopped during startup")

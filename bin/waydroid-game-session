@@ -3,7 +3,6 @@ set -euo pipefail
 
 export WAYLAND_DISPLAY="${GAMESCOPE_WAYLAND_DISPLAY:-${WAYLAND_DISPLAY:?missing Waydroid relay socket}}"
 session_unit="$WAYDROID_MANAGER_SESSION_UNIT"
-steam_owner_pid="${WAYDROID_MANAGER_STEAM_OWNER_PID:-}"
 lease_owner="${WAYDROID_MANAGER_LEASE_OWNER:-0}"
 shared_display="${WAYDROID_MANAGER_SHARED_DISPLAY:-$WAYLAND_DISPLAY}"
 owns_session=0
@@ -68,12 +67,4 @@ fi
 
 "$service_helper" --present
 
-while owned_session_running; do
-  if [ -n "$steam_owner_pid" ]; then
-    state=$(awk '{print $3}' "/proc/$steam_owner_pid/stat" 2>/dev/null) || exit 0
-    [ "$state" != Z ] || exit 0
-  fi
-  sleep 1
-done
-echo "Waydroid session ended. See $WAYDROID_MANAGER_LOG_DIR/session.log" >&2
-exit 1
+"$service_helper" --wait-session
