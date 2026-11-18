@@ -57,6 +57,7 @@ class RuntimeDisplayLease:
 
     def acquire(self, files: dict[str, Path], external: Path | None, run, display: Path,
                 *, density_reference: tuple[int, int, int] | None = None) -> None:
+        from .image_files import extract
         from .session_config import SessionConfigLease
 
         if self.root.exists():
@@ -80,7 +81,9 @@ class RuntimeDisplayLease:
                 target = overlay / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 if name == "vendor/etc/display_settings.xml":
-                    target.write_bytes(self._display_settings(source, self.config_dir / "overlay" / relative))
+                    existing = extract(self.config_dir, "vendor.img", ("/etc/display_settings.xml",),
+                                       self.root / "display_settings.xml", run, missing_ok=True)
+                    target.write_bytes(self._display_settings(source, existing))
                 else:
                     shutil.copyfile(source, target)
                 target.chmod(0o644)

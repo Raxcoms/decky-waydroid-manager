@@ -9,7 +9,7 @@ def images_directory(config: Path) -> Path:
     return Path(settings.get("waydroid", "images_path"))
 
 
-def extract(config: Path, image: str, paths: tuple[str, ...], target: Path, run) -> Path:
+def extract(config: Path, image: str, paths: tuple[str, ...], target: Path, run, *, missing_ok: bool = False) -> Path:
     for path in paths:
         relative = Path(path.removeprefix("/"))
         existing = config / "overlay" / (Path("vendor") / relative if image == "vendor.img" else relative)
@@ -23,4 +23,6 @@ def extract(config: Path, image: str, paths: tuple[str, ...], target: Path, run)
             if target.stat().st_size > 64 * 1024 * 1024:
                 raise RuntimeError("Android image resource is too large")
             return target
-    raise RuntimeError(f"The Android image does not provide {target.name}")
+    if not missing_ok:
+        raise RuntimeError(f"The Android image does not provide {target.name}")
+    return target
