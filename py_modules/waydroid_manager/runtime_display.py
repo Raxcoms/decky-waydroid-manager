@@ -58,7 +58,7 @@ class RuntimeDisplayLease:
     def acquire(self, files: dict[str, Path], external: Path | None, run, display: Path,
                 *, density_reference: tuple[int, int, int] | None = None) -> None:
         from .image_files import extract
-        from .session_config import SessionConfigLease
+        from .session_settings import session_configuration
 
         if self.root.exists():
             raise RuntimeError("An external display runtime is already active")
@@ -90,17 +90,7 @@ class RuntimeDisplayLease:
             installed_overlay = self.config_dir / "overlay"
             if not installed_overlay.is_dir() or installed_overlay.is_symlink():
                 raise RuntimeError("Waydroid's overlay directory is unavailable")
-            configs = SessionConfigLease(self.config_dir)
-            base = configs.base_properties.read_bytes()
-            if b"waydroid.wayland_display_ext=" in base:
-                raise RuntimeError("Waydroid's external display property is already configured")
-            contents = {} if external is None else {
-                configs.config: configs.config.read_bytes().rstrip(b"\n") + b"\n"
-                    + configs._fragment_config(external),
-                configs.settings: configs._property_config(configs.settings.read_bytes()),
-                configs.base_properties: base.rstrip(b"\n") + b"\nwaydroid.wayland_display_ext=wayland-1\n"
-                    b"waydroid.external_display_active=0\nwaydroid.external_display_visible=0\n",
-            }
+            contents = session_configuration(self.config_dir, external)
             for index, (target, content) in enumerate(contents.items()):
                 if target.is_symlink() or not target.is_file():
                     raise RuntimeError(f"Waydroid configuration is not a regular file: {target}")

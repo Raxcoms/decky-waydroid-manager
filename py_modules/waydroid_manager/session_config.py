@@ -7,8 +7,9 @@ from pathlib import Path
 import re
 import tempfile
 
+from .session_settings import EXTERNAL_PROPERTY as PROPERTY, external_mount, external_settings
 
-PROPERTY = "waydroid.wayland_display_ext"
+
 FRAGMENT = "waydroid-manager-second-screen.conf"
 INCLUDE_MARKER = "# Waydroid Manager second screen"
 
@@ -114,32 +115,6 @@ class SessionConfigLease:
             content += b"\n"
         return content + include
 
-    @staticmethod
-    def _property_config(content: bytes) -> bytes:
-        text = content.decode("utf-8")
-        if re.search(rf"(?m)^\s*{re.escape(PROPERTY)}\s*=", text):
-            raise RuntimeError("Waydroid external display property is already configured")
-        lines = text.splitlines(keepends=True)
-        section = next((index for index, line in enumerate(lines)
-                        if re.fullmatch(r"\s*\[properties\]\s*(?:\r?\n)?", line)), None)
-        if section is None:
-            if text and not text.endswith("\n"):
-                text += "\n"
-            return (text + f"[properties]\n{PROPERTY}=wayland-1\n").encode()
-        end = next((index for index in range(section + 1, len(lines))
-                    if re.fullmatch(r"\s*\[[^]]+\]\s*(?:\r?\n)?", lines[index])), len(lines))
-        if end and not lines[end - 1].endswith("\n"):
-            lines[end - 1] += "\n"
-        lines.insert(end, f"{PROPERTY}=wayland-1\n")
-        return "".join(lines).encode()
-
-    @staticmethod
-    def _fragment_config(socket: Path) -> bytes:
-        value = socket.as_posix()
-        if any(character.isspace() for character in value) or "\\" in value or "\x00" in value:
-            raise RuntimeError("Waydroid external display socket has an invalid path")
-        return f"lxc.mount.entry = {value} run/xdg/wayland-1 none rbind,create=file 0 0\n".encode()
-
     def acquire(self, socket: Path) -> None:
         if self._read_manifest() is not None:
             raise RuntimeError("Waydroid session lease is already active")
@@ -148,10 +123,10 @@ class SessionConfigLease:
         base_properties = self._read(self.base_properties)
         if re.search(rb"(?m)^\s*waydroid\.wayland_display_ext\s*=", base_properties):
             raise RuntimeError("Waydroid external display property is already configured")
-        fragment = self._fragment_config(socket)
+        fragment = external_mount(socket)
         contents = {
             "config": self._include_config(config, self.fragment),
-            "settings": self._property_config(settings),
+            "settings": external_settings(settings),
             "fragment": fragment,
             "baseProperties": base_properties.rstrip(b"\r\n") + b"\nwaydroid.wayland_display_ext=wayland-1\n",
         }
