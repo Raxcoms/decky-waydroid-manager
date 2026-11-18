@@ -67,6 +67,27 @@ class LegacyOverlayRecoveryTests(unittest.TestCase):
         self.assertEqual(self.target.read_bytes(), b"payload")
         self.assertTrue(self.recovery.manifest.exists())
 
+    def test_retry_accepts_files_already_restored_before_another_entry_failed(self):
+        self.stage(b"existing")
+        relative = Path("vendor/lib64/other.so")
+        other = self.recovery.overlay / relative
+        other.write_bytes(b"second payload")
+        backup = self.recovery.backups / relative
+        backup.write_bytes(b"second original")
+        state = json.loads(self.recovery.manifest.read_text())
+        state["entries"].append({"path": relative.as_posix(), "created": False, "mode": 0o644,
+                                 "sourceDigest": hashlib.sha256(b"second payload").hexdigest()})
+        self.recovery.manifest.write_text(json.dumps(state))
+        self.target.write_bytes(b"another change")
+        with self.assertRaisesRegex(RuntimeError, "target changed"):
+            self.recovery.recover()
+        self.assertEqual(other.read_bytes(), b"second original")
+        self.target.write_bytes(b"payload")
+        self.assertTrue(self.recovery.recover())
+        self.assertEqual(self.target.read_bytes(), b"existing")
+        self.assertEqual(other.read_bytes(), b"second original")
+        self.assertFalse(self.recovery.root.exists())
+
     def test_manifest_paths_cannot_escape_the_overlay(self):
         self.stage()
         outside = self.root / "outside"
