@@ -13,7 +13,7 @@ def extract(config: Path, image: str, paths: tuple[str, ...], target: Path, run)
     for path in paths:
         relative = Path(path.removeprefix("/"))
         existing = config / "overlay" / (Path("vendor") / relative if image == "vendor.img" else relative)
-        if existing.exists():
+        if existing.is_symlink() or existing.exists():
             if existing.is_symlink() or not existing.is_file() or existing.stat().st_size > 64 * 1024 * 1024:
                 raise RuntimeError("Invalid existing Android resource override")
             shutil.copyfile(existing, target)

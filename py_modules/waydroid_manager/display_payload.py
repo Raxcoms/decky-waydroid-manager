@@ -1,4 +1,3 @@
-import configparser
 from dataclasses import dataclass
 import hashlib
 from pathlib import Path
@@ -6,7 +5,7 @@ import struct
 import tempfile
 
 from .elf_symbols import dynamic_symbols
-from .image_files import extract
+from .image_files import extract, images_directory
 
 
 HWC_PATH = "lib64/hw/hwcomposer.waydroid.so"
@@ -43,36 +42,31 @@ def digest(path: Path) -> str:
 
 
 def inspect_vendor(config_dir: Path, run) -> VendorIdentity:
-    config = configparser.ConfigParser(interpolation=None)
-    config.read(config_dir / "waydroid.cfg")
-    image = Path(config.get("waydroid", "images_path")) / "vendor.img"
+    image = images_directory(config_dir) / "vendor.img"
     if not image.is_file():
         raise RuntimeError("The installed Waydroid vendor image is missing")
-    properties = run(["debugfs", "-R", "cat /build.prop", str(image)], timeout=10)
-    values = dict(line.split("=", 1) for line in properties.splitlines() if "=" in line)
-    fingerprint = values.get("ro.vendor.build.fingerprint", "")
-    sdk = values.get("ro.vendor.build.version.sdk", "")
-    vndk = values.get("ro.vndk.version", "")
-    if not fingerprint or not sdk.isdecimal() or not vndk:
-        raise RuntimeError("Could not identify the installed Waydroid vendor ABI")
     with tempfile.TemporaryDirectory(prefix="waydroid-manager-vendor-") as directory:
+        properties = extract(config_dir, "vendor.img", ("/build.prop",), Path(directory) / "build.prop", run)
+        values = dict(line.split("=", 1) for line in properties.read_text().splitlines() if "=" in line)
+        fingerprint = values.get("ro.vendor.build.fingerprint", "")
+        sdk = values.get("ro.vendor.build.version.sdk", "")
+        vndk = values.get("ro.vndk.version", "")
+        if not fingerprint or not sdk.isdecimal() or not vndk:
+            raise RuntimeError("Could not identify the installed Waydroid vendor ABI")
         library = Path(directory) / "composer.so"
-        run(["debugfs", "-R", f"dump /{HWC_PATH} {library}", str(image)], timeout=15)
+        extract(config_dir, "vendor.img", (f"/{HWC_PATH}",), library, run)
         adapter = Path(directory) / "adapter.so"
-        run(["debugfs", "-R", f"dump /lib64/libhwc2on1adapter.so {adapter}", str(image)], timeout=15)
+        extract(config_dir, "vendor.img", ("/lib64/libhwc2on1adapter.so",), adapter, run)
         system_ui = Path(directory) / "SystemUI.apk"
         extract(config_dir, "system.img", ("/system_ext/priv-app/SystemUI/SystemUI.apk",
                 "/system/system_ext/priv-app/SystemUI/SystemUI.apk"), system_ui, run)
         framework = extract(config_dir, "system.img", ("/system/framework/framework-res.apk",),
                             Path(directory) / "framework-res.apk", run)
-        runtime = Path(directory) / "libhidlbase.so"
-        for path in ("/system/apex/com.android.vndk.current/lib64/libhidlbase.so",
+        runtime = extract(config_dir, "system.img", ("/system/apex/com.android.vndk.current/lib64/libhidlbase.so",
                      f"/system/apex/com.android.vndk.v{vndk}/lib64/libhidlbase.so",
-                     f"/system/lib64/vndk-{vndk}/libhidlbase.so", "/system/lib64/libhidlbase.so"):
-            run(["debugfs", "-R", f"dump {path} {runtime}", str(image.with_name("system.img"))], timeout=15)
-            if runtime.is_file():
-                break
-        symbols = dynamic_symbols(runtime) if runtime.is_file() else {}
+                     f"/system/lib64/vndk-{vndk}/libhidlbase.so", "/system/lib64/libhidlbase.so"),
+                     Path(directory) / "libhidlbase.so", run)
+        symbols = dynamic_symbols(runtime)
         return VendorIdentity(fingerprint, int(sdk), digest(library), elf_machine(library), digest(adapter),
                               digest(system_ui), vndk, frozenset(symbols),
                               symbols.get("_ZTVN7android8hardware7IBinderE", 0), digest(framework))
