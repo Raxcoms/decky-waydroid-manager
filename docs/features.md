@@ -64,11 +64,13 @@ When Android is running, the plugin requests a 512-pixel version of the icon fro
 
 ## Use a second screen
 
-Choose **Enable second screen support** from an app's menu or **Waydroid actions**.
+For an app, choose **Enable second screen support** from its menu. For the
+Waydroid shortcut, open **Waydroid actions** and choose **Enable second screen
+for the Waydroid shortcut**.
 The enable action appears when the host advertises a secondary Wayland output.
 An enabled shortcut keeps its disable action if that output becomes unavailable.
 Each app has its own setting, disabled by default. The setting in **Waydroid
-actions** applies only to the full Waydroid shortcut.
+actions** applies only to the Waydroid shortcut.
 On first enable, a progress dialog checks the installed Android interfaces and
 builds the resource overlays from that image's framework and System UI. This uses
 private tools shipped with the plugin and requires no downloads or host OS changes.
@@ -76,7 +78,7 @@ Later enables reuse a validated cache. An image or resource update rebuilds it.
 
 Confirm the restart notice, then close existing launches before starting the
 enabled shortcut. Android starts a secondary launcher on the host's other screen.
-The menu offers **Disable second screen support** after enabling it.
+Use the same menu to disable it later.
 
 Apps start on the screen running Steam. Android treats the leased screen as an
 external display; apps with external-display support can use it for extra content.
