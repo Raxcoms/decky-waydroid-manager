@@ -26,7 +26,7 @@ from waydroid_manager.verification import InstallCancelled, InstallVerification,
 from waydroid_manager.steam import known_accounts, read_shortcuts, shortcuts_path, shortcut_key, shortcut_owners
 from waydroid_manager.host import default_launch_options, updated_launch_options
 from waydroid_manager.container import CONFIG_DIR, SERVICE, container_identity, container_pid, registered_guest, session_uses_socket, vendor_overlay_warning
-from waydroid_manager.guest import keep_package_guest_running, run_dex, set_media_volume_max
+from waydroid_manager.guest import android_user_ready, keep_package_guest_running, run_dex, set_media_volume_max
 from waydroid_manager.image import launcher_packages, owned_directory, require_unmounted, require_unredirected, run_init
 from waydroid_manager.control import Launch, ServiceControl, control_path
 from waydroid_manager.legacy_overlay import LegacyOverlayRecovery
@@ -833,11 +833,8 @@ class Plugin:
     def _wait_for_boot(self, unit_status: list[str] | None) -> None:
         deadline = time.monotonic() + 180
         while time.monotonic() < deadline:
-            try:
-                if self._run(["waydroid", "shell", "--", "getprop", "sys.boot_completed"], timeout=10) == "1":
-                    return
-            except (RuntimeError, subprocess.TimeoutExpired):
-                pass
+            if android_user_ready(self._run):
+                return
             if unit_status:
                 try:
                     state = self._run(unit_status, timeout=5)

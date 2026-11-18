@@ -119,7 +119,8 @@ class VerificationBridgeTests(unittest.TestCase):
     def test_uses_dynamic_uid_and_exact_request_without_settings_or_visual_tools(self):
         self.assertTrue(self.bridge.warning_pending())
         self.bridge.respond(True)
-        self.assertEqual(self.commands[:4], self.commands[4:8])
+        self.assertEqual(self.commands[:1], self.commands[4:5])
+        self.assertEqual(self.commands[2:4], self.commands[5:7])
         self.assertEqual(self.commands[-2][:6], ["waydroid", "shell", "--uid", "10123", "--", "env"])
         self.assertEqual(self.commands[-2][-3:], ["waydroid.manager.InstallVerifier", "7", "2"])
         self.assertEqual(self.commands[-3][0], "lxc-attach")
@@ -129,6 +130,18 @@ class VerificationBridgeTests(unittest.TestCase):
         self.run.side_effect = ["Required: example.verifier (uid=10123)", ACTIVITIES, ACTIVE, ""]
         self.assertFalse(self.bridge.warning_pending())
         self.assertFalse((self.directory / "verifier.dex").exists())
+
+    def test_approval_remains_bound_to_the_request_after_android_changes_focus(self):
+        self.assertTrue(self.bridge.warning_pending())
+        previous = self.run.side_effect
+        def changed_focus(args, **kwargs):
+            if args[-2:] == ["activity", "activities"]:
+                return "topResumedActivity=ActivityRecord{new u0 other.app/.Activity}"
+            return previous(args, **kwargs)
+        self.run.side_effect = changed_focus
+        with patch("waydroid_manager.verification.run_dex", return_value="VERIFICATION_SENT") as send:
+            self.bridge.respond(True)
+        self.assertEqual(send.call_args.args[-2:], ("7", "2"))
 
     def test_no_required_verifier_needs_no_helper(self):
         self.run.side_effect = None
@@ -143,6 +156,12 @@ class VerificationBridgeTests(unittest.TestCase):
             self.bridge.respond(True)
         self.assertFalse((self.directory / "verifier.dex").exists())
 
+    def test_changed_verifier_uid_cannot_receive_an_old_approval(self):
+        self.assertTrue(self.bridge.warning_pending())
+        self.run.side_effect = ["Required: example.verifier (uid=10124)"]
+        with self.assertRaisesRegex(RuntimeError, "VERIFICATION_UNAVAILABLE"):
+            self.bridge.respond(True)
+
     def test_cleanup_rejects_only_its_own_active_session(self):
         other = REQUEST.replace("42", "43").replace("VERIFICATION_ID=7", "VERIFICATION_ID=8")
         active = ACTIVE + "  Active Session 43:\n    mCommitted=true mDestroyed=false\n"
@@ -152,14 +171,15 @@ class VerificationBridgeTests(unittest.TestCase):
 
     def test_finished_or_changed_request_cannot_use_an_old_approval(self):
         self.assertTrue(self.bridge.warning_pending())
-        self.run.side_effect = ["Required: example.verifier (uid=10123)", ACTIVITIES, ACTIVE,
+        self.run.side_effect = ["Required: example.verifier (uid=10123)", ACTIVE,
                                 REQUEST.replace("VERIFICATION_ID=7", "VERIFICATION_ID=8")]
         with self.assertRaisesRegex(RuntimeError, "VERIFICATION_UNAVAILABLE"):
             self.bridge.respond(True)
         self.assertFalse((self.directory / "verifier.dex").exists())
 
     def test_waydroid_zero_exit_status_without_helper_marker_is_not_success(self):
-        self.run.side_effect = ["Required: example.verifier (uid=10123)", ACTIVITIES, ACTIVE, REQUEST] * 2 + ["", "", ""]
+        self.run.side_effect = ["Required: example.verifier (uid=10123)", ACTIVITIES, ACTIVE, REQUEST,
+                                "Required: example.verifier (uid=10123)", ACTIVE, REQUEST, "", "", ""]
         self.assertTrue(self.bridge.warning_pending())
         with self.assertRaisesRegex(RuntimeError, "VERIFICATION_UNAVAILABLE"):
             self.bridge.respond(True)

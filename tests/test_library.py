@@ -460,8 +460,8 @@ class PackageSessionTests(unittest.TestCase):
             self.service_active = False
         if command == ["waydroid", "status"]:
             return "Session: RUNNING" if self.session_running else "Session: STOPPED"
-        if "getprop" in command:
-            return self.booted
+        if "ANDROID_READY" in command[-1]:
+            return "ANDROID_READY" if self.booted == "1" else ""
         if "show" in command:
             return self.unit_state
         return ""
@@ -473,7 +473,17 @@ class PackageSessionTests(unittest.TestCase):
     def test_running_session_is_reused_and_left_running(self):
         self.session_running = True
         self.assertEqual(self.plugin._uninstall_package("example.app"), 123)
-        self.assertEqual(self.commands, [["waydroid", "status"], ["waydroid", "shell", "--", "getprop", "sys.boot_completed"]])
+        self.assertEqual(self.commands[0], ["waydroid", "status"])
+        self.assertIn("get-started-user-state", self.commands[1][-1])
+        self.assertEqual(self.removed, ["example.app"])
+
+    def test_booted_but_locked_user_is_waited_for_before_package_work(self):
+        self.session_running = True
+        with (patch.object(backend, "android_user_ready", side_effect=[False, True]) as ready,
+              patch.object(backend.time, "sleep") as wait):
+            self.plugin._uninstall_package("example.app")
+        self.assertEqual(ready.call_count, 2)
+        wait.assert_called_once_with(1)
         self.assertEqual(self.removed, ["example.app"])
 
     def test_fresh_and_existing_image_setup_check_the_vendor_overlay(self):
