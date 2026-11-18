@@ -10,7 +10,7 @@ import tempfile
 import threading
 import types
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
 import zipfile
 
 from steam_fixtures import write_shortcuts
@@ -45,6 +45,30 @@ class LibraryTests(unittest.TestCase):
 
     def tearDown(self):
         self.directory.cleanup()
+
+    def test_frame_limit_is_prepared_before_starting_activity(self):
+        calls = []
+
+        async def sync(**kwargs):
+            calls.append(("limit", kwargs))
+
+        async def show(launch):
+            calls.append(("show", launch))
+
+        self.plugin._sync_runtime = sync
+        self.plugin._session = types.SimpleNamespace(show=show)
+        self.plugin._runtime_updates = Mock()
+        asyncio.run(self.plugin._present_launch("launch"))
+        self.assertEqual(calls, [("limit", {"force_frame_limit": True}), ("show", "launch")])
+        self.plugin._runtime_updates.notify.assert_called_once_with()
+
+    def test_unavailable_frame_limiter_does_not_prevent_app_launch(self):
+        self.plugin._sync_runtime = AsyncMock(side_effect=RuntimeError("unsupported SDK"))
+        self.plugin._session = types.SimpleNamespace(show=AsyncMock())
+        self.plugin._runtime_updates = Mock()
+        with patch.object(backend.decky, "logger", Mock(), create=True):
+            asyncio.run(self.plugin._present_launch("launch"))
+        self.plugin._session.show.assert_awaited_once_with("launch")
 
     def test_companion_link_requires_enabled_screen_and_installed_distinct_apps(self):
         self.plugin._desktop_entries = lambda: [{"package": "example.app"}, {"package": "other.app"}]

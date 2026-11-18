@@ -80,7 +80,8 @@ class FrameLimiter:
         self.original.clear()
         self.applied.clear()
 
-    def sync(self, fps: int | None, launch: tuple[int, str] | None, expected_guest: tuple[int, str] | None = None) -> None:
+    def sync(self, fps: int | None, launch: tuple[int, str] | None, expected_guest: tuple[int, str] | None = None,
+             *, force: bool = False) -> None:
         guest = self.identify() if launch else None
         if expected_guest and expected_guest != guest:
             guest = None
@@ -106,7 +107,7 @@ class FrameLimiter:
                 self.restore()
             self.display_modes = supported
         if self.display_modes:
-            self.display_limiter.sync(fps)
+            self.display_limiter.sync(fps, force=force)
             return
         if not fps:
             self.restore()

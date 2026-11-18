@@ -1117,6 +1117,10 @@ class Plugin:
         self._runtime_updates.notify()
 
     async def _present_launch(self, launch: Launch) -> None:
+        try:
+            await self._sync_runtime(force_frame_limit=True)
+        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            decky.logger.warning("Could not prepare the frame limit before app launch: %s", error)
         await self._session.show(launch)
         self._runtime_updates.notify()
 
@@ -1130,7 +1134,7 @@ class Plugin:
         self._storage_changed = True
         self._runtime_updates.notify()
 
-    async def _sync_runtime(self) -> None:
+    async def _sync_runtime(self, *, force_frame_limit: bool = False) -> None:
         async with self._runtime_lock:
             _, uid, _ = self._user()
             registration = self._control.host
@@ -1154,4 +1158,4 @@ class Plugin:
                 if str(error) != self._metrics_error:
                     decky.logger.warning("GPU metrics unavailable: %s", error)
                 self._metrics_error = str(error)
-            await complete_thread(self._frame_limiter.sync, self._desired_fps, launch, guest)
+            await complete_thread(self._frame_limiter.sync, self._desired_fps, launch, guest, force=force_frame_limit)

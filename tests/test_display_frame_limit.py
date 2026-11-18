@@ -67,6 +67,18 @@ class DisplayFrameLimitTests(unittest.TestCase):
         self.assertEqual(self.writes, [(967, 9)])
         self.assertEqual(self.limit, "14")
 
+    def test_launch_reasserts_current_cap_without_waiting_for_policy_check(self):
+        self.limiter.sync(47)
+        self.active = 88
+        self.limiter.sync(47, force=True)
+        self.assertEqual(self.active, 51)
+        self.assertEqual(self.writes, [(967, 51), (967, 51)])
+
+    def test_launch_reasserts_policy_even_when_current_mode_matches(self):
+        self.limiter.sync(47)
+        self.limiter.sync(47, force=True)
+        self.assertEqual(self.writes, [(967, 51), (967, 51)])
+
     def test_cap_clamps_to_native_and_disabling_restores_native(self):
         self.limiter.sync(17)
         self.limiter.sync(240)

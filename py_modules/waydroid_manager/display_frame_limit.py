@@ -53,10 +53,10 @@ class DisplayFrameLimiter:
         if "Parcel(NULL)" not in result:
             raise RuntimeError("Android rejected the display frame limit")
 
-    def sync(self, fps: int) -> None:
+    def sync(self, fps: int, *, force: bool = False) -> None:
         value = str(fps)
         now = self.clock()
-        if self.limit == value and self.applied is not None and now < self.next_check:
+        if not force and self.limit == value and self.applied is not None and now < self.next_check:
             return
         modes = self.modes()
         selected = modes.select(fps)
@@ -68,7 +68,7 @@ class DisplayFrameLimiter:
         if self.original is None:
             self.original = modes.display, modes.active
         target = modes.display, selected
-        if self.applied != target or modes.active != selected:
+        if force or self.applied != target or modes.active != selected:
             self.set_mode(*target)
             self.applied = target
         self.next_check = now + self.POLICY_CHECK_INTERVAL

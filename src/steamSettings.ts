@@ -29,28 +29,35 @@ type Subscription = { unregister(): void };
 type FrameEvents = {
   Settings?: { RegisterForSettingsArrayChanges?(callback: () => void): Subscription };
   System?: { Perf?: { RegisterForStateChanges?(callback: () => void): Subscription } };
+  GameSessions?: { RegisterForAppLifetimeNotifications?(callback: () => void): Subscription };
 };
 
 export function observeFrameLimit(changed: (fps: number | null) => void,
   client: FrameEvents = window.SteamClient, read = currentFrameLimit) {
   let disposed = false;
   let queued = false;
+  let forced = false;
   let previous: number | null | undefined;
-  const update = () => {
-    if (disposed || queued) return;
+  const update = (force = false) => {
+    if (disposed) return;
+    forced ||= force;
+    if (queued) return;
     queued = true;
     queueMicrotask(() => {
       queued = false;
       if (disposed) return;
       const fps = read();
-      if (fps !== previous) {
+      if (forced || fps !== previous) {
+        forced = false;
         previous = fps;
         changed(fps);
       }
     });
   };
-  const subscriptions = [client.Settings?.RegisterForSettingsArrayChanges?.(update),
-    client.System?.Perf?.RegisterForStateChanges?.(update)].filter((value): value is Subscription => !!value);
+  const subscriptions = [client.Settings?.RegisterForSettingsArrayChanges?.(() => update()),
+    client.System?.Perf?.RegisterForStateChanges?.(() => update()),
+    client.GameSessions?.RegisterForAppLifetimeNotifications?.(() => update(true))]
+    .filter((value): value is Subscription => !!value);
   if (!subscriptions.length) console.warn("Steam frame settings change notifications are unavailable");
   update();
   return () => { disposed = true; subscriptions.forEach((subscription) => subscription.unregister()); };

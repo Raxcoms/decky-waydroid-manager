@@ -34,6 +34,25 @@ function settings(values: Record<string, unknown>) {
   return { GetClientSetting: (key: string): [unknown, unknown] => [values[key], undefined] };
 }
 
+test("shortcut lifetime events resend an unchanged cap without polling", async () => {
+  const callbacks = new Set<() => void>();
+  const register = (callback: () => void) => {
+    callbacks.add(callback);
+    return { unregister: () => { callbacks.delete(callback); } };
+  };
+  const observed: (number | null)[] = [];
+  const stop = observeFrameLimit((value) => observed.push(value), {
+    Settings: { RegisterForSettingsArrayChanges: register },
+    GameSessions: { RegisterForAppLifetimeNotifications: register },
+  }, () => 120);
+  await Promise.resolve();
+  callbacks.forEach((callback) => callback());
+  await Promise.resolve();
+  assert.deepEqual(observed, [120, 120]);
+  stop();
+  assert.equal(callbacks.size, 0);
+});
+
 test("modern QAM target takes priority over stale legacy settings", () => {
   assert.equal(frameLimit(settings({
     gamescope_app_target_framerate: 24,
