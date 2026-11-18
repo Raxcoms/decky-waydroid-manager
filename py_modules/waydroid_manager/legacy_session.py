@@ -7,15 +7,12 @@ from pathlib import Path
 import re
 import tempfile
 
-from .session_settings import EXTERNAL_PROPERTY as PROPERTY, external_mount, external_settings
-
 
 FRAGMENT = "waydroid-manager-second-screen.conf"
-INCLUDE_MARKER = "# Waydroid Manager second screen"
 
 
-class SessionConfigLease:
-    """Temporarily extend Waydroid's generated session configuration."""
+class LegacySessionRecovery:
+    """Restore configuration left by the retired session-file writer."""
 
     def __init__(self, config_dir: Path):
         self.config_dir = config_dir
@@ -57,10 +54,6 @@ class SessionConfigLease:
         temporary.chmod(mode)
         temporary.replace(path)
 
-    def _write_manifest(self, state: dict) -> None:
-        self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
-        self._write(self.manifest, json.dumps(state, sort_keys=True).encode() + b"\n", 0o600)
-
     def _read_manifest(self) -> dict | None:
         try:
             if self.manifest.stat().st_size > 1024 * 1024:
@@ -94,57 +87,6 @@ class SessionConfigLease:
         if seen != set(expected):
             raise RuntimeError("Waydroid session manifest is invalid")
         return state
-
-    def _entry(self, name: str, path: Path, content: bytes) -> dict:
-        original = self._read(path, required=False)
-        return {
-            "name": name,
-            "path": str(path.relative_to(self.config_dir)),
-            "created": original is None,
-            "sourceDigest": self._digest(content),
-            "originalDigest": self._digest(original) if original is not None else None,
-            "mode": path.stat().st_mode & 0o777 if original is not None else 0o644,
-        }
-
-    @staticmethod
-    def _include_config(content: bytes, fragment: Path) -> bytes:
-        include = f"{INCLUDE_MARKER}\nlxc.include = {fragment}\n".encode()
-        if include in content:
-            raise RuntimeError("Waydroid second-screen include is already configured")
-        if not content.endswith(b"\n"):
-            content += b"\n"
-        return content + include
-
-    def acquire(self, socket: Path) -> None:
-        if self._read_manifest() is not None:
-            raise RuntimeError("Waydroid session lease is already active")
-        config = self._read(self.config)
-        settings = self._read(self.settings)
-        base_properties = self._read(self.base_properties)
-        if re.search(rb"(?m)^\s*waydroid\.wayland_display_ext\s*=", base_properties):
-            raise RuntimeError("Waydroid external display property is already configured")
-        fragment = external_mount(socket)
-        contents = {
-            "config": self._include_config(config, self.fragment),
-            "settings": external_settings(settings),
-            "fragment": fragment,
-            "baseProperties": base_properties.rstrip(b"\r\n") + b"\nwaydroid.wayland_display_ext=wayland-1\n",
-        }
-        paths = {"config": self.config, "settings": self.settings, "fragment": self.fragment,
-                 "baseProperties": self.base_properties}
-        entries = [self._entry(name, paths[name], content) for name, content in contents.items()]
-        self._write_manifest({"version": 1, "phase": "staging", "entries": entries})
-        try:
-            for entry in entries:
-                path = self.config_dir / entry["path"]
-                original = self._read(path, required=False)
-                if original is not None:
-                    self._write(self.backups / entry["path"], original, entry["mode"])
-                self._write(path, contents[entry["name"]], entry["mode"])
-            self._write_manifest({"version": 1, "phase": "active", "entries": entries})
-        except Exception:
-            self.recover()
-            raise
 
     def recover(self) -> bool:
         state = self._read_manifest()

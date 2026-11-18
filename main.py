@@ -29,8 +29,8 @@ from waydroid_manager.container import CONFIG_DIR, SERVICE, container_identity, 
 from waydroid_manager.guest import keep_package_guest_running, run_dex, set_media_volume_max
 from waydroid_manager.image import launcher_packages, owned_directory, require_unmounted, require_unredirected, run_init
 from waydroid_manager.control import Launch, ServiceControl, control_path
-from waydroid_manager.overlay import OverlayLease
-from waydroid_manager.session_config import SessionConfigLease
+from waydroid_manager.legacy_overlay import LegacyOverlayRecovery
+from waydroid_manager.legacy_session import LegacySessionRecovery
 from waydroid_manager.session import LaunchSession, SessionServices
 from waydroid_manager.state import StateStore
 from waydroid_manager.async_work import complete_thread
@@ -57,8 +57,8 @@ class Plugin:
         self._image_progress: dict[str, str | int | None] | None = None
         self._install_confirmation = None
         self._control = None
-        self._overlay = OverlayLease(WAYDROID_DIR)
-        self._session_config = SessionConfigLease(WAYDROID_DIR)
+        self._overlay_recovery = LegacyOverlayRecovery(WAYDROID_DIR)
+        self._session_recovery = LegacySessionRecovery(WAYDROID_DIR)
         self._session = LaunchSession(
             WAYDROID_DIR, Path(decky.DECKY_PLUGIN_DIR),
             SessionServices(self._run, self._run_user_session, self._ensure_service,
@@ -938,11 +938,11 @@ class Plugin:
                 if container_pid() is not None:
                     raise RuntimeError("A previous plugin session is still closing")
                 await asyncio.to_thread(lease.recover)
-        if self._overlay.manifest.exists() or self._session_config.manifest.exists():
+        if self._overlay_recovery.manifest.exists() or self._session_recovery.manifest.exists():
             if container_pid() is not None:
                 raise RuntimeError("Waydroid has a pending second-screen transaction. Stop Waydroid before launching it again.")
-            await asyncio.to_thread(self._session_config.recover)
-            await asyncio.to_thread(self._overlay.recover)
+            await asyncio.to_thread(self._session_recovery.recover)
+            await asyncio.to_thread(self._overlay_recovery.recover)
         await self.start_service()
 
     def _uninstall_package(self, package: str, account_id: int | None = None) -> int | None:

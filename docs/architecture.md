@@ -20,6 +20,9 @@ flowchart LR
 | Steam integration | Live shortcut actions, artwork, and Steam settings | [Steam actions](../src/steam.ts), [artwork](../src/artwork.ts), [library lookup](../py_modules/waydroid_manager/steam.py) |
 | Android management | Image setup, package operations, and service control | [`main.py`](../main.py), [backend modules](../py_modules/waydroid_manager) |
 | Game Mode runtime | Launch lifetime, Wayland transport, controller, and metrics | [`bin/`](../bin), [runtime modules](../py_modules/waydroid_manager) |
+| Launch configuration | Build temporary configuration contents without changing installed files | [Session settings](../py_modules/waydroid_manager/session_settings.py) |
+| Runtime overlays | Own temporary mounts, manifests and crash cleanup | [Runtime display lease](../py_modules/waydroid_manager/runtime_display.py) |
+| Upgrade recovery | Restore transactions left by older plugin versions | [Overlay recovery](../py_modules/waydroid_manager/legacy_overlay.py), [session recovery](../py_modules/waydroid_manager/legacy_session.py) |
 
 ## Follow a launch
 
@@ -41,6 +44,9 @@ flowchart LR
    to trigger a screen refresh.
 
 User preferences and artwork cleanup run as the Steam login user. APK and XAPK content goes through Android's package installer, with no need for the backend to stage packages in the user's Android data directory.
+
+New launches stage their changes under `/run`. The legacy recovery modules only
+restore older on-disk transactions before startup; they cannot create new leases.
 
 ## Know what the plugin owns
 

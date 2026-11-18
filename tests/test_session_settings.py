@@ -1,12 +1,21 @@
 import configparser
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import tempfile
 import unittest
 
-from waydroid_manager.session_settings import EXTERNAL_PROPERTY, external_settings, session_configuration
+from waydroid_manager.session_settings import EXTERNAL_PROPERTY, external_mount, external_settings, session_configuration
 
 
 class SessionSettingsTests(unittest.TestCase):
+    def test_existing_external_property_is_not_replaced(self):
+        with self.assertRaisesRegex(RuntimeError, "already configured"):
+            external_settings(f"[properties]\n{EXTERNAL_PROPERTY}=other\n".encode())
+
+    def test_socket_paths_that_lxc_cannot_parse_are_rejected(self):
+        for value in ("/run/external display", "/run/external\nentry", "/run/external\\entry"):
+            with self.subTest(value=value), self.assertRaisesRegex(RuntimeError, "invalid path"):
+                external_mount(PurePosixPath(value))
+
     def test_properties_are_added_to_their_section_without_changing_other_sections(self):
         for source in (b"[waydroid]\nimages_path=/images", b"[properties]\nfoo=bar",
                        b"[properties]\nfoo=bar\n[other]\nvalue=preserved\n"):

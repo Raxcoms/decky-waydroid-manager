@@ -6,8 +6,8 @@ import shutil
 import tempfile
 
 
-class OverlayLease:
-    """Temporarily stage plugin files in Waydroid's existing overlay."""
+class LegacyOverlayRecovery:
+    """Restore files left by the retired on-disk overlay writer."""
 
     def __init__(self, config_dir: Path):
         self.overlay = config_dir / "overlay"
@@ -32,15 +32,6 @@ class OverlayLease:
 
     def _target(self, relative: str | Path) -> Path:
         return self.overlay / self._relative(relative)
-
-    def _write_manifest(self, state: dict) -> None:
-        self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.root, delete=False) as file:
-            temporary = Path(file.name)
-            json.dump(state, file, sort_keys=True)
-            file.flush()
-            os.fsync(file.fileno())
-        temporary.replace(self.manifest)
 
     def _read_manifest(self) -> dict | None:
         try:
@@ -67,45 +58,6 @@ class OverlayLease:
         if mode is not None:
             temporary.chmod(mode)
         temporary.replace(target)
-
-    def _entry(self, relative: Path, source: Path) -> dict:
-        if not source.is_file() or source.is_symlink():
-            raise RuntimeError(f"Waydroid overlay source is not a regular file: {source}")
-        target = self._target(relative)
-        if target.exists() and (not target.is_file() or target.is_symlink()):
-            raise RuntimeError(f"Waydroid overlay target is not a regular file: {target}")
-        return {
-            "path": relative.as_posix(),
-            "created": not target.exists(),
-            "mode": source.stat().st_mode & 0o777,
-            "sourceDigest": self._digest(source),
-        }
-
-    def acquire(self, files: dict[str | Path, Path]) -> None:
-        if not files:
-            raise RuntimeError("Waydroid overlay lease has no files")
-        if self._read_manifest() is not None:
-            raise RuntimeError("Waydroid overlay lease is already active")
-        entries = [self._entry(self._relative(relative), source) for relative, source in files.items()]
-        if len({entry["path"] for entry in entries}) != len(entries):
-            raise RuntimeError("Waydroid overlay lease has duplicate files")
-        state = {"version": 1, "phase": "staging", "entries": entries}
-        self._write_manifest(state)
-        try:
-            for entry in entries:
-                relative = self._relative(entry["path"])
-                target = self._target(relative)
-                if not entry["created"]:
-                    self._copy(target, self.backups / relative, target.stat().st_mode & 0o777)
-                source = files[relative] if relative in files else files[relative.as_posix()]
-                if self._digest(source) != entry["sourceDigest"]:
-                    raise RuntimeError(f"Waydroid overlay source changed while staging: {source}")
-                self._copy(source, target, entry["mode"])
-            state["phase"] = "active"
-            self._write_manifest(state)
-        except Exception:
-            self.recover()
-            raise
 
     def recover(self) -> bool:
         state = self._read_manifest()
