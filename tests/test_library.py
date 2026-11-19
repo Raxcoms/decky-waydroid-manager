@@ -58,17 +58,30 @@ class LibraryTests(unittest.TestCase):
         self.plugin._sync_runtime = sync
         self.plugin._session = types.SimpleNamespace(show=show)
         self.plugin._runtime_updates = Mock()
-        asyncio.run(self.plugin._present_launch("launch"))
-        self.assertEqual(calls, [("limit", {"force_frame_limit": True}), ("show", "launch")])
+        launch = types.SimpleNamespace(request=types.SimpleNamespace(package="example.game"))
+        asyncio.run(self.plugin._present_launch(launch))
+        self.assertEqual(calls, [
+            ("limit", {"force_frame_limit": True, "package": "example.game", "prepare": True}),
+            ("show", launch), ("limit", {"package": "example.game"}),
+        ])
         self.plugin._runtime_updates.notify.assert_called_once_with()
 
     def test_unavailable_frame_limiter_does_not_prevent_app_launch(self):
         self.plugin._sync_runtime = AsyncMock(side_effect=RuntimeError("unsupported SDK"))
         self.plugin._session = types.SimpleNamespace(show=AsyncMock())
         self.plugin._runtime_updates = Mock()
+        launch = types.SimpleNamespace(request=types.SimpleNamespace(package="example.game"))
         with patch.object(backend.decky, "logger", Mock(), create=True):
-            asyncio.run(self.plugin._present_launch("launch"))
-        self.plugin._session.show.assert_awaited_once_with("launch")
+            asyncio.run(self.plugin._present_launch(launch))
+        self.plugin._session.show.assert_awaited_once_with(launch)
+
+    def test_full_shortcut_does_not_set_a_package_policy(self):
+        self.plugin._sync_runtime = AsyncMock()
+        self.plugin._session = types.SimpleNamespace(show=AsyncMock())
+        self.plugin._runtime_updates = Mock()
+        launch = types.SimpleNamespace(request=types.SimpleNamespace(package=None))
+        asyncio.run(self.plugin._present_launch(launch))
+        self.plugin._sync_runtime.assert_awaited_once_with(force_frame_limit=True, package=None, prepare=True)
 
     def test_companion_link_requires_enabled_screen_and_installed_distinct_apps(self):
         self.plugin._desktop_entries = lambda: [{"package": "example.app"}, {"package": "other.app"}]

@@ -40,7 +40,9 @@ class FrameLimiter:
         if self.identify() != self.guest:
             raise RuntimeError("The Waydroid guest changed")
         # Android 13's SurfaceFlinger exposes a temporary per-UID frame-rate override.
-        self.android("service", "call", "SurfaceFlinger", "1039", "i32", str(uid), "f", str(fps))
+        result = self.android("service", "call", "SurfaceFlinger", "1039", "i32", str(uid), "f", str(fps))
+        if "Parcel(NULL)" not in result:
+            raise RuntimeError("Android rejected the app frame limit")
 
     def compatible_rate(self, target: int) -> float | None:
         period, _, _ = self.android("dumpsys", "SurfaceFlinger", "--latency").partition("\n")
@@ -81,7 +83,7 @@ class FrameLimiter:
         self.applied.clear()
 
     def sync(self, fps: int | None, launch: tuple[int, str] | None, expected_guest: tuple[int, str] | None = None,
-             *, force: bool = False) -> None:
+             *, force: bool = False, package: str | None = None, prepare: bool = False) -> None:
         guest = self.identify() if launch else None
         if expected_guest and expected_guest != guest:
             guest = None
@@ -107,7 +109,11 @@ class FrameLimiter:
                 self.restore()
             self.display_modes = supported
         if self.display_modes:
-            self.display_limiter.sync(fps, force=force)
+            target = self.display_limiter.sync(fps, force=force)
+            if prepare:
+                self.release_override(package)
+            else:
+                self.sync_overrides(target, package)
             return
         if not fps:
             self.restore()
@@ -115,11 +121,28 @@ class FrameLimiter:
         target = self.compatible_rate(fps)
         if target is None:
             return
+        if prepare:
+            self.release_override(package)
+        else:
+            self.sync_overrides(target, package or self.foreground_package())
+
+    def release_override(self, package: str | None) -> None:
+        if not package or not self.applied:
+            return
+        uid = self.package_uid(package)
+        if uid not in self.applied:
+            return
+        current = self.overrides().get(uid, 0)
+        if math.isclose(current, self.applied[uid], abs_tol=0.01):
+            self.override(uid, self.original[uid])
+        del self.applied[uid]
+        del self.original[uid]
+
+    def sync_overrides(self, target: float, package: str | None) -> None:
         for uid, applied_fps in self.applied.items():
             if applied_fps != target:
                 self.override(uid, target)
                 self.applied[uid] = target
-        package = self.foreground_package()
         if not package:
             return
         uid = self.package_uid(package)

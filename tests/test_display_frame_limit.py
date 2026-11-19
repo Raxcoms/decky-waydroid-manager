@@ -113,6 +113,16 @@ class DisplayFrameLimitTests(unittest.TestCase):
             self.limiter.sync(40)
         self.assertIsNone(self.limiter.applied)
 
+    def test_failed_live_change_is_retried_instead_of_using_the_old_cached_rate(self):
+        self.limiter.sync(47)
+        android = self.limiter.android
+        self.limiter.android = lambda *args: "Error" if args[0] == "service" else android(*args)
+        with self.assertRaisesRegex(RuntimeError, "rejected"):
+            self.limiter.sync(14)
+        self.limiter.android = android
+        self.assertEqual(self.limiter.sync(14), 14)
+        self.assertEqual(self.active, 9)
+
     def test_no_matching_primary_or_invalid_modes_fail_closed(self):
         for text in ("STOPPED", display_dump().replace("activeModeId=3", "activeModeId=999")):
             with self.subTest(text=text), self.assertRaises(RuntimeError):
@@ -137,3 +147,80 @@ class DisplayFrameLimitTests(unittest.TestCase):
         limiter.restore()
         self.assertEqual(self.active, 51)
         self.assertEqual(self.limit, "47")
+
+    def native_limiter(self):
+        self.guest = (100, "boot")
+        self.overrides = {10151: 50.0}
+        self.uid_writes = []
+
+        def run(args):
+            command = tuple(args[3:])
+            if command == ("getprop", "ro.build.version.sdk"):
+                return "33"
+            if command == ("getprop", "waydroid.frame_limit_modes"):
+                return "1"
+            if command == ("cmd", "package", "list", "packages", "-U", "example.game"):
+                return "package:example.game uid:10151"
+            if command == ("dumpsys", "SurfaceFlinger"):
+                values = ", ".join(f"[uid: {uid} frameRate: {fps:.2f} Hz]"
+                                   for uid, fps in self.overrides.items())
+                return self.android(*command) + "\nFrame Rate Overrides (backdoor): {" + values + "}"
+            if command[:4] == ("service", "call", "SurfaceFlinger", "1039"):
+                uid, fps = int(command[5]), float(command[7])
+                self.overrides[uid] = fps
+                self.uid_writes.append((uid, fps))
+                return "Result: Parcel(NULL)"
+            return self.android(*command)
+
+        self.run = Mock(side_effect=run)
+        return FrameLimiter(self.run, lambda: self.guest)
+
+    def test_app_policy_is_applied_after_preparation_and_tracks_live_caps(self):
+        limiter = self.native_limiter()
+        limiter.sync(47, (200, "launch"), package="example.game", prepare=True)
+        self.assertEqual(self.uid_writes, [])
+        self.assertEqual(self.active, 51)
+        limiter.sync(47, (200, "launch"), package="example.game")
+        self.assertEqual(self.uid_writes, [(10151, 47)])
+        limiter.sync(14, (200, "launch"))
+        self.assertEqual(self.uid_writes[-1], (10151, 14))
+        self.run.reset_mock()
+        limiter.sync(14, (200, "launch"))
+        self.run.assert_not_called()
+
+    def test_app_policy_clamps_to_discovered_primary_refresh_and_restores(self):
+        limiter = self.native_limiter()
+        limiter.sync(240, (200, "launch"), package="example.game")
+        self.assertEqual(self.uid_writes, [(10151, 144)])
+        limiter.sync(0, (200, "launch"))
+        self.assertEqual(self.overrides[10151], 144)
+        limiter.restore()
+        self.assertEqual(self.overrides[10151], 50)
+
+    def test_relaunch_releases_the_owned_policy_before_reapplying_after_start(self):
+        limiter = self.native_limiter()
+        limiter.sync(47, (200, "launch"), package="example.game")
+        limiter.sync(47, (200, "launch"), package="example.game", prepare=True)
+        self.assertEqual(self.overrides[10151], 50)
+        limiter.sync(47, (200, "launch"), package="example.game")
+        self.assertEqual(self.uid_writes, [(10151, 47), (10151, 50), (10151, 47)])
+        self.overrides[10151] = 40
+        limiter.restore()
+        self.assertEqual(self.overrides[10151], 40)
+
+    def test_relaunch_preserves_an_externally_changed_policy(self):
+        limiter = self.native_limiter()
+        limiter.sync(47, (200, "launch"), package="example.game")
+        self.overrides[10151] = 40
+        limiter.sync(47, (200, "launch"), package="example.game", prepare=True)
+        self.assertEqual(self.overrides[10151], 40)
+        limiter.sync(47, (200, "launch"), package="example.game")
+        limiter.restore()
+        self.assertEqual(self.overrides[10151], 40)
+
+    def test_replacement_guest_cannot_receive_an_old_app_policy(self):
+        limiter = self.native_limiter()
+        limiter.sync(47, (200, "launch"), package="example.game")
+        self.guest = (101, "new-boot")
+        limiter.restore()
+        self.assertEqual(self.uid_writes, [(10151, 47)])

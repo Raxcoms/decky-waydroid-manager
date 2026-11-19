@@ -41,6 +41,7 @@ class DisplayFrameLimiter:
         self.next_check = 0.0
         self.original: tuple[int, int] | None = None
         self.applied: tuple[int, int] | None = None
+        self.rate: float | None = None
         self.previous_limit: str | None = None
         self.limit: str | None = None
 
@@ -53,11 +54,12 @@ class DisplayFrameLimiter:
         if "Parcel(NULL)" not in result:
             raise RuntimeError("Android rejected the display frame limit")
 
-    def sync(self, fps: int, *, force: bool = False) -> None:
+    def sync(self, fps: int, *, force: bool = False) -> float:
         value = str(fps)
         now = self.clock()
-        if not force and self.limit == value and self.applied is not None and now < self.next_check:
-            return
+        if not force and self.limit == value and self.rate is not None and now < self.next_check:
+            return self.rate
+        self.rate = None
         modes = self.modes()
         selected = modes.select(fps)
         if self.previous_limit is None:
@@ -71,7 +73,9 @@ class DisplayFrameLimiter:
         if force or self.applied != target or modes.active != selected:
             self.set_mode(*target)
             self.applied = target
+        self.rate = modes.rates[selected]
         self.next_check = now + self.POLICY_CHECK_INTERVAL
+        return self.rate
 
     def restore(self) -> None:
         if self.limit is not None and self.android("getprop", "waydroid.frame_limit").strip() == self.limit:
@@ -85,4 +89,5 @@ class DisplayFrameLimiter:
     def clear(self) -> None:
         self.original = self.applied = None
         self.previous_limit = self.limit = None
+        self.rate = None
         self.next_check = 0.0
