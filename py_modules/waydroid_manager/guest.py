@@ -14,6 +14,15 @@ from .proc import clean_env, process_identity
 GUEST_STARTING = "WAYDROID_GUEST_STARTING"
 # Android reserves display 0 for its default display on every device.
 DEFAULT_DISPLAY = "0"
+MATCH_SYSTEM_ONLY = 0x00100000
+
+
+def expanded_component(value: str) -> str | None:
+    match = re.fullmatch(r"([A-Za-z0-9_.]+)/([A-Za-z0-9_.$]+)", value)
+    if not match:
+        return None
+    package, activity = match.groups()
+    return f"{package}/{package + activity if activity.startswith('.') else activity}"
 
 
 def attach_command(*args: str) -> list[str]:
@@ -154,9 +163,27 @@ class LaunchPolicy:
         if re.search(r"^Error:", output, re.MULTILINE):
             raise RuntimeError(output.strip())
         activity = re.search(r"^Activity:\s+(\S+)", output, re.MULTILINE)
-        if (not re.search(r"^Status:\s+ok\s*$", output, re.MULTILINE) or activity is None
-                or (package and not activity[1].startswith(package + "/"))):
+        confirmed = bool(re.search(r"^Status:\s+ok\s*$", output, re.MULTILINE) and activity)
+        if confirmed and package and not activity[1].startswith(package + "/"):
+            confirmed = self._permission_activity(activity[1])
+            if confirmed:
+                # Permission screens belong to Android, outside the app's task crop.
+                self.android("setprop", "waydroid.active_apps", "Waydroid")
+        if not confirmed:
+            logging.getLogger(__name__).warning("Android launch did not confirm %s on display %s: %s",
+                                              package or "Home", display, output.strip() or "no activity result")
             raise RuntimeError("Android did not confirm the requested activity started")
+
+    def _permission_activity(self, activity: str) -> bool:
+        component = expanded_component(activity)
+        if component is None:
+            return False
+        for action in ("android.intent.action.REVIEW_PERMISSIONS", "android.content.pm.action.REQUEST_PERMISSIONS"):
+            output = self.android("cmd", "package", "resolve-activity", "--components", "--user", "current",
+                                  "--query-flags", str(MATCH_SYSTEM_ONLY), "-a", action)
+            if any(expanded_component(line.strip()) == component for line in output.splitlines()):
+                return True
+        return False
 
     def _app_intent(self, package: str) -> list[str]:
         # Match Android's package launcher, including activities without CATEGORY_DEFAULT.

@@ -71,6 +71,8 @@ class LaunchPolicyTests(unittest.TestCase):
         self.activities = {"android.intent.category.LAUNCHER": ["example.app/.MainActivity"]}
         self.queries = []
         self.launch_result = None
+        self.permission_activities = {}
+        self.permission_queries = []
         self.policy = LaunchPolicy(self.run_android, lambda: self.guest)
 
     def run_android(self, command, **kwargs):
@@ -80,6 +82,9 @@ class LaunchPolicyTests(unittest.TestCase):
         if args[:3] == ["cmd", "package", "query-activities"]:
             self.queries.append(args)
             return "\n".join(self.activities.get(args[-3], []))
+        if args[:3] == ["cmd", "package", "resolve-activity"]:
+            self.permission_queries.append(args)
+            return self.permission_activities.get(args[-1], "No activity found")
         if args == ["settings", "list", "global"]:
             return "" if self.value is None else f"policy_control={self.value}"
         self.writes.append(args)
@@ -194,6 +199,36 @@ class LaunchPolicyTests(unittest.TestCase):
                 self.launch_result = output
                 with self.assertRaisesRegex(RuntimeError, "did not confirm"):
                     self.policy.present("example.app")
+
+    def test_system_permission_review_keeps_the_launch_and_prompt_visible(self):
+        self.permission_activities["android.intent.action.REVIEW_PERMISSIONS"] = "system.permissions/system.permissions.ReviewActivity"
+        self.launch_result = "Status: ok\nActivity: system.permissions/.ReviewActivity"
+        self.policy.save("app")
+        self.policy.present("example.app")
+        self.assertEqual(self.writes[-1], ["setprop", "waydroid.active_apps", "Waydroid"])
+        self.assertIn("--user", self.permission_queries[0])
+        # MATCH_SYSTEM_ONLY keeps installed apps out of permission-controller resolution.
+        self.assertEqual(self.permission_queries[0][-4:], ["--query-flags", "1048576", "-a", "android.intent.action.REVIEW_PERMISSIONS"])
+
+    def test_runtime_permission_prompt_uses_the_system_handler_for_this_image(self):
+        self.permission_activities["android.content.pm.action.REQUEST_PERMISSIONS"] = "vendor.permissions/.GrantActivity"
+        self.launch_result = "Status: ok\nActivity: vendor.permissions/vendor.permissions.GrantActivity"
+        self.policy.save("app")
+        self.policy.present("example.app", whole_display=True)
+        self.assertEqual(len(self.permission_queries), 2)
+        self.assertEqual(self.writes[-1], ["setprop", "waydroid.active_apps", "Waydroid"])
+
+    def test_foreign_activity_is_not_accepted_as_a_permission_prompt(self):
+        self.permission_activities["android.intent.action.REVIEW_PERMISSIONS"] = "system.permissions/.ReviewActivity"
+        self.launch_result = "Status: ok\nActivity: other.app/.ReviewActivity"
+        self.policy.save("app")
+        with self.assertRaisesRegex(RuntimeError, "did not confirm"):
+            self.policy.present("example.app")
+
+    def test_normal_launch_does_not_query_permission_handlers(self):
+        self.policy.save("app")
+        self.policy.present("example.app")
+        self.assertEqual(self.permission_queries, [])
 
     def test_external_display_readiness_requires_its_resumed_activity_to_be_drawn(self):
         output = """Display #7 (activities):
