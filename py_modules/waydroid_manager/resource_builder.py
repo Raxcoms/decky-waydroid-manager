@@ -24,8 +24,8 @@ def write_entry(output: zipfile.ZipFile, entry: zipfile.ZipInfo, content: bytes)
         entry.compress_type = zipfile.ZIP_STORED
         offset = output.fp.tell() + 30 + len(entry.filename.encode("utf-8")) + len(entry.extra)
         if offset % 4:
-            padding = (-offset - 4) % 4
-            entry.extra += struct.pack("<HH", 0xd935, padding) + bytes(padding)
+            padding = (-offset - 6) % 4
+            entry.extra += struct.pack("<HHH", 0xd935, 2 + padding, 4) + bytes(padding)
     output.writestr(entry, content)
 
 

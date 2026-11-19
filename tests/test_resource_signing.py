@@ -31,6 +31,10 @@ class ResourceSigningTests(unittest.TestCase):
                     self.assertEqual(table.compress_type, zipfile.ZIP_STORED)
                     self.assertEqual(archive.read(table), b"resource table")
                     self.assertEqual(entry.compress_type, zipfile.ZIP_DEFLATED)
+                    if len(table.extra) > len(entry.extra):
+                        tag, length, alignment = struct.unpack("<HHH", table.extra[len(entry.extra):][:6])
+                        self.assertEqual((tag, alignment), (0xd935, 4))
+                        self.assertEqual(length + 4, len(table.extra) - len(entry.extra))
 
     @unittest.skipUnless(shutil.which("openssl"), "OpenSSL is needed")
     def test_incomplete_first_signing_identity_is_recovered_as_a_complete_pair(self):
