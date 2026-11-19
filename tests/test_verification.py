@@ -183,6 +183,13 @@ class VerificationBridgeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "VERIFICATION_UNAVAILABLE"):
             self.bridge.respond(True)
 
+    def test_cleanup_can_reject_its_observed_request_after_history_rotates(self):
+        self.assertTrue(self.bridge.warning_pending())
+        self.run.side_effect = ["Required: example.verifier (uid=10123)", ACTIVE, ""]
+        with patch("waydroid_manager.verification.run_dex", return_value="VERIFICATION_SENT") as send:
+            self.bridge.reject_pending()
+        self.assertEqual(send.call_args.args[-2:], ("7", "-1"))
+
     def test_no_required_verifier_needs_no_helper(self):
         self.run.side_effect = None
         self.run.return_value = "Required: none"

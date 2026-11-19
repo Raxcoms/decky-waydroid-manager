@@ -88,6 +88,8 @@ class InstallVerification:
                         observed: int | None = None) -> int | None:
         active = active_install_sessions(self.android("dumpsys", "package", "installs"))
         if self.session not in active:
+            if observed is not None:
+                logging.getLogger(__name__).warning("Android install session %s is no longer active", self.session)
             return None
         sessions = {self.session} if allow_other_sessions else active
         return verification_id(self.android("dumpsys", "activity", "broadcasts"), self.session, provider, sessions,
@@ -126,7 +128,8 @@ class InstallVerification:
         provider = self.configured_provider()
         if provider:
             # A timeout can reject its own request even when another install is waiting.
-            request = self.pending_request(provider[0], allow_other_sessions=True)
+            observed = self.request if self.provider == provider else None
+            request = self.pending_request(provider[0], allow_other_sessions=True, observed=observed)
             if request is not None:
                 self.send_response(request, provider[1], False)
 
