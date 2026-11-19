@@ -1,10 +1,12 @@
 """Compile and sign resource-only overlays using private host tools."""
 
 import base64
+import copy
 import hashlib
 import os
 from pathlib import Path
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -13,6 +15,18 @@ import zipfile
 
 def _digest(value: bytes) -> str:
     return base64.b64encode(hashlib.sha256(value).digest()).decode("ascii")
+
+
+def write_entry(output: zipfile.ZipFile, entry: zipfile.ZipInfo, content: bytes) -> None:
+    entry = copy.copy(entry)
+    if entry.filename == "resources.arsc":
+        # An unaligned overlay table also makes Android reject otherwise valid apps.
+        entry.compress_type = zipfile.ZIP_STORED
+        offset = output.fp.tell() + 30 + len(entry.filename.encode("utf-8")) + len(entry.extra)
+        if offset % 4:
+            padding = (-offset - 4) % 4
+            entry.extra += struct.pack("<HH", 0xd935, padding) + bytes(padding)
+    output.writestr(entry, content)
 
 
 def sign_apk(unsigned: Path, target: Path, signing: Path, openssl: Path, environment: dict) -> None:
@@ -55,7 +69,7 @@ def sign_apk(unsigned: Path, target: Path, signing: Path, openssl: Path, environ
                    env=environment, check=True, capture_output=True, timeout=15)
     with zipfile.ZipFile(target, "w") as output:
         for entry, content in entries:
-            output.writestr(entry, content)
+            write_entry(output, entry, content)
         output.writestr("META-INF/MANIFEST.MF", manifest)
         output.writestr("META-INF/CERT.SF", signature)
         output.writestr("META-INF/CERT.RSA", rsa.read_bytes())
