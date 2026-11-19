@@ -95,12 +95,20 @@ class InstallVerification:
 
     def respond(self, approved: bool) -> None:
         if self.request is None or self.provider is None:
+            logging.getLogger(__name__).warning("Android install approval has no observed verification request")
             raise RuntimeError("ANDROID_VERIFICATION_UNAVAILABLE")
         request, provider = self.request, self.provider
         if not self.identity or container_identity() != self.identity:
             raise RuntimeError("WAYDROID_NOT_RUNNING")
         # Android may change focus while the Decky confirmation is open.
-        if self.configured_provider() != provider or self.pending_request(provider[0]) != request:
+        current = self.configured_provider()
+        if current != provider:
+            logging.getLogger(__name__).warning("Android install verifier changed: expected %s, found %s", provider, current)
+            raise RuntimeError("ANDROID_VERIFICATION_UNAVAILABLE")
+        pending = self.pending_request(provider[0])
+        if pending != request:
+            logging.getLogger(__name__).warning("Android verification request changed for session %s: expected %s, found %s",
+                                              self.session, request, pending)
             raise RuntimeError("ANDROID_VERIFICATION_UNAVAILABLE")
         self.send_response(request, provider[1], approved)
 

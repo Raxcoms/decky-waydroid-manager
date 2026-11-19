@@ -171,7 +171,8 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(len(commands), 2)
         self.assertEqual(commands[0][-3:], ["waydroid", "app", "list"])
 
-    def test_install_confirmation_replies_require_current_target_token_and_one_boolean_decision(self):
+    @patch.object(backend.decky, "logger", create=True)
+    def test_install_confirmation_replies_require_current_target_token_and_one_boolean_decision(self, logger):
         event, decision = threading.Event(), []
         self.plugin._install_confirmation = ("app.apk", "current", event, decision)
         for target, token, answer in (("other.apk", "current", True), ("app.apk", "stale", True), ("app.apk", "current", "true")):
@@ -183,6 +184,7 @@ class LibraryTests(unittest.TestCase):
         self.assertTrue(event.is_set())
         with self.assertRaisesRegex(RuntimeError, "VERIFICATION_UNAVAILABLE"):
             asyncio.run(self.plugin.confirm_package_install("app.apk", "current", True))
+        self.assertEqual(logger.warning.call_count, 4)
 
     def test_app_shortcut_matches_wrapper_and_package(self):
         write_shortcuts(self.path, {"0": (0, {

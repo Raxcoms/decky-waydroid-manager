@@ -910,6 +910,7 @@ class Plugin:
     async def confirm_package_install(self, target: str, token: str, approved: bool) -> None:
         pending = self._install_confirmation
         if not pending or pending[:2] != (target, token) or type(approved) is not bool or pending[2].is_set():
+            decky.logger.warning("Android install confirmation expired or was already answered")
             raise RuntimeError("ANDROID_VERIFICATION_UNAVAILABLE")
         pending[3].append(approved)
         pending[2].set()

@@ -159,8 +159,9 @@ class VerificationBridgeTests(unittest.TestCase):
     def test_changed_verifier_uid_cannot_receive_an_old_approval(self):
         self.assertTrue(self.bridge.warning_pending())
         self.run.side_effect = ["Required: example.verifier (uid=10124)"]
-        with self.assertRaisesRegex(RuntimeError, "VERIFICATION_UNAVAILABLE"):
+        with self.assertLogs("waydroid_manager.verification", level="WARNING") as logged, self.assertRaisesRegex(RuntimeError, "VERIFICATION_UNAVAILABLE"):
             self.bridge.respond(True)
+        self.assertIn("verifier changed", logged.output[0])
 
     def test_cleanup_rejects_only_its_own_active_session(self):
         other = REQUEST.replace("42", "43").replace("VERIFICATION_ID=7", "VERIFICATION_ID=8")
@@ -173,8 +174,9 @@ class VerificationBridgeTests(unittest.TestCase):
         self.assertTrue(self.bridge.warning_pending())
         self.run.side_effect = ["Required: example.verifier (uid=10123)", ACTIVE,
                                 REQUEST.replace("VERIFICATION_ID=7", "VERIFICATION_ID=8")]
-        with self.assertRaisesRegex(RuntimeError, "VERIFICATION_UNAVAILABLE"):
+        with self.assertLogs("waydroid_manager.verification", level="WARNING") as logged, self.assertRaisesRegex(RuntimeError, "VERIFICATION_UNAVAILABLE"):
             self.bridge.respond(True)
+        self.assertIn("request changed for session 42", logged.output[0])
         self.assertFalse((self.directory / "verifier.dex").exists())
 
     def test_waydroid_zero_exit_status_without_helper_marker_is_not_success(self):
