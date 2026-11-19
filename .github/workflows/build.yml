@@ -133,6 +133,10 @@ jobs:
               echo 'Enter the major.minor.patch version from package.json.' >&2
               exit 1
             fi
+            if [[ ! -s "docs/releases/$RELEASE_VERSION.md" ]]; then
+              echo 'Add user-facing notes in docs/releases/<version>.md before publishing.' >&2
+              exit 1
+            fi
             revision=''
           fi
           echo "revision=$revision" >> "$GITHUB_OUTPUT"

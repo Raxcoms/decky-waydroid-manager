@@ -27,6 +27,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           name: waydroid-manager-${{ inputs.version }}.zip
@@ -44,4 +45,5 @@ jobs:
             exit 1
           fi
           gh release create "$tag" "waydroid-manager-$RELEASE_VERSION.zip" \
-            --target "$GITHUB_SHA" --title "$RELEASE_VERSION" --generate-notes
+            --target "$GITHUB_SHA" --title "$RELEASE_VERSION" --latest \
+            --notes-file "docs/releases/$RELEASE_VERSION.md"
