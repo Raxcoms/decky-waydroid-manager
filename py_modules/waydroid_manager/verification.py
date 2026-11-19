@@ -31,7 +31,8 @@ def active_install_sessions(dump: str) -> set[str]:
             and re.search(r"\b(?:mDestroyed=false|mStageDirInUse=true)\b", details)}
 
 
-def verification_id(dump: str, session: str, provider: str, active_sessions: set[str]) -> int | None:
+def verification_id(dump: str, session: str, provider: str, active_sessions: set[str],
+                    *, observed: int | None = None) -> int | None:
     requests, completed = set(), set()
     for record in dump.split("BroadcastRecord{")[1:]:
         if not re.search(r"caller=android [^\n]*\buid=1000\b", record):
@@ -56,6 +57,13 @@ def verification_id(dump: str, session: str, provider: str, active_sessions: set
     owned = {item[1] for item in pending if item[0] == session and item[2] == "0"}
     if len(owned) > 1:
         raise RuntimeError("ANDROID_VERIFICATION_AMBIGUOUS")
+    if observed is not None:
+        if session not in active_sessions or observed in completed or (owned and observed not in owned):
+            return None
+        if any(item[1] == observed and item != (session, observed, "0") for item in requests):
+            return None
+        # Broadcast history can rotate while the user answers. Keep the proven session binding.
+        return observed
     # A verifier can handle other installers too. Ask only when this is its sole pending request.
     return next(iter(owned)) if owned and len(pending) == 1 else None
 
@@ -76,12 +84,14 @@ class InstallVerification:
         provider = re.search(r"^\s*Required: ([\w.]+) \(uid=(\d+)\)", configured, re.MULTILINE)
         return (provider[1], provider[2]) if provider else None
 
-    def pending_request(self, provider: str, *, allow_other_sessions: bool = False) -> int | None:
+    def pending_request(self, provider: str, *, allow_other_sessions: bool = False,
+                        observed: int | None = None) -> int | None:
         active = active_install_sessions(self.android("dumpsys", "package", "installs"))
         if self.session not in active:
             return None
         sessions = {self.session} if allow_other_sessions else active
-        return verification_id(self.android("dumpsys", "activity", "broadcasts"), self.session, provider, sessions)
+        return verification_id(self.android("dumpsys", "activity", "broadcasts"), self.session, provider, sessions,
+                               observed=observed)
 
     def warning_pending(self) -> bool:
         provider = self.configured_provider()
@@ -105,7 +115,7 @@ class InstallVerification:
         if current != provider:
             logging.getLogger(__name__).warning("Android install verifier changed: expected %s, found %s", provider, current)
             raise RuntimeError("ANDROID_VERIFICATION_UNAVAILABLE")
-        pending = self.pending_request(provider[0])
+        pending = self.pending_request(provider[0], observed=request)
         if pending != request:
             logging.getLogger(__name__).warning("Android verification request changed for session %s: expected %s, found %s",
                                               self.session, request, pending)

@@ -77,6 +77,16 @@ Historical install sessions:
         with self.assertRaisesRegex(RuntimeError, "AMBIGUOUS"):
             verification_id(REQUEST + REQUEST.replace("VERIFICATION_ID=7", "VERIFICATION_ID=8"), "42", "example.verifier", {"42"})
 
+    def test_observed_id_cannot_be_reassigned_to_another_session_or_installer(self):
+        other = REQUEST.replace("42", "43")
+        self.assertIsNone(verification_id(other, "42", "example.verifier", {"42", "43"}, observed=7))
+        other = REQUEST.replace("INSTALLER_UID=0", "INSTALLER_UID=2000")
+        self.assertIsNone(verification_id(other, "42", "example.verifier", {"42"}, observed=7))
+
+    def test_zero_is_a_valid_observed_request_id_after_history_rotates(self):
+        self.assertEqual(verification_id("", "42", "example.verifier", {"42"}, observed=0), 0)
+        self.assertIsNone(verification_id("", "42", "example.verifier", set(), observed=0))
+
     def test_ignores_incomplete_or_out_of_range_request_metadata(self):
         for value in ("-1", "unknown", "2147483648"):
             self.assertIsNone(verification_id(REQUEST.replace("VERIFICATION_ID=7", "VERIFICATION_ID=" + value), "42", "example.verifier", {"42"}))
@@ -142,6 +152,36 @@ class VerificationBridgeTests(unittest.TestCase):
         with patch("waydroid_manager.verification.run_dex", return_value="VERIFICATION_SENT") as send:
             self.bridge.respond(True)
         self.assertEqual(send.call_args.args[-2:], ("7", "2"))
+
+    def test_approval_survives_eviction_of_the_observed_broadcast(self):
+        self.assertTrue(self.bridge.warning_pending())
+        self.run.side_effect = ["Required: example.verifier (uid=10123)", ACTIVE,
+                                "Historical broadcasts [foreground]:"]
+        with patch("waydroid_manager.verification.run_dex", return_value="VERIFICATION_SENT") as send:
+            self.bridge.respond(True)
+        self.assertEqual(send.call_args.args[-2:], ("7", "2"))
+
+    def test_another_install_cannot_invalidate_an_already_bound_approval(self):
+        self.assertTrue(self.bridge.warning_pending())
+        other = REQUEST.replace("42", "43").replace("VERIFICATION_ID=7", "VERIFICATION_ID=8")
+        self.run.side_effect = ["Required: example.verifier (uid=10123)",
+                                ACTIVE + "  Active Session 43:\n    mCommitted=true mDestroyed=false\n", REQUEST + other]
+        with patch("waydroid_manager.verification.run_dex", return_value="VERIFICATION_SENT") as send:
+            self.bridge.respond(True)
+        self.assertEqual(send.call_args.args[-2:], ("7", "2"))
+
+    def test_expired_install_session_cannot_use_a_remembered_approval(self):
+        self.assertTrue(self.bridge.warning_pending())
+        self.run.side_effect = ["Required: example.verifier (uid=10123)", "Active install sessions:\n"]
+        with self.assertRaisesRegex(RuntimeError, "VERIFICATION_UNAVAILABLE"):
+            self.bridge.respond(True)
+
+    def test_completed_verification_cannot_use_a_remembered_approval(self):
+        self.assertTrue(self.bridge.warning_pending())
+        self.run.side_effect = ["Required: example.verifier (uid=10123)", ACTIVE,
+                                COMPLETED.replace("VERIFICATION_ID=8", "VERIFICATION_ID=7")]
+        with self.assertRaisesRegex(RuntimeError, "VERIFICATION_UNAVAILABLE"):
+            self.bridge.respond(True)
 
     def test_no_required_verifier_needs_no_helper(self):
         self.run.side_effect = None
