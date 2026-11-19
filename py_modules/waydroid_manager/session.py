@@ -42,6 +42,7 @@ class LaunchSession:
         self.control: ServiceControl | None = None
         self.lock = asyncio.Lock()
         self.capable: bool | None = None
+        self.native_display = False
         self.requests: dict[tuple[int, str], bool] = {}
         self.companions: dict[tuple[int, str], str] = {}
         self.external_display: str | None = None
@@ -69,6 +70,7 @@ class LaunchSession:
             files = {PROVIDER_PATH: provider}
             external_relay = None
             density_reference = None
+            native_display = False
             if enabled or (self.plugin / "bin/display-native").is_dir():
                 try:
                     _, uid, _ = self.services.user()
@@ -106,10 +108,12 @@ class LaunchSession:
                 else:
                     files.update(resources)
                     density_reference = native.density_reference
+                    native_display = True
             await complete_thread(self.overlay.acquire, files, external_relay,
                                   self.services.run, launch.display, density_reference=density_reference)
             capable = external_relay is not None
             self.capable = capable
+            self.native_display = native_display
             self.requests[launch.process] = enabled
 
     async def depart(self, launch: Launch) -> None:
@@ -177,7 +181,7 @@ class LaunchSession:
         async with self.lock:
             if not session_uses_socket(launch.display) or launch.process not in self.requests:
                 raise RuntimeError("Waydroid launch is no longer active")
-            await complete_thread(self.policy.present, launch.request.package, whole_display=self.capable is True,
+            await complete_thread(self.policy.present, launch.request.package, whole_display=self.native_display,
                                   companion=self.companions.get(launch.process), secondary_display=self.external_display)
             if self.control is not None and launch.process not in self.control.launches:
                 raise RuntimeError("Waydroid launch is no longer active")
@@ -194,6 +198,7 @@ class LaunchSession:
                 await complete_thread(self._stop, launch)
             finally:
                 self.capable = None
+                self.native_display = False
                 self.requests.clear()
                 self.companions.clear()
                 self.external_display = None

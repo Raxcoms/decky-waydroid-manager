@@ -43,7 +43,8 @@ flowchart LR
    backend exits. Controller, GPU metrics, and frame-limit adapters attach only
    to the session using the registered socket.
 5. The backend launches the requested activity on Android's default display.
-   Dual-display sessions compose complete Android outputs, avoiding a dependency
+   Native display sessions compose complete Android outputs on single-screen and
+   dual-screen hosts, avoiding a dependency
    on image-specific task-layer names. Home launches do not expand notifications
    to trigger a screen refresh.
 6. The display cap is prepared before the activity starts. After Android confirms

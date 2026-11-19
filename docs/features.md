@@ -140,7 +140,7 @@ Use **Start**, **Restart**, or **Stop** under **Waydroid Service** to manage the
 
 ## Troubleshooting
 
-- If an app closes while asking for its first permissions, open the Waydroid shortcut, grant the permissions there, and try the app shortcut again. Shortcut handling of these first-launch dialogs remains a known limitation.
+- First-launch permission and legacy permission-review screens stay within the app shortcut. Android's system handler is resolved from the installed image; permissions are never approved automatically. If a shortcut still closes, check the plugin journal for the Android activity-start result.
 - If an installation asks for verification, approve or cancel that individual install in Decky. Approval does not disable Play Protect globally.
 - If a second screen is unavailable, check that the host exposes its secondary output and that the image passed preparation. An enabled app keeps its disable action when the output disappears.
 - After changing a second-screen or companion setting, close existing Android shortcuts and launch again. An image update can invalidate preparation caches.

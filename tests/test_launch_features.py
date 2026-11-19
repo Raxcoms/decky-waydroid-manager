@@ -68,7 +68,7 @@ class LaunchFeatureTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.plugin.overlay.acquire.call_args.args[0], {session.PROVIDER_PATH: Path("provider.apk")})
 
     async def test_native_limiter_can_stage_without_an_external_display(self):
-        self.plugin.control = Mock(host=self.launch)
+        self.plugin.control = Mock(host=self.launch, launches={self.launch.process: self.launch})
         native = Mock(root=Path("native"), capabilities={"display-frame-limit"})
         with (patch.object(Path, "is_dir", return_value=True),
               patch.object(session, "container_pid", return_value=None),
@@ -79,10 +79,16 @@ class LaunchFeatureTests(unittest.IsolatedAsyncioTestCase):
             await self.plugin.start(self.launch, True)
         resource_overlay.assert_not_called()
         self.assertFalse(self.plugin.capable)
+        self.assertTrue(self.plugin.native_display)
         self.assertIsNone(self.plugin.overlay.acquire.call_args.args[1])
         self.assertEqual(set(self.plugin.overlay.acquire.call_args.args[0]),
                          {session.PROVIDER_PATH, f"vendor/{session.HWC_PATH}", "vendor/lib64/libhwc2on1adapter.so"})
         self.plugin.control.identify_launch.assert_not_called()
+        self.plugin.policy = Mock()
+        with patch.object(session, "session_uses_socket", return_value=True):
+            await self.plugin.show(self.launch)
+        self.plugin.policy.present.assert_called_once_with("example.app", whole_display=True,
+                                                          companion=None, secondary_display=None)
 
     async def test_join_with_different_settings_leaves_session_untouched(self):
         self.plugin.capable = False
@@ -136,6 +142,7 @@ class LaunchFeatureTests(unittest.IsolatedAsyncioTestCase):
             await self.plugin.start(self.launch, True)
         self.assertEqual(self.plugin.overlay.acquire.call_args.args[0], {session.PROVIDER_PATH: Path("provider.apk")})
         self.assertFalse(self.plugin.capable)
+        self.assertFalse(self.plugin.native_display)
 
     async def test_runtime_staging_failure_does_not_enable_the_session(self):
         self.state["secondScreen"]["apps"]["example.app"] = True
@@ -200,6 +207,7 @@ class LaunchFeatureTests(unittest.IsolatedAsyncioTestCase):
         self.plugin.requests[self.launch.process] = True
         self.plugin.display_users.add(self.launch.process)
         self.plugin.capable = True
+        self.plugin.native_display = True
         self.plugin.policy = Mock()
         self.services.run.return_value = "Display id 7: external display"
         with patch.object(session, "session_uses_socket", return_value=True):
