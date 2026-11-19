@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+
+# Host tools must not load Steam runtime or embedded Python libraries.
+unset LD_LIBRARY_PATH PYTHONHOME PYTHONPATH
+
+runtime_environment=()
+while IFS= read -r name; do
+  if [[ "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+    runtime_environment+=("--setenv=$name")
+  fi
+done < <(compgen -e)

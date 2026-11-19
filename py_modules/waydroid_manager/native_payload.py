@@ -1,0 +1,71 @@
+"""Validate CI-built native components separately from image-specific resources."""
+
+from dataclasses import dataclass
+import json
+from pathlib import Path
+
+from .display_payload import digest, elf_machine
+
+
+NATIVE_FILES = ("hwcomposer.waydroid.so", "libhwc2on1adapter.so")
+
+
+@dataclass(frozen=True)
+class NativePayload:
+    root: Path
+    sdk: int
+    vndk: str
+    machine: int
+    recipe: str
+    capabilities: frozenset[str] = frozenset()
+    density_reference: tuple[int, int, int] | None = None
+    runtime_symbols: frozenset[str] = frozenset()
+    binder_vtable_size: int = 0
+
+    @classmethod
+    def load(cls, root: Path) -> "NativePayload":
+        manifest = root / "manifest.json"
+        if manifest.is_symlink() or manifest.stat().st_size > 1024 * 1024:
+            raise RuntimeError("Invalid native display manifest")
+        metadata = json.loads(manifest.read_text())
+        if (metadata.get("schemaVersion") != 2 or type(metadata.get("sdk")) is not int
+                or type(metadata.get("elfMachine")) is not int or not isinstance(metadata.get("vndkVersion"), str)
+                or set(metadata.get("files", {})) != set(NATIVE_FILES)):
+            raise RuntimeError("Invalid native display manifest")
+        for name, expected in metadata["files"].items():
+            source = root / name
+            if (source.is_symlink() or not source.is_file() or digest(source) != expected
+                    or elf_machine(source) != metadata["elfMachine"]):
+                raise RuntimeError("Native display component failed validation")
+        capabilities = metadata.get("capabilities", [])
+        if not isinstance(capabilities, list) or not all(isinstance(value, str) for value in capabilities):
+            raise RuntimeError("Invalid native display capabilities")
+        reference = metadata.get("densityReference")
+        if reference is not None:
+            if (not isinstance(reference, dict) or set(reference) != {"width", "height", "dpi"}
+                    or any(type(value) is not int or not 1 <= value <= 32767 for value in reference.values())):
+                raise RuntimeError("Invalid display density reference")
+            reference = reference["width"], reference["height"], reference["dpi"]
+        symbols = metadata.get("runtimeSymbols", [])
+        size = metadata.get("binderVtableSize", 0)
+        if (not isinstance(symbols, list) or not all(isinstance(value, str) for value in symbols)
+                or type(size) is not int or size < 0):
+            raise RuntimeError("Invalid native runtime ABI requirements")
+        return cls(root, metadata["sdk"], metadata["vndkVersion"], metadata["elfMachine"], metadata["recipeSha256"],
+                   frozenset(capabilities), reference, frozenset(symbols), size)
+
+    def validate_runtime(self, identity) -> None:
+        if (not self.binder_vtable_size or self.binder_vtable_size != identity.binder_vtable_size
+                or not self.runtime_symbols.issubset(identity.runtime_symbols)):
+            raise RuntimeError("The installed Waydroid Binder interface is incompatible with the native display build")
+
+
+def select_native(directory: Path, sdk: int, vndk: str, machine: int) -> NativePayload:
+    matches = []
+    for manifest in sorted(directory.glob("*/manifest.json")):
+        payload = NativePayload.load(manifest.parent)
+        if (payload.sdk, payload.vndk, payload.machine) == (sdk, vndk, machine):
+            matches.append(payload)
+    if len(matches) != 1:
+        raise RuntimeError("No unique compatible native display build is available for this Android ABI")
+    return matches[0]

@@ -17,17 +17,29 @@ from typing import Any, Callable
 import decky
 from waydroid_manager.apps import PACKAGE_RE, app_exports
 from waydroid_manager.frame_limit import FrameLimiter
+from waydroid_manager.icon_cache import IconCache, source_digest
 from waydroid_manager.proc import clean_env, process_identity, steam_session, steam_wayland_socket
 from waydroid_manager.artwork import ARTWORK_TYPES, ARTWORK_VERSION, artwork_attached, artwork_filename, artwork_updates, prune_artwork
 from waydroid_manager.metrics import GpuMetrics
 from waydroid_manager.packages import apk_members, stage_apks, install_apks, check_result
 from waydroid_manager.verification import InstallCancelled, InstallVerification, commit_install
-from waydroid_manager.steam import known_accounts, read_shortcuts, shortcuts_path, shortcut_key, shortcut_owners, migrated_launch_options
+from waydroid_manager.steam import known_accounts, read_shortcuts, shortcuts_path, shortcut_key, shortcut_owners
+from waydroid_manager.host import default_launch_options, updated_launch_options
 from waydroid_manager.container import CONFIG_DIR, SERVICE, container_identity, container_pid, registered_guest, session_uses_socket, vendor_overlay_warning
-from waydroid_manager.guest import GUEST_STARTING, LaunchPolicy, android_user_ready, keep_package_guest_running, run_dex, set_media_volume_max
+from waydroid_manager.guest import android_user_ready, keep_package_guest_running, run_dex, set_media_volume_max
 from waydroid_manager.image import launcher_packages, owned_directory, require_unmounted, require_unredirected, run_init
 from waydroid_manager.control import Launch, ServiceControl, control_path
+from waydroid_manager.legacy_overlay import LegacyOverlayRecovery
+from waydroid_manager.legacy_session import LegacySessionRecovery
+from waydroid_manager.session import LaunchSession, SessionServices
 from waydroid_manager.state import StateStore
+from waydroid_manager.async_work import complete_thread
+from waydroid_manager.display_payload import inspect_vendor
+from waydroid_manager.display_resources import prepare_payload
+from waydroid_manager.native_payload import select_native
+from waydroid_manager.second_screen import discover_external_display
+from waydroid_manager.runtime_updates import RuntimeUpdates
+from waydroid_manager.host_storage import StorageMonitor
 from waydroid_manager.user_files import open_as_user, run_as_user
 
 
@@ -45,6 +57,29 @@ class Plugin:
         self._image_progress: dict[str, str | int | None] | None = None
         self._install_confirmation = None
         self._control = None
+        self._overlay_recovery = LegacyOverlayRecovery(WAYDROID_DIR)
+        self._session_recovery = LegacySessionRecovery(WAYDROID_DIR)
+        self._session = LaunchSession(
+            WAYDROID_DIR, Path(decky.DECKY_PLUGIN_DIR),
+            SessionServices(self._run, self._run_user_session, self._ensure_service,
+                            self._user, self._second_screen_enabled, companion=self._companion_app),
+        )
+
+    def _run_user_session(self, command: list[str], timeout: int = 30) -> str:
+        user, uid, home = self._user()
+        return self._run([*self._user_command(user, uid, home), *command], timeout=timeout)
+
+    def _second_screen_enabled(self, package: str | None) -> bool:
+        _, _, home = self._user()
+        return StateStore.second_screen_enabled(self._load_state(home), package)
+
+    def _second_screen_available(self) -> bool:
+        _, uid, _ = self._user()
+        return discover_external_display(uid, primary=steam_wayland_socket(uid)) is not None
+
+    def _companion_app(self, package: str | None) -> str | None:
+        _, _, home = self._user()
+        return self._load_state(home)["companions"].get(package)
 
     @contextmanager
     def _edit_state(self, home: Path):
@@ -122,43 +157,11 @@ class Plugin:
         ])
 
     async def _prepare_launch(self, launch: Launch) -> None:
+        self._runtime_updates.notify()
         try:
-            await asyncio.to_thread(self._start_input_sync, launch)
+            await asyncio.to_thread(self._start_input_sync, self._control.host or launch)
         except (OSError, RuntimeError, subprocess.SubprocessError) as error:
             decky.logger.warning("Waydroid controller bridge unavailable: %s", error)
-
-    async def _launch_policy(self, launch: Launch, mode: str) -> None:
-        await asyncio.to_thread(self._prepare_guest_presentation, launch, mode)
-
-    async def _release_launch(self, launch: Launch) -> None:
-        await asyncio.to_thread(self._stop_launch, launch)
-
-    def _stop_launch(self, launch: Launch) -> None:
-        user, uid, home = self._user()
-        try:
-            if session_uses_socket(launch.display):
-                try:
-                    self._policy.restore()
-                except (OSError, RuntimeError, subprocess.SubprocessError) as error:
-                    decky.logger.warning("Could not restore Android display policy: %s", error)
-                if session_uses_socket(launch.display):
-                    self._run(["busctl", "--system", "--timeout=12s", "call", "id.waydro.Container",
-                               "/ContainerManager", "id.waydro.ContainerManager", "Stop", "b", "true"], timeout=15)
-        finally:
-            command = [*self._user_command(user, uid, home), "systemctl", "--user"]
-            try:
-                self._run([*command, "is-active", "--quiet", launch.unit], timeout=5)
-            except RuntimeError:
-                pass
-            else:
-                self._run([*command, "stop", "--no-block", launch.unit], timeout=5)
-
-    def _prepare_guest_presentation(self, launch: Launch, mode: str) -> None:
-        if not session_uses_socket(launch.display):
-            raise RuntimeError("Waydroid launch is no longer active")
-        if not android_user_ready(self._run):
-            raise RuntimeError(GUEST_STARTING)
-        self._policy.save(mode)
 
     def _stop_input_sync(self) -> None:
         subprocess.run(
@@ -258,6 +261,7 @@ class Plugin:
     def _desktop_entries(self, removable_packages: set[str] | None = None, *, account_id: int | None = None,
                          package: str | None = None, include_icons: bool = False) -> list[dict[str, Any]]:
         _, uid, home = self._user()
+        state = self._load_state(home)
         shortcut_ids = self._shortcut_ids(home, account_id)
         data_home = self._data_home(home, uid)
         removable = removable_packages or set()
@@ -268,6 +272,8 @@ class Plugin:
             "iconPath": app.icon,
             "shortcutId": shortcut_ids.get(app.package),
             "removable": app.package in removable,
+            "secondScreen": StateStore.second_screen_enabled(state, app.package),
+            "companionPackage": state["companions"].get(app.package),
         } for app in app_exports(home, package, data_home=data_home)]
         return sorted(apps, key=lambda app: app["name"].casefold())
 
@@ -278,7 +284,8 @@ class Plugin:
 
     def _status(self, account_id: int | None) -> dict[str, Any]:
         _, uid, home = self._user()
-        history = self._account_state(home, self._load_state(home), account_id) if account_id is not None else StateStore.shortcut_defaults()
+        state = self._load_state(home)
+        history = self._account_state(home, state, account_id) if account_id is not None else StateStore.shortcut_defaults()
         shortcut_ids = self._shortcut_ids(home, account_id, history)
         return {
             "initialized": self._initialized(),
@@ -286,6 +293,8 @@ class Plugin:
             "serviceRunning": self._service_running(),
             "sessionAvailable": steam_wayland_socket(uid) is not None,
             "autoAddApps": history["autoAddApps"],
+            "secondScreen": StateStore.second_screen_enabled(state),
+            "secondScreenAvailable": self._second_screen_available(),
             "accountId": account_id,
             "userHome": str(home),
             "waydroidShortcutId": shortcut_ids.get(WAYDROID_SHORTCUT_KEY),
@@ -310,7 +319,7 @@ class Plugin:
             "name": name,
             "exe": str(self._launcher()),
             "startDir": str(home),
-            "launchOptions": "full" if package is None else f"app {package}",
+            "launchOptions": default_launch_options("full" if package is None else f"app {package}"),
             "icon": icon,
             "key": WAYDROID_SHORTCUT_KEY if package is None else package,
             "accountId": account_id,
@@ -358,6 +367,65 @@ class Plugin:
             history["autoAddApps"] = enabled
             if enabled:
                 history["observedApps"] = sorted({*history["observedApps"], *(app["package"] for app in self._desktop_entries())})
+
+    async def set_second_screen_container(self, enabled: bool) -> None:
+        if type(enabled) is not bool:
+            raise RuntimeError("Invalid second screen setting")
+        _, _, home = self._user()
+        if enabled:
+            await self._prepare_second_screen()
+        with self._edit_state(home) as state:
+            StateStore.second_screen(state)["container"] = enabled
+
+    async def set_second_screen_app(self, package: str, enabled: bool) -> None:
+        if not PACKAGE_RE.fullmatch(package) or type(enabled) is not bool:
+            raise RuntimeError("Invalid second screen setting")
+        _, _, home = self._user()
+        if enabled:
+            await self._prepare_second_screen()
+        with self._edit_state(home) as state:
+            settings = StateStore.second_screen(state)
+            if enabled:
+                settings["apps"][package] = enabled
+            else:
+                settings["apps"].pop(package, None)
+
+    async def set_companion_app(self, package: str, companion: str | None) -> None:
+        if not isinstance(package, str) or not PACKAGE_RE.fullmatch(package):
+            raise RuntimeError("Invalid primary app")
+        if companion is not None and (not isinstance(companion, str) or not PACKAGE_RE.fullmatch(companion)
+                                      or companion == package):
+            raise RuntimeError("Invalid companion app")
+        _, _, home = self._user()
+        installed = {app["package"] for app in self._desktop_entries()}
+        if companion is not None and (package not in installed or companion not in installed):
+            raise RuntimeError("The selected app is no longer installed")
+        with self._edit_state(home) as state:
+            if companion is None:
+                state["companions"].pop(package, None)
+            else:
+                if not StateStore.second_screen_enabled(state, package):
+                    raise RuntimeError("Enable the app's second screen before linking a companion")
+                state["companions"][package] = companion
+
+    async def _prepare_second_screen(self) -> None:
+        async with self._package_lock:
+            if not self._second_screen_available():
+                raise RuntimeError("The host has no available secondary Wayland output")
+            try:
+                await complete_thread(self._build_second_screen)
+            finally:
+                self._image_progress = None
+
+    def _build_second_screen(self) -> None:
+        plugin = Path(decky.DECKY_PLUGIN_DIR)
+        self._set_image_progress("checking", 5)
+        identity = inspect_vendor(WAYDROID_DIR, self._run)
+        native = select_native(plugin / "bin/display-native", identity.sdk, identity.vndk, identity.machine)
+        native.validate_runtime(identity)
+        phases = {"checking": 15, "extracting": 35, "building": 60, "ready": 100}
+        prepare_payload(plugin, WAYDROID_DIR, identity, self._run,
+                        lambda stage: self._set_image_progress(stage, phases[stage]))
 
     def _pending_auto_shortcuts(self, account_id: int, live_ids: list[int] | None = None) -> list[dict[str, Any]]:
         if self._initialized() and container_pid() is not None:
@@ -451,7 +519,7 @@ class Plugin:
             entry = {key.casefold(): value for key, value in entry.items()}
             exe = str(entry.get("exe", (1, ""))[1]).strip('"')
             existing_options = str(entry.get("launchoptions", (1, ""))[1])
-            options = migrated_launch_options(existing_options)
+            options = updated_launch_options(existing_options)
             app_id = entry.get("appid", (2, 0))[1]
             key = shortcut_key(existing_options)
             if Path(exe).resolve() != self._launcher().resolve() or not key or not isinstance(app_id, int) or not app_id:
@@ -495,11 +563,44 @@ class Plugin:
         except RuntimeError:
             return []
         records = self._load_state(home)["artwork"]
-        return [{"key": key, "appId": app_id} for key, app_id in self._shortcut_ids(home, account_id).items()
-                if any(artwork_updates(home, grid, app_id, records))]
+        updates = {key: app_id for key, app_id in self._shortcut_ids(home, account_id).items()
+                   if any(artwork_updates(home, grid, app_id, records))}
+        if container_identity():
+            apps = {app["package"]: app for app in self._desktop_entries(include_icons=True)}
+            cache = IconCache(home)
+            for key, app_id in self._shortcut_ids(home, account_id).items():
+                app = apps.get(key)
+                if (app and not cache.get(key, source_digest(app["icon"]))
+                        and any(artwork_updates(home, grid, app_id, records, ARTWORK_VERSION + 1))):
+                    updates[key] = app_id
+        return [{"key": key, "appId": app_id} for key, app_id in updates.items()]
 
     async def pending_shortcut_artwork(self, account_id: int) -> list[dict[str, Any]]:
         return await asyncio.to_thread(self._pending_shortcut_artwork, account_id)
+
+    def _artwork_icon(self, home: Path, package: str, fallback: str) -> tuple[str, bool]:
+        source = source_digest(fallback)
+        cached = IconCache(home).get(package, source)
+        if cached:
+            return cached, False
+        identity = container_identity()
+        if not identity:
+            return fallback, False
+        try:
+            user = self._run(["waydroid", "shell", "--", "cmd", "activity", "get-current-user"]).strip()
+            if not user.isdecimal():
+                return fallback, False
+            helper = Path(decky.DECKY_PLUGIN_DIR) / "bin/waydroid-verifier.dex"
+            output = run_dex(self._run, helper, container_identity, identity,
+                             "waydroid.manager.ExportIcon", package, user)
+            encoded = next(line.removeprefix("ICON_PNG:") for line in output.splitlines() if line.startswith("ICON_PNG:"))
+            content = base64.b64decode(encoded, validate=True)
+            IconCache.validate(content)
+            self._user_files(home, "cache-icon", package, source, payload=content)
+            return "data:image/png;base64," + encoded, True
+        except (OSError, RuntimeError, ValueError, StopIteration, subprocess.SubprocessError) as error:
+            decky.logger.warning("Could not export the launcher icon for %s: %s", package, error)
+            return fallback, False
 
     def _shortcut_artwork(self, account_id: int, key: str, app_id: int) -> dict[str, Any]:
         self._validate_shortcut_key(key)
@@ -511,11 +612,14 @@ class Plugin:
             raise RuntimeError("The Steam artwork directory is outside the user home")
         roles, clear_logo = artwork_updates(home, grid, app_id, self._load_state(home)["artwork"])
         app = next(iter(self._desktop_entries(package=key, include_icons=True)), None) if key != WAYDROID_SHORTCUT_KEY else None
+        icon, upgraded = self._artwork_icon(home, key, app["icon"]) if app else ("", False)
+        if upgraded:
+            roles, clear_logo = artwork_updates(home, grid, app_id, self._load_state(home)["artwork"], ARTWORK_VERSION + 1)
         available = app is not None or key == WAYDROID_SHORTCUT_KEY
         return {
             "roles": roles if available else [], "clearLogo": clear_logo,
             "ready": available and not roles and artwork_attached(grid, app_id),
-            "name": app["name"] if app else "Waydroid", "icon": app["icon"] if app else "",
+            "name": app["name"] if app else "Waydroid", "icon": icon,
         }
 
     async def get_shortcut_artwork(self, account_id: int, key: str, app_id: int) -> dict[str, Any]:
@@ -729,11 +833,8 @@ class Plugin:
     def _wait_for_boot(self, unit_status: list[str] | None) -> None:
         deadline = time.monotonic() + 180
         while time.monotonic() < deadline:
-            try:
-                if self._run(["waydroid", "shell", "--", "getprop", "sys.boot_completed"], timeout=10) == "1":
-                    return
-            except (RuntimeError, subprocess.TimeoutExpired):
-                pass
+            if android_user_ready(self._run):
+                return
             if unit_status:
                 try:
                     state = self._run(unit_status, timeout=5)
@@ -829,6 +930,16 @@ class Plugin:
     async def _ensure_service(self) -> None:
         if not self._initialized():
             raise RuntimeError("WAYDROID_NOT_INSTALLED")
+        for lease in (self._session.overlay, self._session.storage):
+            if lease.root.exists():
+                if container_pid() is not None:
+                    raise RuntimeError("A previous plugin session is still closing")
+                await asyncio.to_thread(lease.recover)
+        if self._overlay_recovery.manifest.exists() or self._session_recovery.manifest.exists():
+            if container_pid() is not None:
+                raise RuntimeError("Waydroid has a pending second-screen transaction. Stop Waydroid before launching it again.")
+            await asyncio.to_thread(self._session_recovery.recover)
+            await asyncio.to_thread(self._overlay_recovery.recover)
         await self.start_service()
 
     def _uninstall_package(self, package: str, account_id: int | None = None) -> int | None:
@@ -890,6 +1001,13 @@ class Plugin:
                 state.pop("legacy")
             else:
                 self._forget_app_history(state["legacy"], package)
+        if package is None:
+            state["secondScreen"] = StateStore.second_screen_defaults()
+            state["companions"] = {}
+        else:
+            StateStore.second_screen(state)["apps"].pop(package, None)
+            state["companions"] = {primary: companion for primary, companion in state["companions"].items()
+                                   if package not in (primary, companion)}
         return active_ids
 
     @staticmethod
@@ -957,19 +1075,32 @@ class Plugin:
 
     async def _main(self):
         self._frame_limiter = FrameLimiter(self._run)
-        self._policy = LaunchPolicy(self._run, container_identity)
         self._gpu_metrics = GpuMetrics()
         self._metrics_error = None
         self._runtime_lock = asyncio.Lock()
+        self._desired_fps = None
+        self._runtime_updates = RuntimeUpdates(self._sync_runtime,
+            lambda: bool(self._control and self._control.launch and self._control.release_task is None))
         self._package_lock = asyncio.Lock()
         _, uid, _ = self._user()
         relay = Path(decky.DECKY_PLUGIN_DIR).resolve() / "bin/waydroid-wayland-relay"
-        self._control = ServiceControl(control_path(uid), uid, self._ensure_service, relay, self._prepare_launch,
-                                       self._launch_policy, self._release_launch)
+        self._control = ServiceControl(
+            control_path(uid), uid, self._ensure_service, relay=relay,
+            on_launch=self._prepare_launch, on_policy=self._session.present,
+            on_release=self._release_launch, start_launch=self._session.start,
+            on_departure=self._session.depart, on_present=self._present_launch,
+        )
+        self._session.control = self._control
         await self._control.open()
+        self._runtime_updates.start()
+        self._storage_changed = False
+        self._storage_monitor = StorageMonitor(self._storage_updated)
+        self._storage_monitor.start()
         decky.logger.info("Waydroid Manager loaded")
 
     async def _unload(self):
+        await self._storage_monitor.close()
+        await self._runtime_updates.close()
         await self._control.close()
         try:
             async with self._runtime_lock:
@@ -982,19 +1113,57 @@ class Plugin:
     async def sync_runtime(self, fps: int | None) -> None:
         if fps is not None and (type(fps) is not int or not 0 <= fps <= 1000):
             raise RuntimeError("Invalid frame limit")
+        self._desired_fps = fps
+        self._runtime_updates.notify()
+
+    async def _present_launch(self, launch: Launch) -> None:
+        try:
+            await self._sync_runtime(force_frame_limit=True, package=launch.request.package, prepare=True)
+        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            decky.logger.warning("Could not prepare the frame limit before app launch: %s", error)
+        await self._session.show(launch)
+        if launch.request.package:
+            try:
+                # Android apps need the UID policy update after their activity has started.
+                await self._sync_runtime(package=launch.request.package)
+            except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                decky.logger.warning("Could not apply the app frame limit: %s", error)
+        self._runtime_updates.notify()
+
+    async def _release_launch(self, launch: Launch) -> None:
+        try:
+            await self._session.release(launch)
+        finally:
+            self._runtime_updates.notify()
+
+    def _storage_updated(self):
+        self._storage_changed = True
+        self._runtime_updates.notify()
+
+    async def _sync_runtime(self, *, force_frame_limit: bool = False, package: str | None = None,
+                            prepare: bool = False) -> None:
         async with self._runtime_lock:
             _, uid, _ = self._user()
-            registration = self._control.launch
+            registration = self._control.host
             guest = None
             if registration and self._control.release_task is None and process_identity(registration.process[0]) == registration.process:
-                guest = await asyncio.to_thread(registered_guest, registration.display)
+                guest = await complete_thread(registered_guest, registration.display)
             launch = registration.process if guest and registration else None
+            if guest and self._storage_changed:
+                self._storage_changed = False
+                try:
+                    await self._session.refresh_storage()
+                except Exception:
+                    self._storage_changed = True
+                    raise
+            self._storage_monitor.watch_process(self._session.storage.process if guest else None)
             metrics = registration.display.with_name("metrics") if launch and registration else None
             try:
-                await asyncio.to_thread(self._gpu_metrics.sync, launch, uid, metrics, guest)
+                await complete_thread(self._gpu_metrics.sync, launch, uid, metrics, guest)
                 self._metrics_error = None
             except (OSError, RuntimeError, subprocess.SubprocessError) as error:
                 if str(error) != self._metrics_error:
                     decky.logger.warning("GPU metrics unavailable: %s", error)
                 self._metrics_error = str(error)
-            await asyncio.to_thread(self._frame_limiter.sync, fps, launch, guest)
+            await complete_thread(self._frame_limiter.sync, self._desired_fps, launch, guest,
+                                  force=force_frame_limit, package=package, prepare=prepare)

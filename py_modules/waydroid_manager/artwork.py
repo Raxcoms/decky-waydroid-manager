@@ -8,7 +8,7 @@ ARTWORK_TYPES = {"portrait": (0, "p"), "hero": (1, "_hero"), "logo": (2, "_logo"
 MAX_TOTAL_BYTES = 12 * 1024 * 1024
 ARTWORK_FILE = re.compile(r"(\d{1,10})(?:(?:_hero|_logo|p)?\.png|\.json)")
 ARTWORK_RECORD = re.compile(r"(?:[1-9]\d{0,2}:)?[0-9a-f]{64}")
-ARTWORK_VERSION = 6
+ARTWORK_VERSION = 8
 
 
 def artwork_filename(app_id: int, role: str) -> str:
@@ -36,7 +36,8 @@ def artwork_attached(grid: Path, app_id: int) -> bool:
                for role, (_, suffix) in ARTWORK_TYPES.items() if role != "logo")
 
 
-def artwork_updates(home: Path, grid: Path, app_id: int, recorded: dict[str, str]) -> tuple[list[str], bool]:
+def artwork_updates(home: Path, grid: Path, app_id: int, recorded: dict[str, str],
+                    minimum_version: int = ARTWORK_VERSION) -> tuple[list[str], bool]:
     home, grid = home.resolve(), grid.resolve()
     if not grid.is_relative_to(home):
         return [], False
@@ -54,7 +55,7 @@ def artwork_updates(home: Path, grid: Path, app_id: int, recorded: dict[str, str
         if existing != [path] or not record:
             continue
         version, separator, _ = record.partition(":")
-        if separator and int(version) >= ARTWORK_VERSION:
+        if separator and int(version) >= minimum_version:
             continue
         # Update only untouched artwork recorded by an older generator.
         try:

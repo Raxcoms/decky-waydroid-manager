@@ -3,6 +3,7 @@ import type { ArtworkRole } from "./backend";
 export const artworkSlots: Record<ArtworkRole, [number, number, number]> = {
   portrait: [0, 600, 900], hero: [1, 1920, 620], landscape: [3, 920, 430],
 };
+const artworkScale = 2;
 
 export function iconBackground(icon: HTMLImageElement): [string, string] {
   const sample = document.createElement("canvas");
@@ -12,7 +13,6 @@ export function iconBackground(icon: HTMLImageElement): [string, string] {
   context.drawImage(icon, 0, 0, sample.width, sample.height);
   const pixels = context.getImageData(0, 0, sample.width, sample.height).data;
   const colors = new Map<number, { count: number; red: number; green: number; blue: number }>();
-  let dominant = { count: 0, red: 0, green: 0, blue: 0 };
   for (let i = 0; i < pixels.length; i += 4) {
     const [r, g, b, alpha] = pixels.subarray(i, i + 4);
     if (alpha < 192) continue;
@@ -24,8 +24,12 @@ export function iconBackground(icon: HTMLImageElement): [string, string] {
     color.green += g;
     color.blue += b;
     colors.set(key, color);
-    if (color.count > dominant.count) dominant = color;
   }
+  const palette = [...colors.values()];
+  const colorful = palette.filter(color =>
+    Math.max(color.red, color.green, color.blue) - Math.min(color.red, color.green, color.blue) >= color.count * 24);
+  const dominant = (colorful.length ? colorful : palette).reduce((best, color) =>
+    color.count > best.count ? color : best, { count: 0, red: 0, green: 0, blue: 0 });
   if (!dominant.count) return ["#292929", "#171717"];
 
   const scale = dominant.count * 255;
@@ -37,8 +41,8 @@ export function iconBackground(icon: HTMLImageElement): [string, string] {
   const chroma = max - min;
   const lightness = (max + min) / 2;
   const hue = chroma === 0 ? 0 : max === red ? (green - blue) / chroma : max === green ? 2 + (blue - red) / chroma : 4 + (red - green) / chroma;
-  const saturation = chroma ? Math.min(100, 100 * chroma / (1 - Math.abs(2 * lightness - 1)) + 8) : 0;
-  const top = Math.max(6, Math.min(22, lightness * 38));
+  const saturation = chroma ? Math.min(100, Math.max(60, 100 * chroma / (1 - Math.abs(2 * lightness - 1)) + 20)) : 0;
+  const top = Math.max(18, Math.min(32, lightness * 48));
   const bottom = top * 0.66;
   return [`hsl(${hue * 60} ${saturation}% ${top}%)`, `hsl(${hue * 60} ${saturation}% ${bottom}%)`];
 }
@@ -80,18 +84,36 @@ function drawTitle(context: CanvasRenderingContext2D, lines: string[], x: number
 export function renderArtwork(role: ArtworkRole, name: string, icon: HTMLImageElement, background: [string, string]) {
   const [, width, height] = artworkSlots[role];
   const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
+  canvas.width = width * artworkScale;
+  canvas.height = height * artworkScale;
   const context = canvas.getContext("2d");
   if (!context) throw new Error("Artwork canvas is unavailable");
+  context.scale(artworkScale, artworkScale);
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
   const base = context.createLinearGradient(0, 0, width, height);
   base.addColorStop(0, background[0]);
   base.addColorStop(1, background[1]);
+  context.fillStyle = "#171717";
+  context.fillRect(0, 0, width, height);
+  context.save();
+  const blur = Math.min(width, height) * 0.08;
+  const scale = Math.max((width + blur * 6) / icon.naturalWidth, (height + blur * 6) / icon.naturalHeight);
+  const backgroundWidth = icon.naturalWidth * scale;
+  const backgroundHeight = icon.naturalHeight * scale;
+  context.filter = `grayscale(1) blur(${blur * artworkScale}px) brightness(0.5) contrast(0.65)`;
+  context.drawImage(icon, (width - backgroundWidth) / 2, (height - backgroundHeight) / 2, backgroundWidth, backgroundHeight);
+  context.filter = "none";
+  context.globalCompositeOperation = "color";
   context.fillStyle = base;
   context.fillRect(0, 0, width, height);
+  context.globalCompositeOperation = "source-over";
+  context.globalAlpha = 0.6;
+  context.fillRect(0, 0, width, height);
+  context.restore();
 
   if (role === "hero") {
-    drawIcon(context, icon, width * 0.72, (height - 306) / 2, 306);
+    drawIcon(context, icon, (width - 306) / 2, (height - 306) / 2, 306);
   } else {
     const portrait = role === "portrait";
     const iconSize = portrait ? 258 : 184;

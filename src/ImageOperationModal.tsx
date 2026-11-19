@@ -4,7 +4,8 @@ import { t } from "./i18n";
 import { OperationDialog } from "./OperationDialog";
 
 type Props = {
-  operation: "install" | "setup" | "remove";
+  operation: "install" | "setup" | "remove" | "enableDisplay" | "disableDisplay";
+  title?: string;
   perform: (showLibraryProgress: () => void) => Promise<void>;
   onError: (error: unknown) => string;
   closeModal?: () => void;
@@ -15,15 +16,18 @@ const stageLabels = {
   starting: "packageStarting", booting: "packageBooting", audio: "imageAudio", language: "imageLanguage",
   apps: "imageAppEntries", cleaning: "packageCleaning",
   stopping: "imageStopping", deleting: "imageDeleting",
+  checking: "displayChecking", extracting: "displayExtracting", building: "displayBuilding", ready: "displayReady",
 } as const;
 
 const dialogLabels = {
   install: { title: "installGapps", description: "installGappsDescription", action: "install", busy: "installing" },
   setup: { title: "finishImageSetup", description: "installGappsDescription", action: "finishImageSetup", busy: "installing" },
   remove: { title: "removeWaydroid", description: "removeWaydroidDescription", action: "removeWaydroid", busy: "imageRemoving" },
+  enableDisplay: { title: "enableSecondScreen", description: "secondScreenReboot", action: "enableSecondScreen", busy: "displayPreparing" },
+  disableDisplay: { title: "disableSecondScreen", description: "secondScreenReboot", action: "disableSecondScreen", busy: "displayPreparing" },
 } as const;
 
-export function ImageOperationModal({ operation, perform, onError, closeModal }: Props) {
+export function ImageOperationModal({ operation, title, perform, onError, closeModal }: Props) {
   const running = useRef(false);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<ImageProgress | null>(null);
@@ -75,7 +79,7 @@ export function ImageOperationModal({ operation, perform, onError, closeModal }:
   if (stage === "downloading" && percent !== undefined) label = t("imageDownloadPercent", { percent });
   if (removingShortcuts) label = t("imageRemovingShortcuts");
   return <OperationDialog
-    title={t(labels.title)}
+    title={title ?? t(labels.title)}
     description={t(labels.description)}
     action={t(busy ? labels.busy : labels.action)}
     busy={busy}

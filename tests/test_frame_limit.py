@@ -134,6 +134,13 @@ class FrameLimitTests(unittest.TestCase):
             self.limiter.sync(24, self.launch)
         self.assertEqual(self.android.writes, [])
 
+    def test_rejected_app_policy_is_not_recorded_as_applied(self):
+        run = self.android.run
+        self.limiter.run = lambda args: "Error" if args[3:7] == ["service", "call", "SurfaceFlinger", "1039"] else run(args)
+        with self.assertRaisesRegex(RuntimeError, "rejected"):
+            self.limiter.sync(24, self.launch)
+        self.assertEqual(self.limiter.applied, {})
+
     def test_container_startup_message_is_not_cached_as_android_version(self):
         self.android.sdk = "[00:01:02] WayDroid container is STOPPED"
         self.limiter.sync(24, self.launch)

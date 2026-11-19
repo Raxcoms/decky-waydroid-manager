@@ -7,6 +7,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
 from waydroid_manager.container import vendor_overlay_warning
 from waydroid_manager.control import control_path, request_service_start, service_connection
 from waydroid_manager.guest import GUEST_STARTING
+from waydroid_manager.proc import process_identity
+from waydroid_manager.process_exit import wait_for_session_exit
 
 if sys.argv[1:] == ["--check-overlay"]:
     if warning := vendor_overlay_warning():
@@ -15,8 +17,14 @@ if sys.argv[1:] == ["--check-overlay"]:
 
 try:
     path = control_path(os.getuid())
-    if sys.argv[1:] == ["--release"]:
-        with service_connection(path, b"RELEASE"):
+    if sys.argv[1:] == ["--wait-session"]:
+        with service_connection(path, b"CHECK") as connection:
+            guest = tuple(connection.result["guest"])
+        owner = process_identity(int(os.environ["WAYDROID_MANAGER_STEAM_OWNER_PID"]))
+        wait_for_session_exit(guest, owner)
+    elif sys.argv[1:] in (["--release"], ["--present"], ["--check-session"]):
+        command = {"--release": b"RELEASE", "--present": b"PRESENT", "--check-session": b"CHECK"}[sys.argv[1]]
+        with service_connection(path, command, timeout=60 if command == b"PRESENT" else 35):
             pass
     elif len(sys.argv) == 3 and sys.argv[1] == "--policy":
         with service_connection(path, b"POLICY " + sys.argv[2].encode("ascii")):

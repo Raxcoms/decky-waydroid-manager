@@ -1,0 +1,22 @@
+--- a/graphics/composer/2.1/utils/hwc2on1adapter/HWC2On1Adapter.cpp
++++ b/graphics/composer/2.1/utils/hwc2on1adapter/HWC2On1Adapter.cpp
+@@ -2612,15 +2612,11 @@
+         mHwc1DisplayMap[HWC_DISPLAY_EXTERNAL] = displayId;
+         mDisplays.emplace(displayId, std::move(display));
+     } else {
+-        if (connected != 0 && hwc1DisplayId == HWC_DISPLAY_EXTERNAL) {
+-            ALOGW("hwc1Hotplug: Received connect for previously connected "
+-                    "display");
+-            return;
+-        }
+-
+-        // Disconnect an existing display
+         displayId = mHwc1DisplayMap[hwc1DisplayId];
+-        if (hwc1DisplayId == HWC_DISPLAY_EXTERNAL) {
++        if (connected != 0) {
++            // Refresh modes without replacing the display or withdrawing its lease.
++            mDisplays[displayId]->populateConfigs();
++        } else if (hwc1DisplayId == HWC_DISPLAY_EXTERNAL) {
+             mHwc1DisplayMap.erase(HWC_DISPLAY_EXTERNAL);
+             mDisplays.erase(displayId);
+         } else {

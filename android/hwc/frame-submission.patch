@@ -1,0 +1,30 @@
+--- a/hwcomposer/hwcomposer.cpp
++++ b/hwcomposer/hwcomposer.cpp
+@@ -413,8 +413,6 @@
+         res = 0;
+     }
+ 
+-    wl_surface_commit(surface_context.surface);
+-
+ out:
+     if (hwc_layer->acquireFenceFd != -1) {
+         close(hwc_layer->acquireFenceFd);
+@@ -459,6 +457,10 @@
+         auto feedback = wp_presentation_feedback(window->display->presentation, window_layer.surface);
+         wp_presentation_feedback_add_listener(feedback,&feedback_listener, pdev);
+     }
++
++    // Root surfaces commit once after all layer and input state is ready.
++    if (window_layer.subsurface)
++        wl_surface_commit(window_layer.surface);
+ 
+     window->last_layer_buffer = buf;
+ 
+@@ -1120,6 +1122,7 @@
+             ALOGE("Failed to prepare cursur surface");
+             return -1;
+         }
++        wl_surface_commit(cursor_surface_context.surface);
+         set_cursor(pdev->display);
+     } else if (hwc_layer->acquireFenceFd != -1) {
+         /* Not rendering the cursor still leaves us owning its fence */

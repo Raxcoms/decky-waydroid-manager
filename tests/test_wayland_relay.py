@@ -110,6 +110,44 @@ class RelayTests(unittest.TestCase):
             os.close(read_fd)
             os.close(write_fd)
 
+    def test_secondary_connection_failure_leaves_primary_usable(self):
+        path = str(Path(self.directory.name) / "secondary")
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+            listener.bind(path)
+            listener.listen()
+            listener.setblocking(False)
+            self.relay.add_listener(listener, str(Path(self.directory.name) / "missing-host"))
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.connect(path)
+                self.relay.step(0.1)
+                self.assertEqual(client.recv(1), b"")
+            self.client.sendall(b"primary still works")
+            self.pump()
+            self.assertEqual(self.host.recv(128), b"primary still works")
+
+    def test_second_listener_routes_to_its_own_host(self):
+        path = str(Path(self.directory.name) / "secondary")
+        parent = str(Path(self.directory.name) / "secondary-host")
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener, socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+            listener.bind(path)
+            listener.listen()
+            listener.setblocking(False)
+            server.bind(parent)
+            server.listen()
+            server.settimeout(1)
+            self.relay.add_listener(listener, parent)
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.connect(path)
+                self.relay.step(0.1)
+                host, _ = server.accept()
+                with host:
+                    host.settimeout(1)
+                    client.sendall(b"external frame")
+                    self.client.sendall(b"primary frame")
+                    self.pump()
+                    self.assertEqual(host.recv(128), b"external frame")
+                    self.assertEqual(self.host.recv(128), b"primary frame")
+
     def test_partial_writes_forward_each_descriptor_once(self):
         for endpoint in self.relay.endpoints:
             endpoint.connection.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4096)
@@ -141,9 +179,11 @@ class RelayTests(unittest.TestCase):
 
     def test_child_exit_removes_private_socket(self):
         args = [str(SCRIPT), self.parent_path, "--", sys.executable, "-c", "pass"]
-        with (patch.dict(os.environ, {"XDG_RUNTIME_DIR": self.directory.name}),
+        control = unittest.mock.Mock()
+        control.result = {"owner": True, "display": self.parent_path}
+        with (patch.dict(os.environ, {"XDG_RUNTIME_DIR": self.directory.name, "WAYDROID_MANAGER_MODE": "full"}),
               patch.object(sys, "argv", args), patch.object(relay_module.signal, "signal"),
-              patch.object(relay_module, "service_connection", return_value=nullcontext()),
+              patch.object(relay_module, "service_connection", return_value=nullcontext(control)),
               patch.object(relay_module.select, "select", return_value=([], [], []))):
             self.assertEqual(relay_module.main(), 0)
         self.assertEqual(list(Path(self.directory.name).glob("waydroid-manager-*")), [])

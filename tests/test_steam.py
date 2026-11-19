@@ -4,17 +4,11 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
-from waydroid_manager.steam import read_shortcuts, shortcuts_path, migrated_launch_options
+from waydroid_manager.steam import read_shortcuts, shortcuts_path
 from steam_fixtures import write_shortcuts
 
 
 class SteamFilesTests(unittest.TestCase):
-    def test_migration_replaces_only_the_exact_old_wrapper(self):
-        self.assertEqual(migrated_launch_options("/usr/libexec/armada/armada-game-launch %command% app example.app"), "app example.app")
-        self.assertEqual(migrated_launch_options("/usr/libexec/armada/armada-game-launch %command% full"), "full")
-        for value in ("app example.app", "custom full", "/usr/libexec/armada/armada-game-launch %command% custom full"):
-            self.assertIsNone(migrated_launch_options(value))
-
     def test_multiple_installations_are_not_selected_by_directory_order(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)

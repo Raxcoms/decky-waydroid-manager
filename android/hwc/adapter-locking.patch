@@ -1,0 +1,25 @@
+--- a/graphics/composer/2.1/utils/hwc2on1adapter/include/hwc2on1adapter/HWC2On1Adapter.h
++++ b/graphics/composer/2.1/utils/hwc2on1adapter/include/hwc2on1adapter/HWC2On1Adapter.h
+@@ -476,7 +476,10 @@
+     static int32_t callDisplayFunction(hwc2_device_t* device,
+             hwc2_display_t displayId, HWC2::Error (Display::*member)(Args...),
+             Args... args) {
+-        auto display = getAdapter(device)->getDisplay(displayId);
++        auto adapter = getAdapter(device);
++        // Keep adapter-before-display ordering and pin the display through dispatch.
++        std::unique_lock<std::recursive_timed_mutex> lock(adapter->mStateMutex);
++        auto display = adapter->getDisplay(displayId);
+         if (!display) {
+             return static_cast<int32_t>(HWC2::Error::BadDisplay);
+         }
+@@ -626,7 +629,9 @@
+     static int32_t callLayerFunction(hwc2_device_t* device,
+             hwc2_display_t displayId, hwc2_layer_t layerId,
+             HWC2::Error (Layer::*member)(Args...), Args... args) {
+-        auto result = getAdapter(device)->getLayer(displayId, layerId);
++        auto adapter = getAdapter(device);
++        std::unique_lock<std::recursive_timed_mutex> lock(adapter->mStateMutex);
++        auto result = adapter->getLayer(displayId, layerId);
+         auto error = std::get<HWC2::Error>(result);
+         if (error == HWC2::Error::None) {
+             auto layer = std::get<Layer*>(result);

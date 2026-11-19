@@ -14,7 +14,99 @@ permissions:
   contents: read
 
 jobs:
+  profiles:
+    runs-on: ubuntu-24.04
+    outputs:
+      profiles: ${{ steps.profiles.outputs.value }}
+      tools: ${{ steps.profiles.outputs.tools }}
+      caches: ${{ steps.profiles.outputs.caches }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: profiles
+        run: |
+          caches=$(python3 scripts/native_cache.py)
+          echo "caches=$caches" >> "$GITHUB_OUTPUT"
+          profiles=$(echo "$caches" | python3 -c 'import json,sys; print(json.dumps([p for p in json.load(sys.stdin) if "profile" in p]))')
+          echo "value=$profiles" >> "$GITHUB_OUTPUT"
+          tools=$(echo "$caches" | python3 -c 'import json,sys; print(json.dumps([p for p in json.load(sys.stdin) if "runner" in p]))')
+          echo "tools=$tools" >> "$GITHUB_OUTPUT"
+
+  native:
+    needs: profiles
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        profile: ${{ fromJSON(needs.profiles.outputs.profiles) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/cache/restore@v6
+        id: native-cache
+        with:
+          path: out/display-native
+          key: ${{ matrix.profile.key }}
+      - uses: android-actions/setup-android@v4
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        with:
+          accept-android-sdk-licenses: false
+          packages: ''
+      - name: Install native build tools
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        env:
+          PROFILE: ${{ matrix.profile.profile }}
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends cmake ninja-build bison flex libexpat1-dev android-libbase-dev libjsoncpp-dev libssl-dev
+          ndk=$(python3 -c 'import json,os,pathlib; print(json.loads((pathlib.Path("android/native/profiles")/(os.environ["PROFILE"]+".json")).read_text())["ndkVersion"])')
+          android --sdk="$ANDROID_HOME" sdk install "ndk/$ndk"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ndk" >> "$GITHUB_ENV"
+      - uses: actions/cache@v6
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/.cache/waydroid-manager-native/archives
+          key: native-sources-${{ runner.os }}-${{ hashFiles('android/native/profiles/*.json') }}
+      - name: Build native display libraries
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        env:
+          PROFILE: ${{ matrix.profile.profile }}
+        run: python3 scripts/build_native.py "android/native/profiles/$PROFILE.json" out/display-native
+      - uses: actions/cache/save@v6
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        with:
+          path: out/display-native
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
+
+  runtime-tools:
+    needs: profiles
+    strategy:
+      matrix:
+        tool: ${{ fromJSON(needs.profiles.outputs.tools) }}
+    runs-on: ${{ matrix.tool.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/cache/restore@v6
+        id: tools-cache
+        with:
+          path: out/display-tools
+          key: ${{ matrix.tool.key }}
+      - name: Package offline resource compiler
+        if: steps.tools-cache.outputs.cache-hit != 'true'
+        env:
+          MACHINE: ${{ matrix.tool.machine }}
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends aapt openssl
+          python3 scripts/bundle_runtime_tools.py out/display-tools --machine "$MACHINE"
+      - uses: actions/cache/save@v6
+        if: steps.tools-cache.outputs.cache-hit != 'true'
+        with:
+          path: out/display-tools
+          key: ${{ steps.tools-cache.outputs.cache-primary-key }}
+
   build:
+    needs: [profiles, native, runtime-tools]
+    outputs:
+      revision: ${{ steps.version.outputs.revision }}
+      version: ${{ steps.version.outputs.version }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -58,20 +150,37 @@ jobs:
           packages: ''
       - name: Install Android build dependencies
         run: android --sdk="$ANDROID_HOME" sdk install build-tools/35.0.0 platforms/android-35
-      - name: Build Android verification helper
+      - name: Build Android runtime helpers
         run: python3 scripts/build_android.py
       - name: Run tests
         run: |
+          python3 scripts/check_sources.py
           python3 -m unittest discover -s tests -v
           node --experimental-strip-types --test tests/*.test.mts
           for script in bin/waydroid-launcher bin/waydroid-game-session bin/waydroid-session; do
             bash -n "$script"
           done
+      - name: Test storage mount isolation
+        run: |
+          cc -O2 -Wall -Wextra -Werror native/host/home-mount.c -o "$RUNNER_TEMP/storage-mount-test"
+          sudo unshare --mount --propagation private python3 tests/storage_mount_integration.py "$RUNNER_TEMP/storage-mount-test"
+      - name: Install internal cache client
+        run: |
+          npm install --prefix "$RUNNER_TEMP/display-cache-client" --no-save --ignore-scripts @actions/cache@6.3.0
+          cp scripts/restore_native_cache.mjs "$RUNNER_TEMP/display-cache-client/restore.mjs"
+      - name: Restore internal native build outputs
+        uses: actions/github-script@v8
+        env:
+          NATIVE_CACHES: ${{ needs.profiles.outputs.caches }}
+        with:
+          script: |
+            const { pathToFileURL } = require('node:url');
+            await import(pathToFileURL(`${process.env.RUNNER_TEMP}/display-cache-client/restore.mjs`).href);
       - name: Package plugin
         env:
           BUILD_REVISION: ${{ steps.version.outputs.revision }}
         run: |
-          args=(package)
+          args=(package --native out/display-native --runtime-tools out/display-tools)
           if [[ -n "$BUILD_REVISION" ]]; then
             args+=(--revision "$BUILD_REVISION")
           fi

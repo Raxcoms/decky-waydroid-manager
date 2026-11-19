@@ -1,13 +1,14 @@
 #!/usr/bin/python3
 from pathlib import Path
 import signal
+import os
 import sys
-import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
 from waydroid_manager.container import registered_guest
 from waydroid_manager.proc import process_identity
 from waydroid_manager.input import InputNodes, RuntimeKeylayout, controller_sources
+from waydroid_manager.file_events import FileEvents, process_handle
 
 
 def main() -> None:
@@ -17,10 +18,14 @@ def main() -> None:
     layout = nodes = None
     stopping = False
     last_error = None
+    changes = FileEvents([Path("/dev/input"), Path("/run/udev"), Path("/run/udev/data")])
+    launch_handle = process_handle(launch)
+    guest_handle = None
 
     def stop(*_):
         nonlocal stopping
         stopping = True
+        changes.wake()
 
     def release():
         nonlocal layout, nodes
@@ -48,10 +53,15 @@ def main() -> None:
                 current = registered_guest(display)
                 pid = current[0] if current else None
                 if current != active:
+                    if guest_handle is not None:
+                        os.close(guest_handle)
+                        guest_handle = None
                     release()
                     if nodes or layout:
                         raise RuntimeError("Previous Android input setup is still active")
                     active = current
+                    if active:
+                        guest_handle = process_handle(active)
                 controllers, shared = controller_sources() if pid else ({}, {})
                 if controllers:
                     if layout is None:
@@ -68,9 +78,17 @@ def main() -> None:
                     print(f"Waydroid input unavailable: {error}", file=sys.stderr, flush=True)
                 last_error = str(error)
                 release()
-            time.sleep(1)
+            handles = [handle for handle in (launch_handle, guest_handle) if handle is not None]
+            changes.refresh()
+            changes.wait(handles, timeout=None if active and len(handles) == 2 and last_error is None else 1)
     finally:
-        release()
+        try:
+            release()
+        finally:
+            for handle in (launch_handle, guest_handle):
+                if handle is not None:
+                    os.close(handle)
+            changes.close()
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ def check(root: Path) -> None:
     required = ["main.py", "plugin.json", "package.json", "dist/index.js", "README.md", "LICENSE"]
     required += [f"bin/{name}" for name in (
         "waydroid-launcher", "waydroid-game-session", "waydroid-session",
-        "waydroid-service", "waydroid-input-sync", "waydroid-wayland-relay", "waydroid-user-files",
+        "waydroid-service", "waydroid-input-sync", "waydroid-wayland-relay", "waydroid-user-files", "waydroid-runtime-env",
     )]
     for name in required:
         path = root / name
@@ -21,8 +21,12 @@ def check(root: Path) -> None:
             raise RuntimeError(f"Packaged helper is not executable: {name}")
     if any(root.rglob("*.pyc")) or any(root.rglob("__pycache__")):
         raise RuntimeError("Python caches must not be shipped")
-    if any(path.name.lower().endswith((".apk", ".xapk", ".apk.part", ".xapk.part")) for path in root.rglob("*")):
-        raise RuntimeError("Android test packages must not be shipped")
+    for path in root.rglob("*"):
+        if not path.name.lower().endswith((".apk", ".xapk", ".apk.part", ".xapk.part")):
+            continue
+        if path == root / "bin/storage-provider/provider-unsigned.apk":
+            continue
+        raise RuntimeError("Compiled Android packages must be prepared from the installed image, not shipped")
     helper = root / "bin/waydroid-verifier.dex"
     if not helper.is_file() or not helper.read_bytes().startswith(b"dex\n"):
         raise RuntimeError("Build the Android verification helper before packaging")
@@ -38,6 +42,39 @@ def check(root: Path) -> None:
     backend = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(backend)
     backend.Plugin()
+    from waydroid_manager.provider_payload import unsigned_provider
+    unsigned_provider(root)
+    from waydroid_manager.native_payload import NativePayload
+    manifests = list((root / "bin/display-native").glob("*/manifest.json"))
+    if not manifests:
+        raise RuntimeError("The packaged native builds are missing")
+    for manifest in manifests:
+        payload = NativePayload.load(manifest.parent)
+        if not payload.binder_vtable_size or not (manifest.parent / "NOTICE.txt").is_file():
+            raise RuntimeError("The native ABI contract or license notices are missing")
+    from waydroid_manager.display_payload import digest, elf_machine
+    tools = list((root / "bin/display-tools").glob("*/manifest.json"))
+    if not tools:
+        raise RuntimeError("The private resource tools are missing")
+    for manifest in tools:
+        metadata = json.loads(manifest.read_text())
+        if not {"aapt2", "openssl", "home-mount", "NOTICE.txt"}.issubset(metadata.get("files", {})):
+            raise RuntimeError("The private resource tool bundle is incomplete")
+        for name, checksum in metadata["files"].items():
+            path = manifest.parent / name
+            if Path(name).is_absolute() or ".." in Path(name).parts or path.is_symlink() or digest(path) != checksum:
+                raise RuntimeError("A packaged runtime tool failed validation")
+        for name in ("aapt2", "openssl", "home-mount"):
+            if elf_machine(manifest.parent / name) != metadata["elfMachine"]:
+                raise RuntimeError("A resource tool has the wrong architecture")
+            if not os.access(manifest.parent / name, os.X_OK):
+                raise RuntimeError("A private resource tool is not executable")
+    for name in ("framework/AndroidManifest.xml", "framework/res/values/config.xml",
+                 "navigation/AndroidManifest.xml", "navigation/res/layout/navigation_bar.xml",
+                 "navigation/res/layout/recent_apps.xml", "navigation/res/drawable/ic_sysbar_recent.xml",
+                 "display_settings.xml", "wayland_tablet.idc"):
+        if not (root / "resources/display" / name).is_file():
+            raise RuntimeError("The display resource sources are incomplete")
 
 
 if __name__ == "__main__":

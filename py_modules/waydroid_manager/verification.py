@@ -97,7 +97,10 @@ class InstallVerification:
         if self.request is None or self.provider is None:
             raise RuntimeError("ANDROID_VERIFICATION_UNAVAILABLE")
         request, provider = self.request, self.provider
-        if not self.warning_pending() or (self.request, self.provider) != (request, provider):
+        if not self.identity or container_identity() != self.identity:
+            raise RuntimeError("WAYDROID_NOT_RUNNING")
+        # Android may change focus while the Decky confirmation is open.
+        if self.configured_provider() != provider or self.pending_request(provider[0]) != request:
             raise RuntimeError("ANDROID_VERIFICATION_UNAVAILABLE")
         self.send_response(request, provider[1], approved)
 
@@ -117,6 +120,7 @@ class InstallVerification:
         output = run_dex(self.run, self.helper, container_identity, self.identity,
                          "waydroid.manager.InstallVerifier", str(request), "2" if approved else "-1", uid=uid)
         if "VERIFICATION_SENT" not in output.splitlines():
+            logging.getLogger(__name__).warning("Android verification response failed: %s", output or "no acknowledgement")
             raise RuntimeError("ANDROID_VERIFICATION_UNAVAILABLE")
 
 

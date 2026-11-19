@@ -12,6 +12,8 @@ from .proc import clean_env, process_identity
 
 
 GUEST_STARTING = "WAYDROID_GUEST_STARTING"
+# Android reserves display 0 for its default display on every device.
+DEFAULT_DISPLAY = "0"
 
 
 def attach_command(*args: str) -> list[str]:
@@ -95,8 +97,8 @@ class LaunchPolicy:
         self.run, self.identify = run, identify
         self.saved = None
 
-    def android(self, *args: str) -> str:
-        return self.run(["waydroid", "shell", "--", *args], timeout=5)
+    def android(self, *args: str, timeout: int = 5) -> str:
+        return self.run(["waydroid", "shell", "--", *args], timeout=timeout)
 
     def current(self) -> str | None:
         output = self.android("settings", "list", "global")
@@ -111,7 +113,8 @@ class LaunchPolicy:
         if mode == "app":
             multiwindow = self.android("getprop", "persist.waydroid.multi_windows") or "false"
             expected = "immersive.status=*" if multiwindow == "false" else "immersive.full=*"
-        self.saved = identity, self.current(), expected
+        previous = self.saved[1] if self.saved is not None and self.saved[0] == identity else self.current()
+        self.saved = identity, previous, expected
 
     def restore(self) -> None:
         if self.saved is None:
@@ -123,6 +126,66 @@ class LaunchPolicy:
             else:
                 self.android("settings", "put", "global", "policy_control", previous)
         self.saved = None
+
+    def present(self, package: str | None, whole_display: bool = False,
+                companion: str | None = None, secondary_display: str | None = None) -> None:
+        if self.saved is None or self.identify() != self.saved[0]:
+            raise RuntimeError("WAYDROID_NOT_RUNNING")
+        intent = ["-a", "android.intent.action.MAIN", "-c", "android.intent.category.HOME"]
+        if package:
+            intent = self._app_intent(package)
+        companion_intent = None
+        if companion:
+            if not package or companion == package or not secondary_display or secondary_display == DEFAULT_DISPLAY:
+                raise RuntimeError("The companion app requires a secondary display")
+            companion_intent = self._app_intent(companion)
+        # Dual-display sessions present Android outputs, without depending on task-layer metadata.
+        active = "Waydroid" if whole_display else package or "Waydroid"
+        self.android("setprop", "waydroid.active_apps", active)
+        self.android("settings", "put", "global", "policy_control", self.saved[2])
+        if companion_intent:
+            self._start_activity(companion, secondary_display, companion_intent)
+        # Present the primary app last so Android keeps it as the focused display.
+        self._start_activity(package, DEFAULT_DISPLAY, intent)
+
+    def _start_activity(self, package: str | None, display: str, intent: list[str]) -> None:
+        command = ["am", "start", "-W", "--user", "current", "--display", display, *intent]
+        output = self.android(*command, timeout=30)
+        if re.search(r"^Error:", output, re.MULTILINE):
+            raise RuntimeError(output.strip())
+        activity = re.search(r"^Activity:\s+(\S+)", output, re.MULTILINE)
+        if (not re.search(r"^Status:\s+ok\s*$", output, re.MULTILINE) or activity is None
+                or (package and not activity[1].startswith(package + "/"))):
+            raise RuntimeError("Android did not confirm the requested activity started")
+
+    def _app_intent(self, package: str) -> list[str]:
+        # Match Android's package launcher, including activities without CATEGORY_DEFAULT.
+        component_pattern = re.compile(re.escape(package) + r"/[A-Za-z0-9_.$]+")
+        for category in ("android.intent.category.INFO", "android.intent.category.LAUNCHER"):
+            intent = ["-a", "android.intent.action.MAIN", "-c", category]
+            output = self.android("cmd", "package", "query-activities", "--components", "--user", "current",
+                                  *intent, "-p", package)
+            component = next((line.strip() for line in output.splitlines()
+                              if component_pattern.fullmatch(line.strip())), None)
+            if component:
+                return [*intent, "-n", component, "--activity-reset-task-if-needed"]
+        raise RuntimeError(f"Android has no launch activity for {package}")
+
+    def display_ready(self, display: str) -> bool:
+        output = self.android("dumpsys", "activity", "activities")
+        displays = re.split(r"^Display #(\d+).*?$", output, flags=re.MULTILINE)
+        for index in range(1, len(displays), 2):
+            if displays[index] != display:
+                continue
+            block = displays[index + 1]
+            task = re.search(r"topResumedActivity=ActivityRecord\{(\S+)", block)
+            if task is None:
+                return False
+            records = re.split(r"^\s*\* Hist\s+#\d+:\s*", block, flags=re.MULTILINE)
+            record = next((record for record in records[1:]
+                           if record.startswith(f"ActivityRecord{{{task[1]} ")), "")
+            return "reportedDrawn=true" in record
+        return False
 
 
 def run_dex(run, helper: Path, identify, identity, main_class: str, *args: str, uid: str | None = None) -> str:

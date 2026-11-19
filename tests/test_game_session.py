@@ -32,11 +32,6 @@ case "${0##*/}:$*" in
     esac
     exit 0
     ;;
-  waydroid:show-full-ui|waydroid:app\\ launch\\ *)
-    echo "$*" >> calls
-    if [ "$SCENARIO" = ends ]; then rm -f running; fi
-    if [ "$SCENARIO" = freezing ]; then touch freezing; fi
-    ;;
   sleep:*) : ;;
   *) exit 2 ;;
 esac
@@ -58,10 +53,21 @@ class GameSessionTests(unittest.TestCase):
                 (directory / name).symlink_to(command)
             runner = directory / RUNNER.name
             runner.write_text(RUNNER.read_text())
+            (directory / "waydroid-runtime-env").write_text(RUNNER.with_name("waydroid-runtime-env").read_text())
             service = directory / "waydroid-service"
             service.write_text(
                 '#!/bin/sh\n'
-                'if [ "$1" = --release ]; then echo stop >> "$WAYDROID_MANAGER_LOG_DIR/calls"; exit 0; fi\n'
+                'if [ "$1" = --wait-session ]; then\n'
+                '  if [ "$SCENARIO" = ends ]; then echo "Waydroid session ended" >&2; exit 1; fi\n'
+                '  exit 0\n'
+                'fi\n'
+                'if [ "$1" = --check-session ]; then test -f "$WAYDROID_MANAGER_LOG_DIR/running"; exit $?; fi\n'
+                'if [ "$1" = --release ]; then echo release >> "$WAYDROID_MANAGER_LOG_DIR/calls"; exit 0; fi\n'
+                'if [ "$1" = --present ]; then\n'
+                '  echo present >> "$WAYDROID_MANAGER_LOG_DIR/calls"\n'
+                '  if [ "$SCENARIO" = ends ]; then rm -f "$WAYDROID_MANAGER_LOG_DIR/running"; fi\n'
+                '  if [ "$SCENARIO" = freezing ]; then touch "$WAYDROID_MANAGER_LOG_DIR/freezing"; fi\n'
+                'fi\n'
                 'if [ "$SCENARIO" = locked ] && [ "$1" = --policy ] && [ "$2" != restore ]; then\n'
                 '  calls="$WAYDROID_MANAGER_LOG_DIR/calls"\n'
                 '  echo unlock-check >> "$calls"\n'
@@ -84,17 +90,18 @@ class GameSessionTests(unittest.TestCase):
                 "WAYDROID_MANAGER_LOG_DIR": tmp,
                 "WAYDROID_MANAGER_MODE": mode,
                 "WAYDROID_MANAGER_PACKAGE": "test.package",
+                "WAYDROID_MANAGER_LEASE_OWNER": "1",
                 "SCENARIO": scenario,
             }
             result = subprocess.run(["bash", str(runner)], env=env, capture_output=True, text=True, timeout=20)
             return result, (directory / "calls").read_text().splitlines()
 
     def test_presentation_waits_for_android_apps(self):
-        for mode, command in (("full", "show-full-ui"), ("app", "app launch test.package")):
+        for mode in ("full", "app"):
             with self.subTest(mode=mode):
                 result, calls = self.run_session("ready", mode)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(calls, ["list", "list", "list", command, "stop"])
+                self.assertEqual(calls, ["list", "list", "list", "present", "release"])
 
     def test_never_launches_if_the_owned_session_disappears(self):
         for scenario in ("stopped", "owner_lost"):
@@ -102,26 +109,26 @@ class GameSessionTests(unittest.TestCase):
                 result, calls = self.run_session(scenario)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("Android did not become ready", result.stderr)
-                self.assertEqual(calls, ["list", "stop"])
+                self.assertEqual(calls, ["list", "release"])
 
     def test_foreign_session_is_left_alone(self):
         result, calls = self.run_session("foreign")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Close the running Waydroid session", result.stderr)
-        self.assertEqual(calls, [])
+        self.assertEqual(calls, ["release"])
 
     def test_app_list_does_not_allow_launch_before_unlock(self):
         result, calls = self.run_session("locked", "app")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(calls, ["list", "unlock-check"] * 3 + ["app launch test.package", "stop"])
+        self.assertEqual(calls, ["list", "unlock-check"] * 3 + ["present", "release"])
 
     def test_freezing_is_not_a_stopped_container(self):
         result, calls = self.run_session("freezing")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(calls, ["list", "list", "list", "show-full-ui", "stop"])
+        self.assertEqual(calls, ["list", "list", "list", "present", "release"])
 
     def test_shortcut_exits_if_android_dies_after_presentation(self):
         result, calls = self.run_session("ends")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Waydroid session ended", result.stderr)
-        self.assertEqual(calls, ["list", "list", "list", "show-full-ui", "stop"])
+        self.assertEqual(calls, ["list", "list", "list", "present", "release"])

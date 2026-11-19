@@ -1,4 +1,4 @@
-import { getStatus, listApps, installGapps, startService, stopService, restartService, uninstallApp, getWaydroidShortcut, getAppShortcut, removeShortcutRecord, setAutoAddApps, pendingAutoShortcuts, legacyShortcuts, removeWaydroidImage, installPackage, type Status, type AndroidApp } from "./backend";
+import { getStatus, listApps, installGapps, startService, stopService, restartService, uninstallApp, getWaydroidShortcut, getAppShortcut, removeShortcutRecord, setAutoAddApps, setSecondScreenContainer, setSecondScreenApp, setCompanionApp, pendingAutoShortcuts, legacyShortcuts, removeWaydroidImage, installPackage, type Status, type AndroidApp } from "./backend";
 import { addToSteam, removeFromSteam, launchSteamShortcut, requireSteamAccount, retrySteamShortcutRemovals, updateSteamShortcut } from "./steam";
 import { definePlugin, FileSelectionType, openFilePicker, toaster, useQuickAccessVisible } from "@decky/api";
 import {
@@ -23,6 +23,7 @@ import { operationError } from "./errors";
 import { currentSteamAccount, liveShortcutIds } from "./library";
 import { PackageOperationModal } from "./PackageOperationModal";
 import { ImageOperationModal } from "./ImageOperationModal";
+import { CompanionAppModal } from "./CompanionAppModal";
 import { AppListState } from "./panelState";
 
 function AndroidRobotIcon() {
@@ -190,10 +191,14 @@ type AppRowProps = {
   rowRef?: Ref<HTMLDivElement>;
   setShortcutId: (id?: number) => void;
   onUninstalled: () => void;
+  setSecondScreen: (enabled: boolean) => void;
+  secondScreenAvailable: boolean;
+  apps: AndroidApp[];
+  setCompanion: (packageName?: string) => void;
   setMessage: (message: string | null) => void;
 };
 
-function AppRow({ app, accountId, isLast, rowRef, setShortcutId, onUninstalled, setMessage }: AppRowProps) {
+function AppRow({ app, accountId, isLast, rowRef, setShortcutId, onUninstalled, setSecondScreen, secondScreenAvailable, apps, setCompanion, setMessage }: AppRowProps) {
   const add = async () => {
     const account = requireSteamAccount(accountId);
     const shortcut = await getAppShortcut(account, app.package);
@@ -215,6 +220,11 @@ function AppRow({ app, accountId, isLast, rowRef, setShortcutId, onUninstalled, 
     }
     launchSteamShortcut(app.shortcutId, requireSteamAccount(accountId));
   };
+  const companion = apps.find((candidate) => candidate.package === app.companionPackage);
+  const saveCompanion = async (packageName: string | null) => {
+    await setCompanionApp(app.package, packageName);
+    setCompanion(packageName ?? undefined);
+  };
   const openMenu = () => {
     const release = appListState.retainForOverlay();
     try {
@@ -226,6 +236,25 @@ function AppRow({ app, accountId, isLast, rowRef, setShortcutId, onUninstalled, 
           ) : (
             <MenuItem onSelected={run(add, async () => {}, setMessage)}>{t("addToSteam")}</MenuItem>
           )}
+          {(secondScreenAvailable || app.secondScreen) && <MenuItem onSelected={() => {
+            openModal(<ImageOperationModal
+              operation={app.secondScreen ? "disableDisplay" : "enableDisplay"}
+              onError={(error) => reportError(error, setMessage)}
+              perform={async () => {
+                await setSecondScreenApp(app.package, !app.secondScreen);
+                setSecondScreen(!app.secondScreen);
+              }}
+            />);
+          }}>{app.secondScreen ? t("disableSecondScreen") : t("enableSecondScreen")}</MenuItem>}
+          {app.secondScreen && <MenuItem onSelected={app.companionPackage
+            ? run(() => saveCompanion(null), async () => {}, setMessage)
+            : () => openModal(<CompanionAppModal app={app} apps={apps} onSelect={saveCompanion}
+                onError={(error) => reportError(error, setMessage)} />)}>
+            <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, width: "100%" }}>
+              <span>{t(app.companionPackage ? "unlinkCompanion" : "linkCompanion")}</span>
+              {companion?.icon && <img src={companion.icon} alt={companion.name} width={24} height={24} style={{ objectFit: "contain" }} />}
+            </span>
+          </MenuItem>}
           {app.removable && (
             <MenuItem onSelected={() => openModal(
               <PackageOperationModal name={app.name} operation="uninstall" target={app.package} onError={(error) => reportError(error, setMessage)} perform={async () => {
@@ -378,6 +407,41 @@ function Content() {
     }
     launchSteamShortcut(status.waydroidShortcutId, requireSteamAccount(status.accountId));
   };
+  const openWaydroidMenu = () => {
+    if (!status) return;
+    const release = appListState.retainForOverlay();
+    try {
+      showContextMenu(
+        <AppMenu label={t("waydroid")} release={release}>
+          {status.waydroidShortcutId && <MenuItem onSelected={run(launchFullWaydroid, async () => {}, setMessage)}>{t("launch")}</MenuItem>}
+          <MenuItem onSelected={status.waydroidShortcutId
+            ? run(removeWaydroidShortcut, async () => {}, setMessage, [t("waydroid"), t("removedFromSteam")])
+            : run(addWaydroid, async () => {}, setMessage)}>
+            {status.waydroidShortcutId ? t("removeWaydroidShortcut") : t("addWaydroid")}
+          </MenuItem>
+          {(status.secondScreenAvailable || status.secondScreen) && <MenuItem onSelected={() => {
+            openModal(<ImageOperationModal
+              operation={status.secondScreen ? "disableDisplay" : "enableDisplay"}
+              title={t(status.secondScreen ? "disableFullSecondScreen" : "enableFullSecondScreen")}
+              onError={(error) => reportError(error, setMessage)}
+              perform={async () => {
+                await setSecondScreenContainer(!status.secondScreen);
+                setStatus((current) => current ? { ...current, secondScreen: !status.secondScreen } : current);
+              }}
+            />);
+          }}>{status.secondScreen ? t("disableFullSecondScreen") : t("enableFullSecondScreen")}</MenuItem>}
+          <MenuItem onSelected={() => openModal(<ImageOperationModal
+            operation="remove"
+            perform={removeWaydroid}
+            onError={(error) => reportError(error, setMessage)}
+          />)}>{t("removeWaydroidButton")}</MenuItem>
+        </AppMenu>,
+      );
+    } catch (error) {
+      release();
+      reportError(error, setMessage);
+    }
+  };
 
   return (
     <div>
@@ -408,36 +472,16 @@ function Content() {
         )}
         {status?.initialized && (
           <>
-            {status.waydroidShortcutId && (
-              <PanelSectionRow>
-                <ButtonItem layout="below" bottomSeparator="none" onClick={run(launchFullWaydroid, async () => {}, setMessage)}>{t("launchWaydroid")}</ButtonItem>
-              </PanelSectionRow>
-            )}
             <PanelSectionRow>
               <ButtonItem
                 layout="below"
                 bottomSeparator="none"
-                onClick={status.waydroidShortcutId ? run(removeWaydroidShortcut, async () => {}, setMessage, [t("waydroid"), t("removedFromSteam")]) : run(addWaydroid, async () => {}, setMessage)}
+                onClick={openWaydroidMenu}
               >
-                {status.waydroidShortcutId ? t("removeWaydroidShortcut") : t("addWaydroid")}
+                {t("waydroidActions")}
               </ButtonItem>
             </PanelSectionRow>
           </>
-        )}
-        {status?.initialized && (
-          <PanelSectionRow>
-            <ButtonItem
-              layout="below"
-              bottomSeparator="none"
-              onClick={() => openModal(<ImageOperationModal
-                operation="remove"
-                perform={removeWaydroid}
-                onError={(error) => reportError(error, setMessage)}
-              />)}
-            >
-              {t("removeWaydroidButton")}
-            </ButtonItem>
-          </PanelSectionRow>
         )}
       </PanelSection>
       </Focusable>
@@ -491,11 +535,15 @@ function Content() {
             <AppRow
               key={app.package}
               app={app}
+              apps={sortedApps}
+              setCompanion={(companionPackage) => setApps((current) => current.map((item) => item.package === app.package ? { ...item, companionPackage } : item))}
               accountId={status.accountId}
               isLast={index === shownApps.length - 1}
               rowRef={app.package === appToFocus ? nextAppRow : undefined}
               setShortcutId={(id) => setApps((current) => current.map((item) => item.package === app.package ? { ...item, shortcutId: id } : item))}
-              onUninstalled={() => setApps((current) => current.filter((item) => item.package !== app.package))}
+              onUninstalled={() => setApps((current) => current.filter((item) => item.package !== app.package).map((item) => item.companionPackage === app.package ? { ...item, companionPackage: undefined } : item))}
+              setSecondScreen={(enabled) => setApps((current) => current.map((item) => item.package === app.package ? { ...item, secondScreen: enabled } : item))}
+              secondScreenAvailable={status?.secondScreenAvailable === true}
               setMessage={setMessage}
             />
           ))}

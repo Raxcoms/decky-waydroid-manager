@@ -1,0 +1,21 @@
+--- a/hwcomposer/hwcomposer.cpp
++++ b/hwcomposer/hwcomposer.cpp
+@@ -195,7 +195,7 @@
+     auto *pdev = static_cast<waydroid_hwc_composer_device_1 *>(dev);
+ 
+     hwc_display_contents_1_t *contents = displays[HWC_DISPLAY_PRIMARY];
+-    assert(contents);
++
+ 
+     // SurfaceFlinger composites the external display; only its target is presented
+     if (pdev->ext_display && numDisplays > HWC_DISPLAY_EXTERNAL && displays[HWC_DISPLAY_EXTERNAL]) {
+@@ -205,6 +205,9 @@
+                 ext->hwLayers[i].compositionType = HWC_FRAMEBUFFER;
+         }
+     }
++
++    if (!contents)
++        return 0;
+ 
+     pdev->selected_mode = select_mode(pdev, contents);
+     if (pdev->selected_mode->setup_prepare(pdev, contents) != 0) {

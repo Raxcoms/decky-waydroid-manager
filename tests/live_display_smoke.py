@@ -1,0 +1,146 @@
+"""Temporary, explicitly invoked hardware smoke test for the display payload."""
+
+import json
+import os
+from pathlib import Path
+import pwd
+import re
+import subprocess
+import sys
+import time
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
+from waydroid_manager.container import CONFIG_DIR, container_pid
+from waydroid_manager.display_payload import HWC_PATH, inspect_vendor
+from waydroid_manager.display_resources import prepare_payload
+from waydroid_manager.native_payload import select_native
+from waydroid_manager.guest import android_user_ready, keep_package_guest_running
+from waydroid_manager.packages import install_apks
+from waydroid_manager.verification import InstallVerification, commit_install
+from waydroid_manager.proc import clean_env, steam_wayland_socket
+from waydroid_manager.runtime_display import RuntimeDisplayLease
+from waydroid_manager.second_screen import discover_external_display
+
+
+def run(command, timeout=30, stdin=None):
+    result = subprocess.run(command, env=clean_env(), stdin=stdin, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True, timeout=timeout)
+    if result.returncode:
+        raise RuntimeError(result.stdout.strip())
+    return result.stdout.strip()
+
+
+def smoke(root: Path, user: str, abandoned_sessions: list[str]):
+    account = pwd.getpwnam(user)
+    uid = account.pw_uid
+    primary = steam_wayland_socket(uid)
+    external = discover_external_display(uid, primary=primary)
+    if not primary or not external:
+        raise RuntimeError("Both host display sockets are required")
+    if container_pid() is not None or "STOPPED" not in run(["waydroid", "status"]):
+        raise RuntimeError("Close the Android session before running this test")
+    identity = inspect_vendor(CONFIG_DIR, run)
+    native = select_native(root / "bin/display-native", identity.sdk, identity.vndk, identity.machine)
+    native.validate_runtime(identity)
+    files = prepare_payload(root, CONFIG_DIR, identity, run)
+    files[f"vendor/{HWC_PATH}"] = native.root / "hwcomposer.waydroid.so"
+    files["vendor/lib64/libhwc2on1adapter.so"] = native.root / "libhwc2on1adapter.so"
+    user_command = ["runuser", "-u", user, "--", "env", f"HOME={account.pw_dir}",
+                    f"XDG_RUNTIME_DIR=/run/user/{uid}",
+                    f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus",
+                    f"WAYLAND_DISPLAY={primary}"]
+    lease = RuntimeDisplayLease(CONFIG_DIR)
+    package = "waydroid.manager.probe"
+    installed = False
+    failure = None
+    relay = None
+    relay_unit = f"app-steam-app1-{os.getpid()}"
+
+    def state(value, **details):
+        (root / "smoke-state.json").write_text(json.dumps({"state": value, **details}))
+
+    try:
+        state("starting", primary=str(primary), external=str(external.socket))
+        external_relay = root / "external-relay"
+        relay = subprocess.Popen([*user_command, "systemd-run", "--user", "--scope", "--quiet",
+                                  f"--unit={relay_unit}", "/usr/bin/python3", "-I",
+                                  str(root / "tests/live_display_relay.py"),
+                                  str(external_relay), str(external.socket)], env=clean_env())
+        deadline = time.monotonic() + 10
+        while not external_relay.is_socket() and time.monotonic() < deadline and relay.poll() is None:
+            time.sleep(0.1)
+        if not external_relay.is_socket():
+            raise RuntimeError("The smoke-test relay did not start")
+        lease.acquire(files, external_relay, run, primary)
+        run([*user_command, "systemd-run", "--user", "--collect", "--quiet",
+             "--unit=waydroid-manager-display-smoke-session", "--property=KillMode=control-group",
+             "env", f"WAYLAND_DISPLAY={primary}", "waydroid", "session", "start"])
+        deadline = time.monotonic() + 180
+        while time.monotonic() < deadline:
+            if android_user_ready(run):
+                break
+            time.sleep(1)
+        else:
+            raise RuntimeError("Android did not boot with the external-display payload")
+        run([*user_command, "waydroid", "show-full-ui"], timeout=15)
+        baseline = run(["waydroid", "shell", "--", "cmd", "display", "get-displays"])
+        state("booted", displays=baseline)
+        for session in abandoned_sessions:
+            if not session.isdecimal():
+                raise RuntimeError("Invalid test install session")
+            run(["waydroid", "shell", "--", "pm", "install-abandon", session])
+        if f"package:{package}" in run(["waydroid", "shell", "--", "pm", "list", "packages", package]).splitlines():
+            raise RuntimeError("The probe package already exists; preserve it before testing")
+        with keep_package_guest_running(run):
+            with (root / "display-probe.apk").open("rb") as source:
+                def commit(session):
+                    state("installing", session=session)
+                    verifier = InstallVerification(run, session, root / "verifier.dex")
+                    return commit_install(["waydroid", "shell", "--", "pm", "install-commit", session],
+                                          verifier, lambda pending: True, timeout=120)
+                install_apks(run, {"base.apk": source}, commit)
+        installed = True
+        run(["waydroid", "shell", "--", "setprop", "waydroid.external_display_active", "1"])
+        deadline = time.monotonic() + 10
+        displays = ""
+        while time.monotonic() < deadline:
+            displays = run(["waydroid", "shell", "--", "cmd", "display", "get-displays",
+                            "android.hardware.display.category.PRESENTATION"])
+            if re.search(r"Display id [1-9][0-9]*", displays):
+                break
+            time.sleep(0.1)
+        else:
+            raise RuntimeError("Android did not announce its external display")
+        run([*user_command, "waydroid", "show-full-ui"], timeout=15)
+        run(["waydroid", "shell", "--", "am", "start", "-n", f"{package}/.ProbeActivity"])
+        state("ready", baseline=baseline, external=displays)
+        while not (root / "stop-smoke").exists():
+            time.sleep(0.25)
+    except Exception as error:
+        failure = str(error)
+        state("failed", error=str(error))
+        raise
+    finally:
+        errors = []
+        def cleanup(command, timeout=30):
+            try:
+                run(command, timeout=timeout)
+            except Exception as error:
+                errors.append(str(error))
+        if container_pid() is not None:
+            if installed:
+                cleanup(["waydroid", "shell", "--", "am", "force-stop", package])
+                cleanup(["waydroid", "shell", "--", "pm", "uninstall", package])
+            cleanup(["busctl", "--system", "--timeout=20s", "call", "id.waydro.Container",
+                 "/ContainerManager", "id.waydro.ContainerManager", "Stop", "b", "true"], timeout=25)
+        subprocess.run([*user_command, "systemctl", "--user", "stop", "waydroid-manager-display-smoke-session"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+        lease.recover()
+        if relay is not None:
+            cleanup([*user_command, "systemctl", "--user", "stop", relay_unit + ".scope"])
+            relay.wait(timeout=10)
+        state("failed" if failure or errors else "cleaned", error=failure, cleanupErrors=errors)
+
+
+if __name__ == "__main__":
+    smoke(Path(sys.argv[1]), sys.argv[2], sys.argv[3:])

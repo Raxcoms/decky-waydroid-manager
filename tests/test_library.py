@@ -10,7 +10,7 @@ import tempfile
 import threading
 import types
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
 import zipfile
 
 from steam_fixtures import write_shortcuts
@@ -45,6 +45,57 @@ class LibraryTests(unittest.TestCase):
 
     def tearDown(self):
         self.directory.cleanup()
+
+    def test_frame_limit_is_prepared_before_starting_activity(self):
+        calls = []
+
+        async def sync(**kwargs):
+            calls.append(("limit", kwargs))
+
+        async def show(launch):
+            calls.append(("show", launch))
+
+        self.plugin._sync_runtime = sync
+        self.plugin._session = types.SimpleNamespace(show=show)
+        self.plugin._runtime_updates = Mock()
+        launch = types.SimpleNamespace(request=types.SimpleNamespace(package="example.game"))
+        asyncio.run(self.plugin._present_launch(launch))
+        self.assertEqual(calls, [
+            ("limit", {"force_frame_limit": True, "package": "example.game", "prepare": True}),
+            ("show", launch), ("limit", {"package": "example.game"}),
+        ])
+        self.plugin._runtime_updates.notify.assert_called_once_with()
+
+    def test_unavailable_frame_limiter_does_not_prevent_app_launch(self):
+        self.plugin._sync_runtime = AsyncMock(side_effect=RuntimeError("unsupported SDK"))
+        self.plugin._session = types.SimpleNamespace(show=AsyncMock())
+        self.plugin._runtime_updates = Mock()
+        launch = types.SimpleNamespace(request=types.SimpleNamespace(package="example.game"))
+        with patch.object(backend.decky, "logger", Mock(), create=True):
+            asyncio.run(self.plugin._present_launch(launch))
+        self.plugin._session.show.assert_awaited_once_with(launch)
+
+    def test_full_shortcut_does_not_set_a_package_policy(self):
+        self.plugin._sync_runtime = AsyncMock()
+        self.plugin._session = types.SimpleNamespace(show=AsyncMock())
+        self.plugin._runtime_updates = Mock()
+        launch = types.SimpleNamespace(request=types.SimpleNamespace(package=None))
+        asyncio.run(self.plugin._present_launch(launch))
+        self.plugin._sync_runtime.assert_awaited_once_with(force_frame_limit=True, package=None, prepare=True)
+
+    def test_companion_link_requires_enabled_screen_and_installed_distinct_apps(self):
+        self.plugin._desktop_entries = lambda: [{"package": "example.app"}, {"package": "other.app"}]
+        with self.assertRaisesRegex(RuntimeError, "Enable"):
+            asyncio.run(self.plugin.set_companion_app("example.app", "other.app"))
+        self.state["secondScreen"]["apps"]["example.app"] = True
+        for companion in ("example.app", "missing.app", "bad/package", 12):
+            with self.subTest(companion=companion), self.assertRaises(RuntimeError):
+                asyncio.run(self.plugin.set_companion_app("example.app", companion))
+        asyncio.run(self.plugin.set_companion_app("example.app", "other.app"))
+        self.assertEqual(self.state["companions"], {"example.app": "other.app"})
+        self.state["secondScreen"]["apps"].clear()
+        asyncio.run(self.plugin.set_companion_app("example.app", None))
+        self.assertEqual(self.state["companions"], {})
 
     def test_app_list_uses_cached_package_metadata_and_ignores_invalid_exports(self):
         applications = self.home / ".local/share/applications"
@@ -158,7 +209,7 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(shortcut["exe"], str(self.plugin._launcher()))
         self.assertEqual(shortcut["launchOptions"], "app example.app")
 
-    def test_shortcut_repairs_replace_only_default_names_and_exact_old_wrappers(self):
+    def test_shortcut_repairs_preserve_existing_wrappers_and_custom_names(self):
         self.plugin._desktop_entries = lambda **kwargs: [{"package": "example.app", "name": "Example"}]
         write_shortcuts(self.path, {
             "0": (0, {"Exe": (1, str(self.plugin._launcher())), "appid": (2, 123),
@@ -169,7 +220,7 @@ class LibraryTests(unittest.TestCase):
                       "AppName": (1, "waydroid-launcher"), "LaunchOptions": (1, "app example.app")}),
         })
         self.assertEqual(self.plugin._legacy_shortcuts(1), [
-            {"appId": 123, "name": "Example"}, {"appId": 456, "launchOptions": "full"},
+            {"appId": 123, "name": "Example"},
         ])
 
     def test_third_party_packages_are_queried_with_waydroid_argument_separator(self):
@@ -446,8 +497,8 @@ class PackageSessionTests(unittest.TestCase):
             self.service_active = False
         if command == ["waydroid", "status"]:
             return "Session: RUNNING" if self.session_running else "Session: STOPPED"
-        if "getprop" in command:
-            return self.booted
+        if "ANDROID_READY" in command[-1]:
+            return "ANDROID_READY" if self.booted == "1" else ""
         if "show" in command:
             return self.unit_state
         return ""
@@ -459,7 +510,17 @@ class PackageSessionTests(unittest.TestCase):
     def test_running_session_is_reused_and_left_running(self):
         self.session_running = True
         self.assertEqual(self.plugin._uninstall_package("example.app"), 123)
-        self.assertEqual(self.commands, [["waydroid", "status"], ["waydroid", "shell", "--", "getprop", "sys.boot_completed"]])
+        self.assertEqual(self.commands[0], ["waydroid", "status"])
+        self.assertIn("get-started-user-state", self.commands[1][-1])
+        self.assertEqual(self.removed, ["example.app"])
+
+    def test_booted_but_locked_user_is_waited_for_before_package_work(self):
+        self.session_running = True
+        with (patch.object(backend, "android_user_ready", side_effect=[False, True]) as ready,
+              patch.object(backend.time, "sleep") as wait):
+            self.plugin._uninstall_package("example.app")
+        self.assertEqual(ready.call_count, 2)
+        wait.assert_called_once_with(1)
         self.assertEqual(self.removed, ["example.app"])
 
     def test_fresh_and_existing_image_setup_check_the_vendor_overlay(self):

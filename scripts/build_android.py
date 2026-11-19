@@ -21,11 +21,14 @@ def build() -> Path:
     dex = output / "dex"
     dex.mkdir(parents=True, exist_ok=True)
     sources = sorted((ROOT / "android").glob("*.java"))
-    subprocess.run([javac, "--release", "11", "-d", str(output), *map(str, sources)], check=True)
+    subprocess.run([javac, "--release", "11", "--class-path", str(library),
+                    "-d", str(output), *map(str, sources)], check=True)
     subprocess.run([str(d8), "--min-api", "26", "--lib", str(library), "--output", str(dex),
                     *(str(output / "waydroid/manager" / (source.stem + ".class")) for source in sources)], check=True)
     target = ROOT / "bin/waydroid-verifier.dex"
     shutil.copyfile(dex / "classes.dex", target)
+    from build_storage_provider import build as build_storage_provider
+    build_storage_provider()
     return target
 
 

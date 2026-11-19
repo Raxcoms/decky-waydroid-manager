@@ -38,3 +38,8 @@ To publish an official release, merge the `package.json` version bump into `main
 ## License
 
 [Creative Commons Attribution 4.0 International](LICENSE) (CC BY 4.0).
+
+CI-built Android display libraries retain their upstream licenses. Packaged native
+builds and private host tools include their checksums and third-party notices.
+See the [native build guide](android/native/README.md). Image-specific resource
+overlays are built locally from the installed image; compiled outputs stay outside Git.

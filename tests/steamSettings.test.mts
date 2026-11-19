@@ -1,10 +1,57 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { frameLimit } from "../src/steamSettings.ts";
+import { frameLimit, observeFrameLimit } from "../src/steamSettings.ts";
+
+test("native changes coalesce, report updated caps, and unsubscribe cleanly", async () => {
+  const callbacks = new Set<() => void>();
+  const register = (callback: () => void) => {
+    callbacks.add(callback);
+    return { unregister: () => { callbacks.delete(callback); } };
+  };
+  let fps = 40;
+  const observed: (number | null)[] = [];
+  const stop = observeFrameLimit((value) => observed.push(value), {
+    Settings: { RegisterForSettingsArrayChanges: register },
+    System: { Perf: { RegisterForStateChanges: register } },
+  }, () => fps);
+  await Promise.resolve();
+  callbacks.forEach((callback) => callback());
+  await Promise.resolve();
+  assert.deepEqual(observed, [40]);
+  fps = 12;
+  callbacks.forEach((callback) => callback());
+  await Promise.resolve();
+  assert.deepEqual(observed, [40, 12]);
+  fps = 60;
+  callbacks.forEach((callback) => callback());
+  stop();
+  await Promise.resolve();
+  assert.equal(callbacks.size, 0);
+  assert.deepEqual(observed, [40, 12]);
+});
 
 function settings(values: Record<string, unknown>) {
   return { GetClientSetting: (key: string): [unknown, unknown] => [values[key], undefined] };
 }
+
+test("shortcut lifetime events resend an unchanged cap without polling", async () => {
+  const callbacks = new Set<() => void>();
+  const register = (callback: () => void) => {
+    callbacks.add(callback);
+    return { unregister: () => { callbacks.delete(callback); } };
+  };
+  const observed: (number | null)[] = [];
+  const stop = observeFrameLimit((value) => observed.push(value), {
+    Settings: { RegisterForSettingsArrayChanges: register },
+    GameSessions: { RegisterForAppLifetimeNotifications: register },
+  }, () => 120);
+  await Promise.resolve();
+  callbacks.forEach((callback) => callback());
+  await Promise.resolve();
+  assert.deepEqual(observed, [120, 120]);
+  stop();
+  assert.equal(callbacks.size, 0);
+});
 
 test("modern QAM target takes priority over stale legacy settings", () => {
   assert.equal(frameLimit(settings({

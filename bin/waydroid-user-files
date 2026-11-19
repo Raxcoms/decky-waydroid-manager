@@ -10,6 +10,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
 from waydroid_manager.state import StateStore
 from waydroid_manager.artwork import prune_artwork
+from waydroid_manager.icon_cache import IconCache
 
 
 def main() -> None:
@@ -36,6 +37,9 @@ def main() -> None:
         recorded, ids = json.load(sys.stdin)
         prune_artwork(home, Path(sys.argv[3]), recorded, set(ids))
         print(json.dumps(recorded))
+    elif action == "cache-icon":
+        from waydroid_manager.icon_cache import MAX_ICON_BYTES
+        IconCache(home).put(sys.argv[3], sys.argv[4], sys.stdin.buffer.read(MAX_ICON_BYTES + 1))
     else:
         raise RuntimeError("Unknown Waydroid file operation")
 

@@ -7,25 +7,58 @@ import sys
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
-from waydroid_manager.control import ServiceControl
+from waydroid_manager.control import Launch, ServiceControl
 
 
 @unittest.skipUnless(hasattr(socket, "SO_PEERCRED"), "Requires Linux peer credentials")
 class ServiceControlTests(unittest.TestCase):
+    def test_persistent_leases_leave_capacity_for_lifecycle_commands(self):
+        async def exercise(directory):
+            control = ServiceControl(Path(directory) / "control", os.getuid(), AsyncMock(), on_policy=AsyncMock())
+            identities = [Launch((index, "start"), Path("display")) for index in range(1, 5)]
+            connections = []
+            await control.open()
+            try:
+                with patch.object(control, "identify_launch", side_effect=identities):
+                    commands = [b"HOST display", *[b'LAUNCH {"display":"display","mode":"app","package":"example.app"}'] * 3]
+                    for command in commands:
+                        reader, writer = await asyncio.open_unix_connection(str(control.path))
+                        connections.append(writer)
+                        writer.write(command + b"\n")
+                        await writer.drain()
+                        self.assertTrue(json.loads(await reader.readline())["ok"])
+                with patch.object(control, "_launch_for_pid", return_value=control.launch):
+                    reader, writer = await asyncio.open_unix_connection(str(control.path))
+                    connections.append(writer)
+                    writer.write(b"POLICY app\n")
+                    await writer.drain()
+                    self.assertEqual(json.loads(await reader.readline()), {"ok": True})
+                    control.on_policy.assert_awaited_once()
+            finally:
+                for writer in connections:
+                    writer.close()
+                for writer in connections:
+                    await writer.wait_closed()
+                await control.close()
+        with tempfile.TemporaryDirectory() as directory:
+            asyncio.run(exercise(directory))
+
     def test_relay_lease_uses_peer_identity_and_releases_on_disconnect(self):
         async def exercise(directory):
             root = Path(directory)
             relay = root / "relay"
             relay.write_text(
-                "import socket, sys\n"
+                "import json, socket, sys\n"
                 "display = socket.socket(socket.AF_UNIX)\n"
                 "display.bind(sys.argv[2])\n"
                 "display.listen()\n"
                 "with socket.socket(socket.AF_UNIX) as control:\n"
                 "    control.connect(sys.argv[1])\n"
-                "    control.sendall(b'LAUNCH ' + sys.argv[2].encode() + b'\\n')\n"
+                "    command = sys.argv[3].encode() + b' ' + (sys.argv[2].encode() if sys.argv[3] == 'HOST' else json.dumps({'display': sys.argv[2], 'mode': 'app', 'package': 'example.app'}).encode()) + b'\\n'\n"
+                "    control.sendall(command)\n"
                 "    print(control.recv(4096).decode().strip(), flush=True)\n"
                 "    sys.stdin.read()\n"
             )
@@ -36,20 +69,31 @@ class ServiceControlTests(unittest.TestCase):
                 releases.append(launch)
             control = ServiceControl(root / "control.sock", os.getuid(), start, relay, on_release=release)
             await control.open()
-            child = await asyncio.create_subprocess_exec(
-                "/usr/bin/python3", "-I", str(relay), str(control.path), str(root / "wayland"),
+            host = await asyncio.create_subprocess_exec(
+                "/usr/bin/python3", "-I", str(relay), str(control.path), str(root / "host-wayland"), "HOST",
                 stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             )
+            child = None
             try:
-                response = await asyncio.wait_for(child.stdout.readline(), 5)
+                response = await asyncio.wait_for(host.stdout.readline(), 5)
                 self.assertEqual(json.loads(response), {"ok": True})
+                child = await asyncio.create_subprocess_exec(
+                    "/usr/bin/python3", "-I", str(relay), str(control.path), str(root / "wayland"), "LAUNCH",
+                    stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+                )
+                response = await asyncio.wait_for(child.stdout.readline(), 5)
+                self.assertEqual(json.loads(response)["ok"], True)
                 self.assertEqual(control.launch.process[0], child.pid)
-                self.assertEqual(control.launch.display, root / "wayland")
+                self.assertEqual(control.launch.display, root / "host-wayland")
+                self.assertEqual(control.launch.request.package, "example.app")
                 with self.assertRaisesRegex(RuntimeError, "Invalid Waydroid launch"):
                     control.identify_launch(os.getpid(), root / "wayland")
             finally:
-                child.stdin.close()
-                await asyncio.wait_for(child.wait(), 5)
+                if child:
+                    child.stdin.close()
+                    await asyncio.wait_for(child.wait(), 5)
+                host.stdin.close()
+                await asyncio.wait_for(host.wait(), 5)
                 for _ in range(10):
                     if control.launch is None:
                         break
@@ -89,7 +133,7 @@ class ServiceControlTests(unittest.TestCase):
             control = ServiceControl(Path(directory) / "control.sock", os.getuid(), start)
             await control.open()
             try:
-                for command, expected in ((b"START\n", True), (b"STOP\n", False)):
+                for command, expected in ((b"START\n", True), (b"STOP\n", False), (b"PRESENT\n", False), (b"CHECK\n", False)):
                     reader, writer = await asyncio.open_unix_connection(str(control.path))
                     writer.write(command)
                     await writer.drain()

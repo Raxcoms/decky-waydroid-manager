@@ -3,6 +3,11 @@ set -euo pipefail
 
 mode="${1:-full}"
 package="${2:-}"
+case "$mode" in
+  full) [[ -z "$package" ]] || { echo "Full Waydroid launch does not accept an app package." >&2; exit 2; } ;;
+  app) [[ "$package" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$ ]] || { echo "Invalid Android package name." >&2; exit 2; } ;;
+  *) echo "Usage: waydroid-launcher [full|app PACKAGE]" >&2; exit 2 ;;
+esac
 runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 data_home="${XDG_DATA_HOME:-}"
 [[ "$data_home" == /* ]] || data_home="$HOME/.local/share"
@@ -15,22 +20,9 @@ steam_owner_pid="${WAYDROID_MANAGER_STEAM_OWNER_PID:-}"
 if [[ -z "$steam_owner_pid" && -n "${SteamAppId:-}${SteamGameId:-}" ]]; then
   steam_owner_pid="$PPID"
 fi
-if [[ "${WAYDROID_MANAGER_CLEAN_ENV:-}" != 1 ]]; then
-  exec env -i \
-    WAYDROID_MANAGER_CLEAN_ENV=1 \
-    HOME="$HOME" USER="${USER:-$(id -un)}" LOGNAME="${LOGNAME:-${USER:-$(id -un)}}" \
-    PATH="${PATH:-/usr/local/bin:/usr/bin}" \
-    LANG="${LANG:-C.UTF-8}" \
-    XDG_RUNTIME_DIR="$runtime_dir" \
-    DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}" \
-    DISPLAY="$parent_display" XAUTHORITY="${XAUTHORITY:-}" \
-    GAMESCOPE_WAYLAND_DISPLAY="$parent_wayland" WAYLAND_DISPLAY="$parent_wayland" \
-    SteamAppId="${SteamAppId:-}" SteamGameId="${SteamGameId:-}" \
-    XDG_STATE_HOME="${XDG_STATE_HOME:-}" \
-    XDG_DATA_HOME="$data_home" \
-    WAYDROID_MANAGER_STEAM_OWNER_PID="$steam_owner_pid" \
-    "$0" "$@"
-fi
+export WAYDROID_MANAGER_STEAM_OWNER_PID="$steam_owner_pid"
+export XDG_RUNTIME_DIR="$runtime_dir" XDG_DATA_HOME="$data_home"
+source "$launcher_dir/waydroid-runtime-env"
 
 parent_socket="$parent_wayland"
 if [[ "$parent_socket" != /* ]]; then
@@ -40,20 +32,55 @@ if [[ ! -S "$parent_socket" ]]; then
   echo "Waydroid Manager needs Steam's active Game Mode Wayland socket." >&2
   exit 1
 fi
-exec 9>"$runtime_dir/waydroid-manager-launch.lock"
-if ! flock -n 9; then
-  echo "Close the running Waydroid shortcut before launching another." >&2
+mkdir -p "$log_dir"
+
+shared_dir="$runtime_dir/waydroid-manager"
+shared_socket="$shared_dir/wayland"
+shared_ready="$shared_dir/ready"
+shared_unit="waydroid-manager-shared-relay"
+mkdir -p -m 700 "$shared_dir"
+exec 9>"$shared_dir/relay.lock"
+flock 9
+if [[ ! -S "$shared_socket" || ! -f "$shared_ready" ]]; then
+  if systemctl --user is-active --quiet "$shared_unit"; then
+    for _ in {1..50}; do
+      [[ -S "$shared_socket" && -f "$shared_ready" ]] && break
+      sleep 0.1
+    done
+  else
+    rm -f "$shared_socket" "$shared_ready"
+    relay_command=("$launcher_dir/waydroid-wayland-relay" --host "$parent_wayland" "$shared_socket")
+    # Gamescope reads native window identity from the client's Steam scope.
+    if [[ "${SteamAppId:-}" =~ ^[1-9][0-9]*$ ]]; then
+      relay_command=(systemd-run --user --scope --quiet \
+        --unit="app-steam-app${SteamAppId}-$$" \
+        --property=PartOf=waydroid-manager-shared-relay.service "${relay_command[@]}")
+    fi
+    systemd-run --user --collect --quiet --unit="$shared_unit" \
+      --property=KillMode=control-group \
+      "${runtime_environment[@]}" \
+      --setenv="XDG_RUNTIME_DIR=$runtime_dir" \
+      --setenv="DISPLAY=$parent_display" \
+      --setenv="WAYDROID_MANAGER_EXTERNAL_WAYLAND_DISPLAY=${WAYDROID_MANAGER_EXTERNAL_WAYLAND_DISPLAY:-}" \
+      --setenv="WAYDROID_MANAGER_EXTERNAL_WAYLAND_ENV=${WAYDROID_MANAGER_EXTERNAL_WAYLAND_ENV:-}" \
+      "${relay_command[@]}"
+    for _ in {1..50}; do
+      [[ -S "$shared_socket" && -f "$shared_ready" ]] && break
+      sleep 0.1
+    done
+  fi
+fi
+flock -u 9
+if [[ ! -S "$shared_socket" || ! -f "$shared_ready" ]]; then
+  echo "Waydroid Manager could not start its shared Wayland relay." >&2
   exit 1
 fi
-mkdir -p "$log_dir"
 
 export XDG_RUNTIME_DIR="$runtime_dir"
 export WAYDROID_MANAGER_MODE="$mode"
 export WAYDROID_MANAGER_PACKAGE="$package"
 export WAYDROID_MANAGER_LOG_DIR="$log_dir"
 export WAYDROID_MANAGER_SESSION_RUNNER="$session_runner"
-unset ENABLE_GAMESCOPE_WSI
-export DISABLE_GAMESCOPE_WSI=1
 
 # A private socket keeps Android attached to this Steam launch without rendering it again.
 : >"$log_dir/wayland.log"
