@@ -16,6 +16,10 @@ The regular plugin build compiles the composer and adapter using the
 [standalone native recipe](../native/README.md). It fetches only the required
 dependencies into the build cache. Compiled files are not tracked in Git.
 
+Official releases call the same build workflow. Native outputs are internal cache
+entries and ship inside the plugin ZIP, rather than separate downloadable native
+artifacts. There is no separate native release workflow.
+
 Enabling second-screen support reads framework-res.apk and SystemUI.apk from the
 installed Android image. The plugin's private compiler builds the resource
 overlays against those files, then signs them with a locally generated identity.
@@ -47,3 +51,20 @@ the Binder vtable size derived from the compiled headers. A compatible image can
 generate its own resource overlays. Unsupported native interfaces fail before
 mounting; ordinary shortcuts keep their existing frame-limit fallback. Device
 model detection is not involved.
+
+Inspection reads the effective installed image, including existing system and
+vendor overlay overrides. Display settings are merged from that effective vendor
+policy; bundled defaults apply only when the image supplies no policy file.
+
+## Frame cadence
+
+The composer exposes whole-number primary refresh modes and limits external
+cadence to the requested cap or the external output's native refresh, whichever is
+lower. Compatible single-screen plugin launches use this native payload too;
+secondary resource preparation is not a prerequisite for frame limiting.
+
+The backend selects the display mode before activity launch and applies the app's
+temporary UID policy after Android confirms startup. This avoids the initial
+60 FPS state observed in Super Hexagon at a saved 120 FPS cap. Live Steam changes
+update both the display target and owned UID policies. The Android 13 fallback
+without this native payload remains limited to refresh-rate divisors.

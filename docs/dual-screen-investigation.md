@@ -10,14 +10,18 @@ switcher on the primary screen, using Android's native app-switch key.
 
 ## Enable or disable
 
-1. Open an Android app's menu, or **Waydroid actions** for the full container.
-2. Select **Enable second screen support**.
+1. Open an Android app's menu, or **Waydroid actions** for the Waydroid shortcut.
+2. Select **Enable second screen support** for an app, or **Enable second screen for the Waydroid shortcut**.
 3. Confirm the dialog and wait for local resource preparation to finish.
 4. Close existing Waydroid launches before starting the enabled shortcut.
 
 The menu then offers **Disable second screen support**. Each app has its own
 choice; the container setting applies only to the full Waydroid shortcut.
 Removing an app removes its saved choice.
+
+The enable action is hidden when the host does not advertise a secondary Wayland
+output. An already-enabled shortcut still offers its disable action if that output
+is unavailable. These are shortcut preferences, not a switch for every Android app.
 
 Only launches through Waydroid Manager use these settings. Starting ordinary
 Waydroid outside the plugin continues to use its installed image and settings.
@@ -35,6 +39,11 @@ Closing the final shortcut stops the owned session and removes its temporary
 mounts. The host compositor continues to own and arbitrate DRM leases, including
 requests from its other applications. The plugin does not stop or replace that
 compositor or change Armada's display configuration.
+
+Independent shortcuts still share the first launch's Steam window identity.
+Separate Steam presentation and foreground layout switching are not implemented.
+For two apps that should run as one Steam launch, use
+[Link companion app](features.md#link-a-companion-app).
 
 ## Compatibility
 
@@ -63,6 +72,10 @@ existing Waydroid overlay. It supplies the composer, adapter, framework resource
 overlay, secondary-home defaults, and external touch mapping for that session.
 Existing overlay display settings are merged into staging. Installed images and
 original configuration files remain unchanged.
+
+Native frame-limit support also applies to compatible single-screen plugin
+launches, without first enabling or preparing the secondary display. Each screen's
+rendering cap stays within the native refresh reported by its compositor.
 
 A separate root guard monitors the backend and can stop the owned session and
 remove its mounts even if the plugin disappears. Its code is copied into `/run`
@@ -97,3 +110,9 @@ validation. No device-wide reboot was performed during these checks.
 
 See [the payload build guide](../android/hwc/README.md) for rebuilding against a
 different compatible Waydroid image.
+
+November 18 testing also verified the CI-built startup limiter on Nova: Super
+Hexagon rendered at 120 FPS on two cold shortcut launches without a slider
+toggle. Live Steam changes to 14 FPS and back to 120 updated Android rendering.
+Thor's Cocoon session reported 120 Hz primary and approximately 60 Hz secondary.
+These checks cover the installed images, not every Android 13 image or handheld.

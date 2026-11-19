@@ -38,6 +38,8 @@ started outside the plugin before launching through Steam.
 
 With a compatible Android 13 composer build, Steam's frame limit controls Android's display cadence while the shortcut is running. Whole-number caps such as 14, 27 and 47 FPS do not need to divide the screen's native refresh rate. Changing the cap also covers Android's launcher, navigation and notification shade.
 
+Compatible plugin launches apply the native extension even with second-screen support disabled. Second-screen resource preparation is not required just to use the improved limiter. The display cap is set before launch, and the app's Android frame-rate policy is refreshed after its activity starts. A saved 120 FPS setting therefore does not need a slider toggle after starting an app.
+
 The limiter works with second-screen support enabled or disabled. Each screen stays within its own native refresh rate. For a device with a 120 Hz primary screen and a 60 Hz second screen:
 
 | Steam cap | Primary cap | Second-screen cap |
@@ -103,6 +105,8 @@ The menu then shows **Unlink companion app**, with the linked app's icon on the 
 
 Both apps use the same Steam shortcut and frame-limit settings. Closing the shortcut also closes its companion, unless another active plugin shortcut still uses that app. Companion links are available only for individual apps.
 
+Independent Steam shortcuts currently share one Android desktop and the first launch's native window identity. Separate per-shortcut presentation ownership and layout switching are not supported yet. Use a companion link when both apps should belong to one Steam launch.
+
 ## Access your host home folder
 
 Your host home folder is shared automatically whenever you launch Waydroid or an
@@ -132,4 +136,11 @@ not change your host files' ownership or permissions.
 
 ## Manage Waydroid
 
-Use **Start**, **Restart**, or **Stop** under **Waydroid Service** to manage the container service. To delete Waydroid, its Android apps and data, and the associated Steam shortcuts, select **Uninstall Waydroid** under **Waydroid Status**.
+Use **Start**, **Restart**, or **Stop** under **Waydroid Service** to manage the container service. To delete Waydroid, its Android apps and data, and the associated Steam shortcuts, select **Waydroid actions > Uninstall Waydroid**.
+
+## Troubleshooting
+
+- If an app closes while asking for its first permissions, open the Waydroid shortcut, grant the permissions there, and try the app shortcut again. Shortcut handling of these first-launch dialogs remains a known limitation.
+- If an installation asks for verification, approve or cancel that individual install in Decky. Approval does not disable Play Protect globally.
+- If a second screen is unavailable, check that the host exposes its secondary output and that the image passed preparation. An enabled app keeps its disable action when the output disappears.
+- After changing a second-screen or companion setting, close existing Android shortcuts and launch again. An image update can invalidate preparation caches.

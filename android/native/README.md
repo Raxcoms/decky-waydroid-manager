@@ -21,6 +21,11 @@ python3 scripts/build_native.py android/native/profiles/android-13-arm64.json ou
 The regular plugin build discovers profiles from `profiles/` and builds each one.
 Build outputs and third-party dependencies stay outside Git.
 
+The current shipped profile is Android 13 / VNDK 33 / ARM64. Runtime validation
+also checks the installed Binder ABI and required exports. A different SoC does
+not by itself require a new profile, but the Android version alone does not prove
+that an image is compatible.
+
 ## What gets built
 
 - Our patched Waydroid composer and HWC adapter.
@@ -35,6 +40,41 @@ or package another Android platform into the plugin.
 Profiles pin upstream revisions and archive checksums. Build outputs record the
 recipe digest, dependencies, notices and library checksums. A new Android API or
 CPU architecture requires a matching, tested profile.
+
+## Package the complete plugin
+
+Use the regular GitHub build for an installable plugin ZIP. It builds the
+frontend and Android helpers, restores or builds the native profile, bundles
+private resource tools, and validates the final package. The official release
+workflow reuses this process; `native.yml` is not required.
+
+For a local complete build, follow the frontend and Android helper steps in the
+[repository guide](../../README.md#for-contributors), then build the native
+profile as above. On an Ubuntu ARM64 build runner with `aapt`, `openssl` and a C
+compiler installed, bundle the matching host tools:
+
+```sh
+python3 scripts/bundle_runtime_tools.py out/display-tools
+python3 scripts/package.py out/package --native out/display-native --runtime-tools out/display-tools
+python3 scripts/check_package.py out/package/waydroid-manager
+```
+
+Run these commands from the repository root. The host tools must match the
+target device architecture; bundling x86 tools on an x86 workstation does not
+produce an ARM64 runtime package. These requirements apply to build runners,
+not the ArmadaOS device receiving the plugin.
+
+## Cache behavior
+
+`scripts/native_cache.py` derives keys from the supported profiles, native
+sources, patches and build recipes. Private tool keys include their runner
+configuration and owned build inputs. Frontend or documentation changes do not
+invalidate unchanged native outputs.
+
+The package job restores these internal caches and checks the included manifests
+and hashes. Only the complete plugin is uploaded as a downloadable CI artifact;
+release builds publish a versioned Decky ZIP. No third-party checkout or compiled
+dependency belongs in the source repository.
 
 ## Measured footprint
 
