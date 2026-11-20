@@ -8,7 +8,7 @@ import java.nio.charset.StandardCharsets;
 public final class InputGuard {
     private static Object manager;
     private static Method dispatch;
-    private static boolean changed;
+    private static volatile boolean changed;
 
     private static void output(String message) throws Exception {
         new FileOutputStream(FileDescriptor.out)
