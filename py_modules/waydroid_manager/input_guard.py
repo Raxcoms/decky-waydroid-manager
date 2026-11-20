@@ -1,8 +1,10 @@
 from contextlib import contextmanager
+import logging
 import os
 import re
 import select
 import subprocess
+import sys
 import time
 
 from .guest import attach_command, staged_dex
@@ -34,8 +36,8 @@ def guard_guest_input(run, helper, identify, identity):
         yield
         return
     with staged_dex(run, helper, identify, identity) as path:
-        command = attach_command("/system/bin/env", f"CLASSPATH={path}", "/system/bin/app_process",
-                                 "/system/bin", "waydroid.manager.InputGuard")
+        command = ["waydroid", "shell", "--", "env", f"CLASSPATH={path}", "/system/bin/app_process",
+                   "/system/bin", "waydroid.manager.InputGuard"]
         with subprocess.Popen(command, env=clean_env(), stdin=subprocess.PIPE,
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                               start_new_session=True) as process:
@@ -43,16 +45,24 @@ def guard_guest_input(run, helper, identify, identity):
                 wait_for_guard(process)
                 yield
             finally:
+                failed = sys.exc_info()[0] is not None
                 # Closing stdin releases the guest guard before removing its staged code.
                 try:
-                    output, _ = process.communicate(timeout=10)
-                except subprocess.TimeoutExpired:
-                    process.terminate()
                     try:
-                        output, _ = process.communicate(timeout=5)
+                        output, _ = process.communicate(timeout=10)
                     except subprocess.TimeoutExpired:
-                        process.kill()
-                        process.communicate()
-                        raise RuntimeError("Android input guard did not exit")
-                if identify() == identity and (process.returncode or b"INPUT_RESTORED" not in output.splitlines()):
-                    raise RuntimeError("Android input guard did not confirm input restoration")
+                        process.terminate()
+                        try:
+                            output, _ = process.communicate(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            process.kill()
+                            process.communicate()
+                            raise RuntimeError("Android input guard did not exit")
+                    if identify() == identity and (process.returncode or b"INPUT_RESTORED" not in output.splitlines()):
+                        logging.getLogger(__name__).warning("Android input guard exited with %s: %s",
+                                                           process.returncode, output.decode(errors="replace")[-2000:])
+                        raise RuntimeError("Android input guard did not confirm input restoration")
+                except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                    if not failed:
+                        raise
+                    logging.getLogger(__name__).warning("Android input guard cleanup failed: %s", error)

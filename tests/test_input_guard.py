@@ -55,7 +55,7 @@ class InputGuardTests(unittest.TestCase):
             self.process.communicate.assert_not_called()
         self.process.communicate.assert_called_once_with(timeout=10)
         command = self.spawn_mock.call_args.args[0]
-        self.assertEqual(command[0], "lxc-attach")
+        self.assertEqual(command[:4], ["waydroid", "shell", "--", "env"])
         self.assertEqual(command[-1], "waydroid.manager.InputGuard")
         self.assertTrue(self.spawn_mock.call_args.kwargs["start_new_session"])
 
@@ -91,6 +91,16 @@ class InputGuardTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "input restoration"):
             with self.guard():
                 pass
+
+    def test_cleanup_does_not_hide_the_helpers_original_startup_error(self):
+        self.wait_mock.side_effect = RuntimeError("Missing Android runtime environment")
+        self.process.communicate.return_value = (b"helper startup failed", None)
+        self.process.returncode = 1
+        with self.assertLogs("waydroid_manager.input_guard", level="WARNING") as logged, \
+             self.assertRaisesRegex(RuntimeError, "Missing Android runtime environment"):
+            with self.guard():
+                self.fail("An unguarded confirmation must not open")
+        self.assertIn("helper startup failed", logged.output[0])
 
     def test_timeout_terminates_the_guard_so_its_shutdown_hook_can_restore_input(self):
         self.process.communicate.side_effect = [subprocess.TimeoutExpired("guard", 10),
