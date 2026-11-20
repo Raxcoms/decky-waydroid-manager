@@ -1,3 +1,4 @@
+from contextlib import ExitStack
 import logging
 import os
 from pathlib import Path
@@ -8,6 +9,7 @@ import time
 
 from .container import container_identity
 from .guest import run_dex
+from .input_guard import guard_guest_input
 from .packages import check_result
 from .proc import clean_env
 
@@ -124,6 +126,9 @@ class InstallVerification:
             raise RuntimeError("ANDROID_VERIFICATION_UNAVAILABLE")
         self.send_response(request, provider[1], approved)
 
+    def confirmation(self):
+        return guard_guest_input(self.run, self.helper, container_identity, self.identity)
+
     def reject_pending(self) -> None:
         provider = self.configured_provider()
         if provider:
@@ -152,6 +157,7 @@ def commit_install(command: list[str], verifier, confirm, timeout: float = 300) 
     asked = False
     responded = False
     succeeded = False
+    guards = ExitStack()
     try:
         while True:
             try:
@@ -167,6 +173,7 @@ def commit_install(command: list[str], verifier, confirm, timeout: float = 300) 
                     raise RuntimeError("PACKAGE_INSTALL_TIMEOUT")
                 if process.poll() is None and not asked and verifier.warning_pending():
                     asked = True
+                    guards.enter_context(verifier.confirmation())
                     approved = confirm(lambda: process.poll() is None)
                     if approved is not None and process.poll() is None:
                         verifier.respond(approved)
@@ -175,17 +182,20 @@ def commit_install(command: list[str], verifier, confirm, timeout: float = 300) 
                             raise InstallCancelled()
                     deadline = max(deadline, time.monotonic() + 30)
     finally:
-        if not succeeded and not responded:
-            try:
-                verifier.reject_pending()
-            except (OSError, RuntimeError, subprocess.SubprocessError) as error:
-                logging.getLogger(__name__).warning("Could not reject pending Android verification: %s", error)
-        if process.poll() is None:
-            if os.name == "nt":
-                process.kill()
-            else:
+        try:
+            if not succeeded and not responded:
                 try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-            process.communicate()
+                    verifier.reject_pending()
+                except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                    logging.getLogger(__name__).warning("Could not reject pending Android verification: %s", error)
+            if process.poll() is None:
+                if os.name == "nt":
+                    process.kill()
+                else:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                process.communicate()
+        finally:
+            guards.close()

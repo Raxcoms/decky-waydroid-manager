@@ -58,6 +58,8 @@ Companion apps intentionally share their primary shortcut's ownership.
 
 User preferences and artwork cleanup run as the Steam login user. APK and XAPK content goes through Android's package installer, with no need for the backend to stage packages in the user's Android data directory.
 
+Install verification holds a guest input guard before exposing Decky's approval dialog, through completion of the commit. The helper waits on a pipe and restores input on EOF or graceful termination; it adds no polling. Already-disabled input is preserved, and guest identity checks keep cleanup out of a replacement container.
+
 New launches stage their changes under `/run`. The legacy recovery modules only
 restore older on-disk transactions before startup; they cannot create new leases.
 

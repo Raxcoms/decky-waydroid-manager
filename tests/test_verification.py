@@ -1,9 +1,10 @@
+from contextlib import contextmanager
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
 from waydroid_manager.verification import InstallCancelled, InstallVerification, active_install_sessions, commit_install, verification_id, verification_dialog
@@ -235,11 +236,49 @@ class VerificationBridgeTests(unittest.TestCase):
 
 
 class InstallCommitTests(unittest.TestCase):
+    def test_guest_input_stays_guarded_until_android_finishes_the_commit(self):
+        guarded = False
+
+        @contextmanager
+        def guard():
+            nonlocal guarded
+            guarded = True
+            try:
+                yield
+            finally:
+                guarded = False
+
+        process = Mock(returncode=0)
+        process.poll.return_value = None
+        calls = 0
+
+        def communicate(**kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise subprocess.TimeoutExpired("pm", 1)
+            self.assertTrue(guarded)
+            process.poll.return_value = 0
+            return "Success\n", None
+
+        process.communicate.side_effect = communicate
+        verifier = Mock()
+        verifier.confirmation.side_effect = guard
+        verifier.respond.side_effect = lambda approved: self.assertTrue(guarded)
+
+        def confirm(active):
+            self.assertTrue(guarded)
+            return True
+
+        with patch("waydroid_manager.verification.subprocess.Popen", return_value=process):
+            self.assertEqual(commit_install(["pm"], verifier, confirm), "Success")
+        self.assertFalse(guarded)
+
     def test_pending_commit_checks_native_verification_then_returns_package_result(self):
         process = Mock(returncode=0)
         process.communicate.side_effect = [subprocess.TimeoutExpired("pm", 1), ("Success\n", None)]
         process.poll.side_effect = [None, None, 0]
-        verifier = Mock()
+        verifier = MagicMock()
         confirm = Mock(return_value=True)
         with patch("waydroid_manager.verification.subprocess.Popen", return_value=process):
             self.assertEqual(commit_install(["pm"], verifier, confirm), "Success")
@@ -250,7 +289,7 @@ class InstallCommitTests(unittest.TestCase):
         process = Mock(returncode=0)
         process.communicate.side_effect = [subprocess.TimeoutExpired("pm", 1), ("Success\n", None)]
         process.poll.side_effect = [None, 0]
-        verifier, confirm = Mock(), Mock()
+        verifier, confirm = MagicMock(), Mock()
         verifier.warning_pending.return_value = False
         with patch("waydroid_manager.verification.subprocess.Popen", return_value=process):
             self.assertEqual(commit_install(["pm"], verifier, confirm), "Success")
@@ -264,7 +303,7 @@ class InstallCommitTests(unittest.TestCase):
                 process = Mock(returncode=exit_code)
                 process.communicate.return_value = ("Failure [install interrupted]", None)
                 process.poll.return_value = exit_code
-                verifier = Mock()
+                verifier = MagicMock()
                 with patch("waydroid_manager.verification.subprocess.Popen", return_value=process):
                     with self.assertRaisesRegex(RuntimeError, "install interrupted"):
                         commit_install(["pm"], verifier, Mock())
@@ -275,7 +314,7 @@ class InstallCommitTests(unittest.TestCase):
         process = Mock(pid=123)
         process.communicate.side_effect = [subprocess.TimeoutExpired("pm", 1), ("", None)]
         process.poll.return_value = None
-        verifier = Mock()
+        verifier = MagicMock()
         with patch("waydroid_manager.verification.subprocess.Popen", return_value=process), patch("waydroid_manager.verification.os.killpg", create=True):
             with self.assertRaises(InstallCancelled):
                 commit_install(["pm"], verifier, Mock(return_value=False))
@@ -286,7 +325,7 @@ class InstallCommitTests(unittest.TestCase):
         process = Mock(pid=123)
         process.communicate.side_effect = [subprocess.TimeoutExpired("pm", 1), ("", None)]
         process.poll.return_value = None
-        verifier = Mock()
+        verifier = MagicMock()
         verifier.warning_pending.side_effect = RuntimeError("VERIFICATION_UNAVAILABLE")
         with patch("waydroid_manager.verification.subprocess.Popen", return_value=process), patch("waydroid_manager.verification.os.killpg", create=True) as kill:
             with self.assertRaisesRegex(RuntimeError, "VERIFICATION_UNAVAILABLE"):
@@ -300,7 +339,7 @@ class InstallCommitTests(unittest.TestCase):
         process = Mock(pid=123)
         process.communicate.side_effect = [subprocess.TimeoutExpired("pm", 1), ("", None)]
         process.poll.return_value = None
-        verifier = Mock()
+        verifier = MagicMock()
         with patch("waydroid_manager.verification.subprocess.Popen", return_value=process), patch("waydroid_manager.verification.os.killpg", create=True), patch("waydroid_manager.verification.time.monotonic", side_effect=[0, 301]):
             with self.assertRaisesRegex(RuntimeError, "PACKAGE_INSTALL_TIMEOUT"):
                 commit_install(["pm"], verifier, Mock())

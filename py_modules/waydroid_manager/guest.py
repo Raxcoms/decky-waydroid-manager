@@ -215,7 +215,8 @@ class LaunchPolicy:
         return False
 
 
-def run_dex(run, helper: Path, identify, identity, main_class: str, *args: str, uid: str | None = None) -> str:
+@contextmanager
+def staged_dex(run, helper: Path, identify, identity):
     if not identity or identify() != identity:
         raise RuntimeError("WAYDROID_NOT_RUNNING")
     # Stage trusted code in the guest's temporary /dev, outside the user-owned data mount.
@@ -230,12 +231,17 @@ def run_dex(run, helper: Path, identify, identity, main_class: str, *args: str, 
             )
         if identify() != identity:
             raise RuntimeError("WAYDROID_NOT_RUNNING")
-        command = ["waydroid", "shell", *(["--uid", uid] if uid else []), "--", "env",
-                   f"CLASSPATH={path}", "/system/bin/app_process", "/system/bin", main_class, *args]
-        return run(command, timeout=15)
+        yield path
     finally:
         if identify() == identity:
             try:
                 run(attach_command("/system/bin/rm", "-rf", directory), timeout=5)
             except (OSError, RuntimeError, subprocess.SubprocessError) as error:
                 logging.getLogger(__name__).warning("Could not remove the temporary Android helper: %s", error)
+
+
+def run_dex(run, helper: Path, identify, identity, main_class: str, *args: str, uid: str | None = None) -> str:
+    with staged_dex(run, helper, identify, identity) as path:
+        command = ["waydroid", "shell", *(["--uid", uid] if uid else []), "--", "env",
+                   f"CLASSPATH={path}", "/system/bin/app_process", "/system/bin", main_class, *args]
+        return run(command, timeout=15)
