@@ -140,7 +140,7 @@ class LibraryTests(unittest.TestCase):
     def test_image_setup_preserves_existing_android_preferences(self):
         (self.home / ".local/share/waydroid/data").mkdir(parents=True)
         self.plugin._initialized = lambda: True
-        self.plugin._package_session = lambda progress: nullcontext()
+        self.plugin._package_session = lambda progress, **kwargs: nullcontext()
         self.plugin._set_initial_locale = lambda *args: self.fail("Setup changed existing language preferences")
         self.plugin._wait_for_app_entries = lambda *args: None
         with (patch.object(self.plugin, "_install_gapps") as initialize,
@@ -404,7 +404,7 @@ class LibraryTests(unittest.TestCase):
         with zipfile.ZipFile(apk, "w") as archive:
             archive.writestr("AndroidManifest.xml", b"manifest")
         self.plugin._initialized = lambda: True
-        self.plugin._package_session = lambda progress: nullcontext()
+        self.plugin._package_session = lambda progress, **kwargs: nullcontext()
         (self.home / ".local/share/waydroid/data/local/tmp").mkdir(parents=True)
         def run(args, **kwargs):
             if args[0] == "lxc-attach":
@@ -434,7 +434,7 @@ class LibraryTests(unittest.TestCase):
         apk = self.home / "app.apk"
         apk.write_text("invalid")
         self.plugin._initialized = lambda: True
-        self.plugin._package_session = lambda progress: self.fail("Invalid file started Android")
+        self.plugin._package_session = lambda progress, **kwargs: self.fail("Invalid file started Android")
         with self.assertRaisesRegex(RuntimeError, "INVALID_PACKAGE_ARCHIVE"):
             self.plugin._install_package(str(apk))
 
@@ -501,6 +501,8 @@ class PackageSessionTests(unittest.TestCase):
             return "Session: RUNNING" if self.session_running else "Session: STOPPED"
         if "ANDROID_READY" in command[-1]:
             return "ANDROID_READY" if self.booted == "1" else ""
+        if command[-3:] == ["package", "path", "android"]:
+            return "package:/system/framework/framework-res.apk"
         if "show" in command:
             return self.unit_state
         return ""
@@ -524,6 +526,16 @@ class PackageSessionTests(unittest.TestCase):
         self.assertEqual(ready.call_count, 2)
         wait.assert_called_once_with(1)
         self.assertEqual(self.removed, ["example.app"])
+
+    def test_booted_guest_waits_for_its_configured_verifier_before_package_work(self):
+        self.session_running = True
+        with (patch.object(backend, "package_manager_ready", side_effect=[False, True]) as ready,
+              patch.object(backend.time, "sleep") as wait):
+            with self.plugin._package_session(verify=True):
+                pass
+        self.assertEqual(ready.call_count, 2)
+        ready.assert_called_with(self.plugin._run, verify=True)
+        wait.assert_called_once_with(1)
 
     def test_fresh_and_existing_image_setup_check_the_vendor_overlay(self):
         for existing in (False, True):

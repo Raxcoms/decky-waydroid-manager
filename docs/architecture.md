@@ -58,7 +58,7 @@ Companion apps intentionally share their primary shortcut's ownership.
 
 User preferences and artwork cleanup run as the Steam login user. APK and XAPK content goes through Android's package installer, with no need for the backend to stage packages in the user's Android data directory.
 
-Install verification holds a guest input guard before exposing Decky's approval dialog, through completion of the commit. The helper waits on a pipe and restores input on EOF or graceful termination; it adds no polling. Already-disabled input is preserved, and guest identity checks keep cleanup out of a replacement container.
+Package operations wait for Android boot, user unlock and Package Manager. Installs also wait for the configured verifier receiver. Install verification acquires a guest input guard before starting the commit, through its completion. The helper waits on a pipe and restores the captured input state on EOF or graceful termination; it adds no polling. Initially-disabled input is guarded too, and guest identity checks keep cleanup out of a replacement container. Verification binds to the owned session, request ID and verifier identity even when unrelated installs run in parallel.
 
 New launches stage their changes under `/run`. The legacy recovery modules only
 restore older on-disk transactions before startup; they cannot create new leases.

@@ -26,7 +26,7 @@ from waydroid_manager.verification import InstallCancelled, InstallVerification,
 from waydroid_manager.steam import known_accounts, read_shortcuts, shortcuts_path, shortcut_key, shortcut_owners
 from waydroid_manager.host import default_launch_options, updated_launch_options
 from waydroid_manager.container import CONFIG_DIR, SERVICE, container_identity, container_pid, registered_guest, session_uses_socket, vendor_overlay_warning
-from waydroid_manager.guest import android_user_ready, keep_package_guest_running, run_dex, set_media_volume_max
+from waydroid_manager.guest import android_user_ready, keep_package_guest_running, package_manager_ready, run_dex, set_media_volume_max
 from waydroid_manager.image import launcher_packages, owned_directory, require_unmounted, require_unredirected, run_init
 from waydroid_manager.control import Launch, ServiceControl, control_path
 from waydroid_manager.legacy_overlay import LegacyOverlayRecovery
@@ -760,7 +760,7 @@ class Plugin:
             raise RuntimeError("WAYDROID_NOT_RUNNING")
 
     @contextmanager
-    def _package_session(self, progress: Callable[[str], None] = lambda stage: None):
+    def _package_session(self, progress: Callable[[str], None] = lambda stage: None, *, verify: bool = False):
         if not self._initialized():
             raise RuntimeError("WAYDROID_NOT_INSTALLED")
         try:
@@ -768,7 +768,7 @@ class Plugin:
         except RuntimeError:
             pass
         else:
-            self._wait_for_android(progress)
+            self._wait_for_android(progress, verify=verify)
             yield
             return
 
@@ -793,7 +793,7 @@ class Plugin:
                 f"--unit={unit}", "--property=KillMode=control-group", "--property=TimeoutStopSec=45s",
                 "env", f"WAYLAND_DISPLAY={wayland}", "waydroid", "session", "start",
             ])
-            self._wait_for_android(progress, unit_status)
+            self._wait_for_android(progress, unit_status, verify=verify)
             with keep_package_guest_running(self._run):
                 yield
             completed = True
@@ -822,18 +822,19 @@ class Plugin:
                 except RuntimeError:
                     self._run(["systemctl", "stop", SERVICE])
 
-    def _wait_for_android(self, progress: Callable[[str], None], unit_status: list[str] | None = None) -> None:
+    def _wait_for_android(self, progress: Callable[[str], None], unit_status: list[str] | None = None,
+                          *, verify: bool = False) -> None:
         progress("booting")
         try:
-            self._wait_for_boot(unit_status)
+            self._wait_for_boot(unit_status, verify=verify)
         finally:
             if warning := vendor_overlay_warning(WAYDROID_DIR):
                 decky.logger.warning("%s", warning)
 
-    def _wait_for_boot(self, unit_status: list[str] | None) -> None:
+    def _wait_for_boot(self, unit_status: list[str] | None, *, verify: bool = False) -> None:
         deadline = time.monotonic() + 180
         while time.monotonic() < deadline:
-            if android_user_ready(self._run):
+            if android_user_ready(self._run) and package_manager_ready(self._run, verify=verify):
                 return
             if unit_status:
                 try:
@@ -872,7 +873,7 @@ class Plugin:
         try:
             with open_as_user(self._user_files_helper(), home, path) as source, zipfile.ZipFile(source) as archive:
                 members = apk_members(archive, path.suffix.lower())
-                with self._package_session(report), stage_apks(archive, members) as parts:
+                with self._package_session(report, verify=True), stage_apks(archive, members) as parts:
                     report("installing")
                     install_apks(self._run, parts, commit=lambda session: self._commit_package_install(session, value))
                     self._removable_packages()

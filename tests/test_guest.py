@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import Mock, call, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
-from waydroid_manager.guest import LaunchPolicy, android_user_ready, keep_package_guest_running, set_media_volume_max
+from waydroid_manager.guest import LaunchPolicy, android_user_ready, keep_package_guest_running, package_manager_ready, set_media_volume_max
 
 
 class PackageWakeTests(unittest.TestCase):
@@ -61,6 +61,42 @@ class AndroidReadinessTests(unittest.TestCase):
                     self.assertEqual(kwargs["timeout"], 5)
                     return output
                 self.assertEqual(android_user_ready(run), expected)
+
+
+class PackageReadinessTests(unittest.TestCase):
+    def test_waits_for_package_manager_to_answer_before_querying_the_verifier(self):
+        run = Mock(return_value="cmd: Can't find service: package")
+        self.assertFalse(package_manager_ready(run))
+        run.assert_called_once()
+
+    def test_a_configured_verifier_must_resolve_on_the_current_image(self):
+        for receiver, expected in (("No receivers found", False), ("other.verifier/.Receiver", False),
+                                   ("vendor.verifier/.Receiver", True)):
+            with self.subTest(receiver=receiver):
+                run = Mock(side_effect=["package:/system/framework/framework-res.apk",
+                                        "Required: vendor.verifier (uid=10123)", receiver])
+                self.assertEqual(package_manager_ready(run, verify=True), expected)
+                self.assertIn("query-receivers", run.call_args.args[0])
+                self.assertIn("current", run.call_args.args[0])
+
+    def test_a_vanilla_image_with_no_required_verifier_is_supported(self):
+        run = Mock(side_effect=["package:/system/framework/framework-res.apk", "Verifiers:\n"])
+        self.assertTrue(package_manager_ready(run, verify=True))
+        self.assertEqual(run.call_count, 2)
+
+    def test_transient_verifier_service_errors_are_not_readiness(self):
+        for output in ("Can't find service: package", "Service package not responding"):
+            with self.subTest(output=output):
+                run = Mock(side_effect=["package:/system/framework/framework-res.apk", output])
+                self.assertFalse(package_manager_ready(run, verify=True))
+
+    def test_operations_without_verification_only_require_package_manager(self):
+        run = Mock(return_value="package:/system/framework/framework-res.apk")
+        self.assertTrue(package_manager_ready(run))
+        run.assert_called_once()
+
+    def test_a_startup_command_failure_is_retried_by_the_boot_waiter(self):
+        self.assertFalse(package_manager_ready(Mock(side_effect=RuntimeError("service starting"))))
 
 
 class LaunchPolicyTests(unittest.TestCase):

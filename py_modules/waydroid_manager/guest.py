@@ -85,6 +85,28 @@ def android_user_ready(run) -> bool:
     return "ANDROID_READY" in output.splitlines()
 
 
+def package_manager_ready(run, *, verify: bool = False) -> bool:
+    command = ["waydroid", "shell", "--"]
+    try:
+        framework = run([*command, "cmd", "package", "path", "android"], timeout=5)
+        if not any(line.startswith("package:/") for line in framework.splitlines()):
+            return False
+        if not verify:
+            return True
+        verifiers = run([*command, "dumpsys", "package", "verifiers"], timeout=5)
+        if any(error in verifiers for error in ("Can't find service", "not responding")):
+            return False
+        provider = re.search(r"^\s*Required: ([\w.]+) \(uid=\d+\)", verifiers, re.MULTILINE)
+        if not provider:
+            return True
+        receivers = run([*command, "cmd", "package", "query-receivers", "--components", "--user", "current",
+                         "-a", "android.intent.action.PACKAGE_NEEDS_VERIFICATION", "-d", "file:///",
+                         "-t", "application/vnd.android.package-archive"], timeout=5)
+        return any(line.strip().startswith(provider[1] + "/") for line in receivers.splitlines())
+    except (OSError, RuntimeError, subprocess.SubprocessError):
+        return False
+
+
 def set_media_volume_max(run) -> None:
     command = ["waydroid", "shell", "--", "cmd", "media_session", "volume"]
     volume = re.compile(r"\bvolume is (\d+) in range \[\d+\.\.(\d+)\]")
