@@ -37,7 +37,8 @@ def guard_guest_input(run, helper, identify, identity):
         command = attach_command("/system/bin/env", f"CLASSPATH={path}", "/system/bin/app_process",
                                  "/system/bin", "waydroid.manager.InputGuard")
         with subprocess.Popen(command, env=clean_env(), stdin=subprocess.PIPE,
-                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as process:
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              start_new_session=True) as process:
             try:
                 wait_for_guard(process)
                 yield

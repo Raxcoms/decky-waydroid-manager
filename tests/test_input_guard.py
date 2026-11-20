@@ -57,6 +57,7 @@ class InputGuardTests(unittest.TestCase):
         command = self.spawn_mock.call_args.args[0]
         self.assertEqual(command[0], "lxc-attach")
         self.assertEqual(command[-1], "waydroid.manager.InputGuard")
+        self.assertTrue(self.spawn_mock.call_args.kwargs["start_new_session"])
 
     def test_confirmation_failure_still_releases_the_guard(self):
         with self.assertRaisesRegex(RuntimeError, "confirmation failed"):
