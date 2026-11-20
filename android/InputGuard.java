@@ -3,6 +3,7 @@ package waydroid.manager;
 import java.io.FileDescriptor;
 import java.io.FileOutputStream;
 import java.lang.reflect.Method;
+import java.lang.reflect.InvocationTargetException;
 import java.nio.charset.StandardCharsets;
 
 public final class InputGuard {
@@ -49,7 +50,8 @@ public final class InputGuard {
             }
             output("INPUT_RESTORED");
         } catch (Exception error) {
-            System.err.println("Android input guard failed: " + error);
+            Throwable cause = error instanceof InvocationTargetException ? error.getCause() : error;
+            System.err.println("Android input guard failed: " + cause);
             System.exit(1);
         }
     }

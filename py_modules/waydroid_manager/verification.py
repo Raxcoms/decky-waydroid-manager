@@ -173,8 +173,10 @@ def commit_install(command: list[str], verifier, confirm, timeout: float = 300) 
                     raise RuntimeError("PACKAGE_INSTALL_TIMEOUT")
                 if process.poll() is None and not asked and verifier.warning_pending():
                     asked = True
-                    guards.enter_context(verifier.confirmation())
-                    approved = confirm(lambda: process.poll() is None)
+                    guard_active = guards.enter_context(verifier.confirmation())
+                    approved = confirm(lambda: process.poll() is None and guard_active())
+                    if not guard_active():
+                        raise RuntimeError("Android input guard stopped before verification completed")
                     if approved is not None and process.poll() is None:
                         verifier.respond(approved)
                         responded = True

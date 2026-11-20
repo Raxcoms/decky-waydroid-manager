@@ -22,6 +22,8 @@ def wait_for_guard(process, timeout=10):
         if not chunk:
             raise RuntimeError("Android input guard failed: " + output.decode(errors="replace")[-1000:])
         output = (output + chunk)[-4096:]
+    if b"INPUT_RESTORED" in output.splitlines() or process.poll() is not None:
+        raise RuntimeError("Android input guard exited before confirmation: " + output.decode(errors="replace")[-1000:])
 
 
 @contextmanager
@@ -33,7 +35,7 @@ def guard_guest_input(run, helper, identify, identity):
     if not state:
         raise RuntimeError("Android did not report its input dispatch state")
     if state[1] == "false":
-        yield
+        yield lambda: identify() == identity
         return
     with staged_dex(run, helper, identify, identity) as path:
         command = ["waydroid", "shell", "--", "env", f"CLASSPATH={path}", "/system/bin/app_process",
@@ -43,7 +45,7 @@ def guard_guest_input(run, helper, identify, identity):
                               start_new_session=True) as process:
             try:
                 wait_for_guard(process)
-                yield
+                yield lambda: process.poll() is None
             finally:
                 failed = sys.exc_info()[0] is not None
                 # Closing stdin releases the guest guard before removing its staged code.

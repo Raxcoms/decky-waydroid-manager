@@ -236,6 +236,27 @@ class VerificationBridgeTests(unittest.TestCase):
 
 
 class InstallCommitTests(unittest.TestCase):
+    def test_guard_exit_while_waiting_cannot_send_an_unprotected_approval(self):
+        process = Mock(pid=123)
+        process.poll.return_value = None
+        process.communicate.side_effect = [subprocess.TimeoutExpired("pm", 1), ("", None)]
+        verifier = MagicMock()
+        active = Mock(return_value=True)
+        verifier.confirmation.return_value.__enter__.return_value = active
+
+        def confirm(check):
+            self.assertTrue(check())
+            active.return_value = False
+            self.assertFalse(check())
+            return None
+
+        with patch("waydroid_manager.verification.subprocess.Popen", return_value=process), \
+             patch("waydroid_manager.verification.os.killpg", create=True), \
+             self.assertRaisesRegex(RuntimeError, "guard stopped"):
+            commit_install(["pm"], verifier, confirm)
+        verifier.respond.assert_not_called()
+        verifier.confirmation.return_value.__exit__.assert_called_once()
+
     def test_guest_input_stays_guarded_until_android_finishes_the_commit(self):
         guarded = False
 
@@ -244,7 +265,7 @@ class InstallCommitTests(unittest.TestCase):
             nonlocal guarded
             guarded = True
             try:
-                yield
+                yield lambda: guarded
             finally:
                 guarded = False
 

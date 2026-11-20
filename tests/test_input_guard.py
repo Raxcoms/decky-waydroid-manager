@@ -12,8 +12,17 @@ from waydroid_manager.input_guard import guard_guest_input, wait_for_guard
 class GuardReadinessTests(unittest.TestCase):
     def test_waits_for_a_complete_acknowledgement_across_pipe_reads(self):
         process = Mock()
+        process.poll.return_value = None
         with patch("waydroid_manager.input_guard.select.select", return_value=([process.stdout], [], [])), \
              patch("waydroid_manager.input_guard.os.read", side_effect=[b"INPUT_GU", b"ARDED\n"]):
+            wait_for_guard(process)
+
+    def test_a_guard_that_already_restored_input_cannot_authorize_confirmation(self):
+        process = Mock()
+        process.poll.return_value = 0
+        with patch("waydroid_manager.input_guard.select.select", return_value=([process.stdout], [], [])), \
+             patch("waydroid_manager.input_guard.os.read", return_value=b"INPUT_GUARDED\nINPUT_RESTORED\n"), \
+             self.assertRaisesRegex(RuntimeError, "exited before confirmation"):
             wait_for_guard(process)
 
     def test_eof_or_timeout_never_allows_confirmation_to_open(self):
@@ -33,6 +42,7 @@ class InputGuardTests(unittest.TestCase):
         self.identify = Mock(return_value=self.identity)
         self.run = Mock(return_value="Input Dispatcher State:\n  DispatchEnabled: true\n")
         self.process = Mock(returncode=0)
+        self.process.poll.return_value = None
         self.process.__enter__ = Mock(return_value=self.process)
         self.process.__exit__ = Mock(return_value=False)
         self.process.communicate.return_value = (b"INPUT_RESTORED\n", None)
@@ -50,9 +60,12 @@ class InputGuardTests(unittest.TestCase):
         return guard_guest_input(self.run, Path("helper.dex"), self.identify, self.identity)
 
     def test_waits_for_input_isolation_then_closes_the_pipe_to_restore_it(self):
-        with self.guard():
+        with self.guard() as active:
             self.wait_mock.assert_called_once_with(self.process)
             self.process.communicate.assert_not_called()
+            self.assertTrue(active())
+            self.process.poll.return_value = 1
+            self.assertFalse(active())
         self.process.communicate.assert_called_once_with(timeout=10)
         command = self.spawn_mock.call_args.args[0]
         self.assertEqual(command[:4], ["waydroid", "shell", "--", "env"])
