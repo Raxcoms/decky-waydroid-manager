@@ -35,12 +35,14 @@ class InputGuardJavaTests(unittest.TestCase):
                 paths.append(str(path))
             guard = Path(__file__).resolve().parents[1] / "android/InputGuard.java"
             subprocess.run(["javac", "--release", "11", "-d", str(root), *paths, str(guard)], check=True, timeout=30)
-            result = subprocess.run(["java", "-cp", str(root), "waydroid.manager.InputGuard"],
-                                    input=b"", capture_output=True, timeout=10, check=True)
-            self.assertEqual(result.stdout.splitlines(), [b"INPUT_GUARDED", b"INPUT_RESTORED"])
-            self.assertEqual(result.stderr.splitlines(), [b"DISPATCH=false", b"DISPATCH=true"])
+            for previous in ("true", "false"):
+                with self.subTest(previous=previous):
+                    result = subprocess.run(["java", "-cp", str(root), "waydroid.manager.InputGuard", previous],
+                                            input=b"", capture_output=True, timeout=10, check=True)
+                    self.assertEqual(result.stdout.splitlines(), [b"INPUT_GUARDED", b"INPUT_RESTORED"])
+                    self.assertEqual(result.stderr.splitlines(), [b"DISPATCH=false", f"DISPATCH={previous}".encode()])
             if os.name == "posix":
-                with subprocess.Popen(["java", "-cp", str(root), "waydroid.manager.InputGuard"],
+                with subprocess.Popen(["java", "-cp", str(root), "waydroid.manager.InputGuard", "true"],
                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
                     self.assertEqual(process.stdout.readline(), b"INPUT_GUARDED\n")
                     process.terminate()

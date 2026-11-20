@@ -10,6 +10,7 @@ public final class InputGuard {
     private static Object manager;
     private static Method dispatch;
     private static volatile boolean changed;
+    private static boolean previous;
 
     private static void output(String message) throws Exception {
         new FileOutputStream(FileDescriptor.out)
@@ -18,13 +19,17 @@ public final class InputGuard {
 
     private static synchronized void restore() throws Exception {
         if (changed) {
-            dispatch.invoke(manager, true);
+            dispatch.invoke(manager, previous);
             changed = false;
         }
     }
 
     public static void main(String[] args) {
         try {
+            if (args.length != 1 || !(args[0].equals("true") || args[0].equals("false"))) {
+                throw new IllegalArgumentException("Expected the previous input dispatch state");
+            }
+            previous = Boolean.parseBoolean(args[0]);
             Class<?> binder = Class.forName("android.os.IBinder");
             Object service = Class.forName("android.os.ServiceManager")
                 .getMethod("getService", String.class).invoke(null, "window");

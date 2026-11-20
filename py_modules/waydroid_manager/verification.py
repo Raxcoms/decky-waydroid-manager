@@ -1,4 +1,3 @@
-from contextlib import ExitStack
 import logging
 import os
 from pathlib import Path
@@ -66,8 +65,7 @@ def verification_id(dump: str, session: str, provider: str, active_sessions: set
             return None
         # Broadcast history can rotate while the user answers. Keep the proven session binding.
         return observed
-    # A verifier can handle other installers too. Ask only when this is its sole pending request.
-    return next(iter(owned)) if owned and len(pending) == 1 else None
+    return next(iter(owned)) if owned else None
 
 
 class InstallVerification:
@@ -126,7 +124,7 @@ class InstallVerification:
             raise RuntimeError("ANDROID_VERIFICATION_UNAVAILABLE")
         self.send_response(request, provider[1], approved)
 
-    def confirmation(self):
+    def input_guard(self):
         return guard_guest_input(self.run, self.helper, container_identity, self.identity)
 
     def reject_pending(self) -> None:
@@ -151,15 +149,23 @@ class InstallVerification:
 
 
 def commit_install(command: list[str], verifier, confirm, timeout: float = 300) -> str:
+    with verifier.input_guard() as guard_active:
+        if not guard_active():
+            raise RuntimeError("Android input guard stopped before installation started")
+        return _commit_install(command, verifier, confirm, guard_active, timeout)
+
+
+def _commit_install(command, verifier, confirm, guard_active, timeout):
     process = subprocess.Popen(command, env=clean_env(), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                text=True, start_new_session=True)
     deadline = time.monotonic() + timeout
     asked = False
     responded = False
     succeeded = False
-    guards = ExitStack()
     try:
         while True:
+            if not guard_active():
+                raise RuntimeError("Android input guard stopped before installation completed")
             try:
                 output, _ = process.communicate(timeout=1)
                 output = output.strip()
@@ -173,7 +179,6 @@ def commit_install(command: list[str], verifier, confirm, timeout: float = 300) 
                     raise RuntimeError("PACKAGE_INSTALL_TIMEOUT")
                 if process.poll() is None and not asked and verifier.warning_pending():
                     asked = True
-                    guard_active = guards.enter_context(verifier.confirmation())
                     approved = confirm(lambda: process.poll() is None and guard_active())
                     if not guard_active():
                         raise RuntimeError("Android input guard stopped before verification completed")
@@ -184,20 +189,17 @@ def commit_install(command: list[str], verifier, confirm, timeout: float = 300) 
                             raise InstallCancelled()
                     deadline = max(deadline, time.monotonic() + 30)
     finally:
-        try:
-            if not succeeded and not responded:
+        if not succeeded and not responded:
+            try:
+                verifier.reject_pending()
+            except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                logging.getLogger(__name__).warning("Could not reject pending Android verification: %s", error)
+        if process.poll() is None:
+            if os.name == "nt":
+                process.kill()
+            else:
                 try:
-                    verifier.reject_pending()
-                except (OSError, RuntimeError, subprocess.SubprocessError) as error:
-                    logging.getLogger(__name__).warning("Could not reject pending Android verification: %s", error)
-            if process.poll() is None:
-                if os.name == "nt":
-                    process.kill()
-                else:
-                    try:
-                        os.killpg(process.pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-                process.communicate()
-        finally:
-            guards.close()
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            process.communicate()

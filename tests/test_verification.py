@@ -35,9 +35,9 @@ class VerificationRequestTests(unittest.TestCase):
         self.assertFalse(verification_dialog(ACTIVITIES.replace("PlayProtectDialogsActivity", "StoreActivity"), "example.verifier"))
         self.assertFalse(verification_dialog(ACTIVITIES, "other.verifier"))
 
-    def test_other_pending_installs_are_ambiguous_but_finished_installs_are_not(self):
+    def test_other_pending_installs_do_not_block_a_uniquely_bound_request(self):
         other = REQUEST.replace("42", "43").replace("VERIFICATION_ID=7", "VERIFICATION_ID=8")
-        self.assertIsNone(verification_id(REQUEST + other, "42", "example.verifier", {"42", "43"}))
+        self.assertEqual(verification_id(REQUEST + other, "42", "example.verifier", {"42", "43"}), 7)
         self.assertEqual(verification_id(REQUEST + other, "42", "example.verifier", {"42"}), 7)
         self.assertEqual(verification_id(REQUEST + other + COMPLETED, "42", "example.verifier", {"42", "43"}), 7)
         self.assertIsNone(verification_id(REQUEST + COMPLETED.replace("VERIFICATION_ID=8", "VERIFICATION_ID=7"), "42", "example.verifier", {"42"}))
@@ -236,13 +236,30 @@ class VerificationBridgeTests(unittest.TestCase):
 
 
 class InstallCommitTests(unittest.TestCase):
+    def test_commit_never_starts_without_an_active_input_guard(self):
+        verifier = MagicMock()
+        verifier.input_guard.return_value.__enter__.return_value = lambda: False
+        with patch("waydroid_manager.verification.subprocess.Popen") as start, \
+             self.assertRaisesRegex(RuntimeError, "before installation started"):
+            commit_install(["pm"], verifier, Mock())
+        start.assert_not_called()
+        verifier.input_guard.return_value.__exit__.assert_called_once()
+
+    def test_guard_setup_failure_cannot_commit_the_package(self):
+        verifier = MagicMock()
+        verifier.input_guard.return_value.__enter__.side_effect = RuntimeError("guard unavailable")
+        with patch("waydroid_manager.verification.subprocess.Popen") as start, \
+             self.assertRaisesRegex(RuntimeError, "guard unavailable"):
+            commit_install(["pm"], verifier, Mock())
+        start.assert_not_called()
+
     def test_guard_exit_while_waiting_cannot_send_an_unprotected_approval(self):
         process = Mock(pid=123)
         process.poll.return_value = None
         process.communicate.side_effect = [subprocess.TimeoutExpired("pm", 1), ("", None)]
         verifier = MagicMock()
         active = Mock(return_value=True)
-        verifier.confirmation.return_value.__enter__.return_value = active
+        verifier.input_guard.return_value.__enter__.return_value = active
 
         def confirm(check):
             self.assertTrue(check())
@@ -255,7 +272,7 @@ class InstallCommitTests(unittest.TestCase):
              self.assertRaisesRegex(RuntimeError, "guard stopped"):
             commit_install(["pm"], verifier, confirm)
         verifier.respond.assert_not_called()
-        verifier.confirmation.return_value.__exit__.assert_called_once()
+        verifier.input_guard.return_value.__exit__.assert_called_once()
 
     def test_guest_input_stays_guarded_until_android_finishes_the_commit(self):
         guarded = False
@@ -284,14 +301,18 @@ class InstallCommitTests(unittest.TestCase):
 
         process.communicate.side_effect = communicate
         verifier = Mock()
-        verifier.confirmation.side_effect = guard
+        verifier.input_guard.side_effect = guard
         verifier.respond.side_effect = lambda approved: self.assertTrue(guarded)
 
         def confirm(active):
             self.assertTrue(guarded)
             return True
 
-        with patch("waydroid_manager.verification.subprocess.Popen", return_value=process):
+        def start_commit(*args, **kwargs):
+            self.assertTrue(guarded)
+            return process
+
+        with patch("waydroid_manager.verification.subprocess.Popen", side_effect=start_commit):
             self.assertEqual(commit_install(["pm"], verifier, confirm), "Success")
         self.assertFalse(guarded)
 

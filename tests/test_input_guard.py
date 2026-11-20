@@ -69,7 +69,7 @@ class InputGuardTests(unittest.TestCase):
         self.process.communicate.assert_called_once_with(timeout=10)
         command = self.spawn_mock.call_args.args[0]
         self.assertEqual(command[:4], ["waydroid", "shell", "--", "env"])
-        self.assertEqual(command[-1], "waydroid.manager.InputGuard")
+        self.assertEqual(command[-2:], ["waydroid.manager.InputGuard", "true"])
         self.assertTrue(self.spawn_mock.call_args.kwargs["start_new_session"])
 
     def test_confirmation_failure_still_releases_the_guard(self):
@@ -78,12 +78,13 @@ class InputGuardTests(unittest.TestCase):
                 raise RuntimeError("confirmation failed")
         self.process.communicate.assert_called_once_with(timeout=10)
 
-    def test_does_not_enable_input_that_was_already_disabled(self):
+    def test_initially_disabled_input_still_gets_a_guard_and_is_restored_disabled(self):
         self.run.return_value = "  DispatchEnabled: false\n"
-        with self.guard():
-            pass
-        self.stage_mock.assert_not_called()
-        self.spawn_mock.assert_not_called()
+        with self.guard() as active:
+            self.run.return_value = "  DispatchEnabled: true\n"
+            self.assertTrue(active())
+        self.stage_mock.assert_called_once()
+        self.assertEqual(self.spawn_mock.call_args.args[0][-1], "false")
 
     def test_refuses_to_open_confirmation_if_input_state_is_unknown(self):
         self.run.return_value = "Service input not found"

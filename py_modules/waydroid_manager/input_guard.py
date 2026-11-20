@@ -34,12 +34,9 @@ def guard_guest_input(run, helper, identify, identity):
     state = re.search(r"^\s*DispatchEnabled:\s*(true|false)\s*$", dump, re.MULTILINE)
     if not state:
         raise RuntimeError("Android did not report its input dispatch state")
-    if state[1] == "false":
-        yield lambda: identify() == identity
-        return
     with staged_dex(run, helper, identify, identity) as path:
         command = ["waydroid", "shell", "--", "env", f"CLASSPATH={path}", "/system/bin/app_process",
-                   "/system/bin", "waydroid.manager.InputGuard"]
+                   "/system/bin", "waydroid.manager.InputGuard", state[1]]
         with subprocess.Popen(command, env=clean_env(), stdin=subprocess.PIPE,
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                               start_new_session=True) as process:
