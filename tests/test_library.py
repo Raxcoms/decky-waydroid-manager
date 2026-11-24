@@ -46,6 +46,35 @@ class LibraryTests(unittest.TestCase):
     def tearDown(self):
         self.directory.cleanup()
 
+    def test_cancelled_install_holds_package_lock_until_cleanup_finishes(self):
+        started, finish = threading.Event(), threading.Event()
+
+        def install(value):
+            started.set()
+            self.assertTrue(finish.wait(5))
+
+        async def exercise():
+            self.plugin._package_lock = asyncio.Lock()
+            self.plugin._install_package = install
+            self.plugin._run = Mock()
+            task = asyncio.create_task(self.plugin.install_package("game.apk"))
+            try:
+                self.assertTrue(await asyncio.to_thread(started.wait, 2))
+                task.cancel()
+                stop = asyncio.create_task(self.plugin.stop_service())
+                await asyncio.sleep(0)
+                self.plugin._run.assert_not_called()
+                self.assertTrue(self.plugin._package_lock.locked())
+                finish.set()
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+                await stop
+                self.plugin._run.assert_called_once_with(["systemctl", "stop", backend.SERVICE])
+            finally:
+                finish.set()
+
+        asyncio.run(exercise())
+
     def test_frame_limit_is_prepared_before_starting_activity(self):
         calls = []
 

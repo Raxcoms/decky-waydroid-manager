@@ -727,7 +727,7 @@ class Plugin:
         async with self._package_lock:
             self._set_image_progress("preparing", None)
             try:
-                return await asyncio.to_thread(self._initialize_image, locale)
+                return await complete_thread(self._initialize_image, locale)
             finally:
                 self._image_progress = None
 
@@ -882,7 +882,7 @@ class Plugin:
 
     async def install_package(self, value: str) -> bool:
         async with self._package_lock:
-            return await asyncio.to_thread(self._install_package, value)
+            return await complete_thread(self._install_package, value)
 
     def _commit_package_install(self, session: str, target: str) -> str:
         helper = Path(decky.DECKY_PLUGIN_DIR) / "bin/waydroid-verifier.dex"
@@ -918,7 +918,7 @@ class Plugin:
 
     async def _change_service(self, action: str) -> None:
         async with self._package_lock:
-            await asyncio.to_thread(self._run, ["systemctl", action, SERVICE])
+            await complete_thread(self._run, ["systemctl", action, SERVICE])
 
     async def start_service(self) -> None:
         await self._change_service("start")
@@ -936,12 +936,12 @@ class Plugin:
             if lease.root.exists():
                 if container_pid() is not None:
                     raise RuntimeError("A previous plugin session is still closing")
-                await asyncio.to_thread(lease.recover)
+                await complete_thread(lease.recover)
         if self._overlay_recovery.manifest.exists() or self._session_recovery.manifest.exists():
             if container_pid() is not None:
                 raise RuntimeError("Waydroid has a pending second-screen transaction. Stop Waydroid before launching it again.")
-            await asyncio.to_thread(self._session_recovery.recover)
-            await asyncio.to_thread(self._overlay_recovery.recover)
+            await complete_thread(self._session_recovery.recover)
+            await complete_thread(self._overlay_recovery.recover)
         await self.start_service()
 
     def _uninstall_package(self, package: str, account_id: int | None = None) -> int | None:
@@ -1038,7 +1038,7 @@ class Plugin:
 
     async def uninstall_app(self, package: str, account_id: int | None = None) -> int | None:
         async with self._package_lock:
-            return await asyncio.to_thread(self._uninstall_package, package, account_id)
+            return await complete_thread(self._uninstall_package, package, account_id)
 
     def _remove_image(self, account_id: int | None) -> list[int]:
         user, uid, home = self._user()
@@ -1071,7 +1071,7 @@ class Plugin:
                 raise RuntimeError("WAYDROID_LAUNCH_ACTIVE")
             self._set_image_progress("stopping", None)
             try:
-                return await asyncio.to_thread(self._remove_image, account_id)
+                return await complete_thread(self._remove_image, account_id)
             finally:
                 self._image_progress = None
 
