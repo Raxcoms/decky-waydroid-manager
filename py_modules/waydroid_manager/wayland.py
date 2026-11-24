@@ -9,6 +9,7 @@ class Surface:
     has_buffer: bool = False
     dirty: bool = True
     state: dict = field(default_factory=dict)
+    synced_children: set[int] = field(default_factory=set)
 
 
 class SurfaceCommits:
@@ -22,7 +23,8 @@ class SurfaceCommits:
         self.outputs: set[int] = set()
         self.surfaces: dict[int, Surface] = {}
         self.xdg_surfaces: dict[int, int] = {}
-        self.regions: dict[int, list[tuple[int, bytes]]] = {}
+        self.regions: dict[int, object] = {}
+        self.subsurfaces: dict[int, Surface] = {}
         self.dropped = 0
         self.commits = 0
         self.enabled = True
@@ -92,7 +94,7 @@ class SurfaceCommits:
             if opcode == 0:
                 self.surfaces[new_id] = Surface()
             else:
-                self.regions[new_id] = []
+                self.regions[new_id] = object()
         elif kind == "wl_surface":
             surface = self.surfaces[object_id]
             if opcode == 0:
@@ -100,21 +102,20 @@ class SurfaceCommits:
                 self.objects.pop(object_id, None)
             elif opcode == 6:
                 self.commits += 1
-                # Waydroid follows each buffer commit with an empty commit.
-                # Leave its presentation feedback queued for the next buffer.
-                if surface.has_buffer and not surface.dirty:
+                # A parent commit can publish buffered updates from synchronized children.
+                if surface.has_buffer and not surface.dirty and not surface.synced_children:
                     self.dropped += 1
                     return False
                 surface.dirty = False
             else:
                 if opcode in (4, 5):
                     region = struct.unpack_from("=I", body)[0]
-                    value = tuple(self.regions[region]) if region else None
-                elif opcode in (7, 8, 10):
+                    value = self.regions[region] if region else None
+                elif opcode in (7, 8):
                     value = body
                 else:
                     value = None
-                if opcode not in (4, 5, 7, 8, 10) or opcode not in surface.state or surface.state[opcode] != value:
+                if opcode not in (4, 5, 7, 8) or opcode not in surface.state or surface.state[opcode] != value:
                     surface.dirty = True
                 surface.state[opcode] = value
                 if opcode == 1:
@@ -124,7 +125,35 @@ class SurfaceCommits:
                 self.regions.pop(object_id, None)
                 self.objects.pop(object_id, None)
             else:
-                self.regions[object_id].append((opcode, body))
+                # Regions are copied by value when assigned. Keep only a revision token.
+                self.regions[object_id] = object()
+        elif kind == "wp_presentation" and opcode == 1:
+            self.surfaces[struct.unpack_from("=I", body)[0]].dirty = True
+        elif kind == "wl_subcompositor" and opcode == 1:
+            role, _, parent_id = struct.unpack_from("=III", body)
+            parent = self.surfaces[parent_id]
+            self.objects[role] = "wl_subsurface"
+            self.subsurfaces[role] = parent
+            parent.synced_children.add(role)
+            parent.dirty = True
+        elif kind == "wl_subsurface":
+            parent = self.subsurfaces[object_id]
+            if opcode == 0:
+                parent.synced_children.discard(object_id)
+                self.subsurfaces.pop(object_id)
+                self.objects.pop(object_id, None)
+                parent.state.pop(("position", object_id), None)
+            elif opcode == 4:
+                parent.synced_children.add(object_id)
+            elif opcode == 5:
+                parent.synced_children.discard(object_id)
+            elif opcode == 1:
+                key = ("position", object_id)
+                if parent.state.get(key) != body:
+                    parent.dirty = True
+                    parent.state[key] = body
+            else:
+                parent.dirty = True
         elif kind == "wl_seat" and opcode in (0, 1, 2):
             self.objects[struct.unpack_from("=I", body)[0]] = ("wl_pointer", "wl_keyboard", "wl_touch")[opcode]
         elif kind == "wl_shm" and opcode == 0:

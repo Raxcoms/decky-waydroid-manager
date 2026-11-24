@@ -35,20 +35,20 @@ class SurfaceCommitTests(unittest.TestCase):
         self.protocol = SurfaceCommits()
         self.assertEqual(self.protocol.feed(BOOTSTRAP, [])[0], BOOTSTRAP)
 
-    def test_preserves_buffer_and_feedback_but_suppresses_trailing_empty_commit(self):
-        result, fds = self.protocol.feed(BUFFER + FEEDBACK + EMPTY, [])
-        self.assertEqual(result, BUFFER + FEEDBACK)
+    def test_feedback_applies_to_its_commit_and_only_a_trailing_empty_commit_is_dropped(self):
+        result, fds = self.protocol.feed(BUFFER + FEEDBACK + EMPTY + EMPTY, [])
+        self.assertEqual(result, BUFFER + FEEDBACK + EMPTY)
         self.assertEqual(fds, [])
         self.assertEqual(self.protocol.dropped, 1)
 
     def test_stream_fragmentation_does_not_change_filtering(self):
-        stream = BUFFER + FEEDBACK + EMPTY
+        stream = BUFFER + FEEDBACK + EMPTY + EMPTY
         for boundary in range(len(stream) + 1):
             protocol = SurfaceCommits()
             protocol.feed(BOOTSTRAP, [])
             first, _ = protocol.feed(stream[:boundary], [])
             second, _ = protocol.feed(stream[boundary:], [])
-            self.assertEqual(first + second, BUFFER + FEEDBACK)
+            self.assertEqual(first + second, BUFFER + FEEDBACK + EMPTY)
 
     def test_input_regions_callbacks_and_damage_still_commit(self):
         self.protocol.feed(BUFFER, [])
@@ -72,6 +72,28 @@ class SurfaceCommitTests(unittest.TestCase):
         changed = message(7, 1, 100, 100, 100, 100) + message(4, 5, 7) + EMPTY
         self.assertEqual(self.protocol.feed(changed, [])[0], changed)
 
+    def test_reusing_a_region_id_creates_an_independent_revision(self):
+        create = message(3, 1, 7)
+        assign = message(4, 5, 7) + EMPTY
+        self.protocol.feed(BUFFER + create + message(7, 1, 0, 0, 20, 30) + assign, [])
+        change = message(7, 0) + create + assign
+        self.assertEqual(self.protocol.feed(change, [])[0], change)
+
+    def test_synchronized_child_frame_keeps_its_parent_commit(self):
+        create = bind(6, "wl_subcompositor") + message(3, 0, 7) + message(6, 1, 8, 7, 4)
+        self.protocol.feed(BUFFER + create + EMPTY, [])
+        child_frame = message(7, 1, 20, 0, 0) + message(7, 6)
+        self.assertEqual(self.protocol.feed(child_frame + EMPTY, [])[0], child_frame + EMPTY)
+        desync = message(8, 5)
+        self.assertEqual(self.protocol.feed(desync + child_frame + EMPTY, [])[0], desync + child_frame)
+        reposition = message(8, 1, 15, 5)
+        self.assertEqual(self.protocol.feed(reposition + EMPTY, [])[0], reposition + EMPTY)
+        self.assertEqual(self.protocol.feed(reposition + EMPTY, [])[0], reposition)
+        self.protocol.feed(message(8, 4), [])
+        self.assertEqual(self.protocol.feed(child_frame + EMPTY, [])[0], child_frame + EMPTY)
+        destroy = message(8, 0)
+        self.assertEqual(self.protocol.feed(destroy + EMPTY, [])[0], destroy)
+
     def test_unknown_extensions_preserve_pending_state(self):
         self.protocol.feed(BUFFER, [])
         extension = message(99, 1, 4) + EMPTY
@@ -81,7 +103,7 @@ class SurfaceCommitTests(unittest.TestCase):
         setup = bind(30, "wl_seat") + message(30, 0, 31)
         self.protocol.feed(setup + BUFFER, [])
         cursor = message(31, 0, 1, 0, 0, 0)
-        self.assertEqual(self.protocol.feed(cursor + FEEDBACK + EMPTY, [])[0], cursor + FEEDBACK)
+        self.assertEqual(self.protocol.feed(cursor + EMPTY, [])[0], cursor)
 
     def test_recycled_object_ids_do_not_keep_the_previous_interface(self):
         self.protocol.feed(bind(30, "wl_shm"), [])
