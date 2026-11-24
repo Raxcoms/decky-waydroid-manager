@@ -34,6 +34,7 @@ class DisplayModes:
 
 class DisplayFrameLimiter:
     POLICY_CHECK_INTERVAL = 30.0
+    MODE_SWITCH_TIMEOUT = 2.0
 
     def __init__(self, android, clock=time.monotonic):
         self.android = android
@@ -46,7 +47,7 @@ class DisplayFrameLimiter:
         self.limit: str | None = None
 
     def modes(self) -> DisplayModes:
-        return DisplayModes.primary(self.android("dumpsys", "SurfaceFlinger"))
+        return DisplayModes.primary(self.android("dumpsys", "SurfaceFlinger", "--displays"))
 
     def set_mode(self, display: int, mode: int) -> None:
         # Android 13 supports a temporary, per-display mode policy through this call.
@@ -73,6 +74,18 @@ class DisplayFrameLimiter:
         if force or self.applied != target or modes.active != selected:
             self.set_mode(*target)
             self.applied = target
+            if force and modes.active != selected:
+                # SurfaceFlinger acknowledges the request before the new mode is active.
+                deadline = self.clock() + self.MODE_SWITCH_TIMEOUT
+                while True:
+                    modes = self.modes()
+                    if modes.display != target[0]:
+                        raise RuntimeError("Android's primary display changed during the mode switch")
+                    if modes.active == selected:
+                        break
+                    if self.clock() >= deadline:
+                        raise RuntimeError("Android did not activate the requested refresh rate before launch")
+                    time.sleep(0.05)
         self.rate = modes.rates[selected]
         self.next_check = now + self.POLICY_CHECK_INTERVAL
         return self.rate

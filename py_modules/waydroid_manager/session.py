@@ -48,6 +48,7 @@ class LaunchSession:
         self.external_display: str | None = None
         self.display_users: set[tuple[int, str]] = set()
         self.presented_users: set[tuple[int, str]] = set()
+        self.presented_packages: dict[tuple[int, str], str] = {}
         self.storage = SharedStorage(config, plugin)
 
     async def start(self, launch: Launch, owner: bool) -> None:
@@ -119,6 +120,7 @@ class LaunchSession:
 
     async def depart(self, launch: Launch) -> None:
         async with self.lock:
+            self.presented_packages.pop(launch.process, None)
             registered = self.requests.pop(launch.process, None) is not None
             companion = self.companions.pop(launch.process, None)
             try:
@@ -192,6 +194,8 @@ class LaunchSession:
                 await complete_thread(self.services.run, ["waydroid", "shell", "--", "setprop",
                                                            "waydroid.external_display_visible", "1"])
                 self.presented_users.add(launch.process)
+            if launch.request.package:
+                self.presented_packages[launch.process] = launch.request.package
 
     async def release(self, launch: Launch) -> None:
         async with self.lock:
@@ -205,6 +209,7 @@ class LaunchSession:
                 self.external_display = None
                 self.display_users.clear()
                 self.presented_users.clear()
+                self.presented_packages.clear()
 
     def _stop(self, launch: Launch) -> None:
         try:

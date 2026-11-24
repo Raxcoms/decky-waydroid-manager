@@ -1197,4 +1197,5 @@ class Plugin:
                     decky.logger.warning("GPU metrics unavailable: %s", error)
                 self._metrics_error = str(error)
             await complete_thread(self._frame_limiter.sync, self._desired_fps, launch, guest,
-                                  force=force_frame_limit, package=package, prepare=prepare)
+                                  force=force_frame_limit, package=package, prepare=prepare,
+                                  active_packages=frozenset(self._session.presented_packages.values()))

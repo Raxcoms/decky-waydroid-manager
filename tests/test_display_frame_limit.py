@@ -27,7 +27,7 @@ class DisplayFrameLimitTests(unittest.TestCase):
         self.limiter = DisplayFrameLimiter(self.android)
 
     def android(self, *args):
-        if args == ("dumpsys", "SurfaceFlinger"):
+        if args == ("dumpsys", "SurfaceFlinger", "--displays"):
             return display_dump(self.active)
         if args == ("getprop", "waydroid.frame_limit"):
             return self.limit
@@ -159,12 +159,12 @@ class DisplayFrameLimitTests(unittest.TestCase):
                 return "33"
             if command == ("getprop", "waydroid.frame_limit_modes"):
                 return "1"
-            if command == ("cmd", "package", "list", "packages", "-U", "example.game"):
+            if command == ("cmd", "package", "list", "packages", "--user", "current", "-U", "example.game"):
                 return "package:example.game uid:10151"
             if command == ("dumpsys", "SurfaceFlinger"):
                 values = ", ".join(f"[uid: {uid} frameRate: {fps:.2f} Hz]"
                                    for uid, fps in self.overrides.items())
-                return self.android(*command) + "\nFrame Rate Overrides (backdoor): {" + values + "}"
+                return "Frame Rate Overrides (backdoor): {" + values + "}"
             if command[:4] == ("service", "call", "SurfaceFlinger", "1039"):
                 uid, fps = int(command[5]), float(command[7])
                 self.overrides[uid] = fps
@@ -182,17 +182,17 @@ class DisplayFrameLimitTests(unittest.TestCase):
         self.assertEqual(self.active, 51)
         limiter.sync(47, (200, "launch"), package="example.game")
         self.assertEqual(self.uid_writes, [(10151, 47)])
-        limiter.sync(14, (200, "launch"))
+        limiter.sync(14, (200, "launch"), active_packages=frozenset({"example.game"}))
         self.assertEqual(self.uid_writes[-1], (10151, 14))
         self.run.reset_mock()
-        limiter.sync(14, (200, "launch"))
+        limiter.sync(14, (200, "launch"), active_packages=frozenset({"example.game"}))
         self.run.assert_not_called()
 
     def test_app_policy_clamps_to_discovered_primary_refresh_and_restores(self):
         limiter = self.native_limiter()
         limiter.sync(240, (200, "launch"), package="example.game")
         self.assertEqual(self.uid_writes, [(10151, 144)])
-        limiter.sync(0, (200, "launch"))
+        limiter.sync(0, (200, "launch"), active_packages=frozenset({"example.game"}))
         self.assertEqual(self.overrides[10151], 144)
         limiter.restore()
         self.assertEqual(self.overrides[10151], 50)
@@ -217,6 +217,31 @@ class DisplayFrameLimitTests(unittest.TestCase):
         limiter.sync(47, (200, "launch"), package="example.game")
         limiter.restore()
         self.assertEqual(self.overrides[10151], 40)
+
+    def test_late_steam_profile_and_failed_uid_write_retry_after_startup(self):
+        limiter = self.native_limiter()
+        launch = (200, "launch")
+        apps = frozenset({"example.game"})
+        limiter.sync(None, launch, package="example.game")
+        run = limiter.run
+        limiter.run = lambda args: "Error" if args[3:7] == ["service", "call", "SurfaceFlinger", "1039"] else run(args)
+        with self.assertRaisesRegex(RuntimeError, "rejected"):
+            limiter.sync(47, launch, active_packages=apps)
+        limiter.run = run
+        limiter.sync(47, launch, active_packages=apps)
+        self.assertEqual(self.uid_writes, [(10151, 47)])
+        limiter.sync(47, launch, active_packages=frozenset())
+        self.assertEqual(self.uid_writes[-1], (10151, 50))
+
+    def test_launch_waits_for_surfaceflinger_to_activate_requested_mode(self):
+        reports = [display_dump(88), display_dump(88), display_dump(3)]
+        def android(*args):
+            if args == ("dumpsys", "SurfaceFlinger", "--displays"):
+                return reports.pop(0)
+            return self.android(*args)
+        limiter = DisplayFrameLimiter(android)
+        self.assertEqual(limiter.sync(144, force=True), 144)
+        self.assertEqual(reports, [])
 
     def test_replacement_guest_cannot_receive_an_old_app_policy(self):
         limiter = self.native_limiter()

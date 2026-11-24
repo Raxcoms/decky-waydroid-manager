@@ -14,6 +14,7 @@ class FrameLimiter:
         self.launch = None
         self.original: dict[int, float] = {}
         self.applied: dict[int, float] = {}
+        self.package_uids: dict[str, int] = {}
         self.sdk = None
         self.display_modes = None
         self.display_limiter = DisplayFrameLimiter(self.owned_android)
@@ -32,7 +33,7 @@ class FrameLimiter:
         return match.group(1) if match else None
 
     def package_uid(self, package: str) -> int | None:
-        output = self.android("cmd", "package", "list", "packages", "-U", package)
+        output = self.android("cmd", "package", "list", "packages", "--user", "current", "-U", package)
         match = re.search(rf"^package:{re.escape(package)}\s+uid:(\d+)$", output, re.MULTILINE)
         return int(match.group(1)) if match else None
 
@@ -81,9 +82,11 @@ class FrameLimiter:
                 pass
         self.original.clear()
         self.applied.clear()
+        self.package_uids.clear()
 
     def sync(self, fps: int | None, launch: tuple[int, str] | None, expected_guest: tuple[int, str] | None = None,
-             *, force: bool = False, package: str | None = None, prepare: bool = False) -> None:
+             *, force: bool = False, package: str | None = None, prepare: bool = False,
+             active_packages: frozenset[str] = frozenset()) -> None:
         guest = self.identify() if launch else None
         if expected_guest and expected_guest != guest:
             guest = None
@@ -113,7 +116,9 @@ class FrameLimiter:
             if prepare:
                 self.release_override(package)
             else:
-                self.sync_overrides(target, package)
+                if package:
+                    active_packages = active_packages | {package}
+                self.sync_packages(target, active_packages)
             return
         if not fps:
             self.restore()
@@ -124,31 +129,48 @@ class FrameLimiter:
         if prepare:
             self.release_override(package)
         else:
-            self.sync_overrides(target, package or self.foreground_package())
+            foreground = package or self.foreground_package()
+            uid = self.package_uid(foreground) if foreground else None
+            uids = set(self.applied)
+            if uid is not None:
+                uids.add(uid)
+            self.apply_uids(target, uids)
+
+    def sync_packages(self, target: float, packages: frozenset[str]) -> None:
+        for name in self.package_uids.keys() - packages:
+            del self.package_uids[name]
+        for name in packages - self.package_uids.keys():
+            uid = self.package_uid(name)
+            if uid is not None:
+                self.package_uids[name] = uid
+        uids = set(self.package_uids.values())
+        for uid in self.applied.keys() - uids:
+            self.release_uid(uid)
+        self.apply_uids(target, uids)
 
     def release_override(self, package: str | None) -> None:
         if not package or not self.applied:
             return
+        self.package_uids.pop(package, None)
         uid = self.package_uid(package)
-        if uid not in self.applied:
-            return
+        if uid in self.applied:
+            self.release_uid(uid)
+
+    def release_uid(self, uid: int) -> None:
         current = self.overrides().get(uid, 0)
         if math.isclose(current, self.applied[uid], abs_tol=0.01):
             self.override(uid, self.original[uid])
         del self.applied[uid]
         del self.original[uid]
 
-    def sync_overrides(self, target: float, package: str | None) -> None:
-        for uid, applied_fps in self.applied.items():
-            if applied_fps != target:
-                self.override(uid, target)
-                self.applied[uid] = target
-        if not package:
+    def apply_uids(self, target: float, uids: set[int]) -> None:
+        changed = {uid for uid in uids if self.applied.get(uid) != target}
+        if not changed:
             return
-        uid = self.package_uid(package)
-        if uid is None or self.applied.get(uid) == target:
-            return
-        if uid not in self.original:
-            self.original[uid] = self.overrides().get(uid, 0)
-        self.override(uid, target)
-        self.applied[uid] = target
+        current = self.overrides()
+        for uid in changed:
+            previous = current.get(uid, 0)
+            if uid not in self.applied or not math.isclose(previous, self.applied[uid], abs_tol=0.01):
+                self.original[uid] = previous
+            self.override(uid, target)
+            self.applied[uid] = target
