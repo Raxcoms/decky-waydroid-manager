@@ -1,6 +1,7 @@
 """Run explicitly as root on a systemd host with overlayfs and LXC tools."""
 
 import os
+import socket
 from pathlib import Path
 import subprocess
 import sys
@@ -16,14 +17,16 @@ def run(command, **kwargs):
 
 
 def acquire(base):
-    RuntimeDisplayLease(base / "waydroid", base / "runtime").acquire(
+    lease = RuntimeDisplayLease(base / "waydroid", base / "runtime")
+    lease.acquire(
         {"vendor/test.so": base / "payload"}, Path("/run/user/1000/test-external"), run,
-        Path("/run/waydroid-manager-test-display"),
+        base / "wayland",
     )
+    return lease
 
 
 if len(sys.argv) == 3 and sys.argv[1] == "--crash-child":
-    acquire(Path(sys.argv[2]))
+    lease = acquire(Path(sys.argv[2]))
     os._exit(0)
 
 if os.geteuid() != 0:
@@ -43,9 +46,11 @@ with tempfile.TemporaryDirectory(prefix="waydroid-display-integration-") as dire
     for path, content in originals.items():
         path.write_bytes(content)
     (base / "payload").write_bytes(b"test payload")
-    lease = RuntimeDisplayLease(config, base / "runtime")
+    relay = socket.socket(socket.AF_UNIX)
+    relay.bind(str(base / "wayland"))
+    relay.close()
+    lease = acquire(base)
     try:
-        acquire(base)
         assert (config / "overlay/vendor/test.so").read_bytes() == b"test payload"
         assert b"wayland-1" in (config / "lxc/waydroid/config").read_bytes()
     finally:
