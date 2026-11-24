@@ -216,6 +216,10 @@
       "file": "android/hwc/adapter-locking.patch"
     },
     {
+      "project": "hardware/waydroid",
+      "file": "android/hwc/buffer-submission.patch"
+    },
+    {
       "project": "system/tools/hidl",
       "file": "android/native/host-tools.patch"
     }

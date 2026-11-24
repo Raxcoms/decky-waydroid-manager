@@ -1,0 +1,239 @@
+--- a/hwcomposer/hwcomposer.cpp
++++ b/hwcomposer/hwcomposer.cpp
+@@ -86,13 +86,15 @@
+         return src;
+     }
+ 
+-    buffer *find_cached_buffer(display *display, const buffer_metadata &metadata, buffer_handle_t handle) {
++    buffer *find_cached_buffer(display *display, const buffer_metadata &metadata, buffer_handle_t handle, unsigned attached) {
+         auto it = display->buffer_map.find(handle);
+         if (it != display->buffer_map.end()) {
+             /* FIXME We can't be sure that our cached buffer actually refers to the buffer corresponding to the given handle
+              * It's possible that a new buffer got the same handle after the old one was destroyed
+              * At least check for the metadata to match. This way this situation is hopefully unlikely */
+-            if (it->second->metadata != metadata) {
++            const auto &buf = it->second;
++            // Each outstanding Wayland attachment needs its own release event.
++            if (buf->metadata != metadata || (buf->in_use() && (buf->id != attached || buf->isShm))) {
+                 display->retired_buffers.push_back(std::move(it->second));
+                 display->buffer_map.erase(it);
+             } else {
+@@ -102,15 +104,26 @@
+         return nullptr;
+     }
+ 
+-    buffer *get_wl_buffer(waydroid_hwc_composer_device_1 *pdev, hwc_layer_1_t *layer, size_t pos, display *display) {
++    buffer *get_wl_buffer(waydroid_hwc_composer_device_1 *pdev, hwc_layer_1_t *layer, size_t pos, display *display, unsigned attached) {
++        if (layer->acquireFenceFd >= 0) {
++            const int fd = layer->acquireFenceFd;
++            layer->acquireFenceFd = -1;
++            // The producer may still be writing, including when SHM copies the pixels.
++            if (sync_wait(fd, 100) < 0) {
++                ALOGW("Dropping buffer after acquire fence wait failed: %s", strerror(errno));
++                layer->releaseFenceFd = fd;
++                return nullptr;
++            }
++            close(fd);
++        }
+         if (!layer->handle) {
+             ALOGE("cannot create a wayland buffer for a null handle");
+             return nullptr;
+         }
+ 
+-        const auto& gralloc_handler = pdev->gralloc_handler;
++        const auto& gralloc_handler = display->secondary ? pdev->ext_gralloc_handler : pdev->gralloc_handler;
+         auto metadata = gralloc_handler.get_buffer_metadata(display, layer, pos);
+-        buffer *buf = find_cached_buffer(display, metadata, layer->handle);
++        buffer *buf = find_cached_buffer(display, metadata, layer->handle, attached);
+ 
+         if (!buf) {
+             std::unique_ptr<buffer> result;
+@@ -127,8 +140,6 @@
+             buf = emplace_result.first->second.get();
+         }
+ 
+-        if (buf->isShm)
+-            gralloc_handler.update_shm_buffer(display, buf);
+         return buf;
+     }
+ 
+@@ -343,11 +354,12 @@
+ 
+     if (surface_damage.numRects == 0
+         || wl_surface_get_version(surface_context.surface) < WL_SURFACE_DAMAGE_BUFFER_SINCE_VERSION) {
+-        surface_context.damage_surface(0, 0, INT32_MAX, INT32_MAX);
++        wl_surface_damage(surface_context.surface, 0, 0, INT32_MAX, INT32_MAX);
++        return;
+     }
+ 
+     std::for_each(surface_damage.rects, surface_damage.rects + surface_damage.numRects, [&](const auto &rect){
+-        surface_context.damage_surface(
++        wl_surface_damage_buffer(surface_context.surface,
+             rect.left,
+             rect.top,
+             rect.right - rect.left,
+@@ -357,17 +369,14 @@
+ }
+ 
+ static int apply_hwc_layer_to_surface_context(waydroid_hwc_composer_device_1 *pdev, hwc_layer_1 *hwc_layer, size_t hwc_layer_index, surface_context &surface_context, buffer *buf = nullptr, display *display = nullptr) {
+-    constexpr int acquireWarningMS = 100;
+-    int res = -1;
+-
+     if (!display)
+         display = pdev->display;
+ 
+     if (!buf) {
+-        buf = get_wl_buffer(pdev, hwc_layer, hwc_layer_index, display);
++        buf = get_wl_buffer(pdev, hwc_layer, hwc_layer_index, display, surface_context.attached);
+         if (!buf) {
+             ALOGE("Failed to get wayland buffer");
+-            goto out;
++            return -1;
+         }
+     }
+ 
+@@ -376,6 +385,11 @@
+         hwc_layer->releaseFenceFd = buf->current_release_fence();
+     } else {
+         hwc_layer->releaseFenceFd = buf->next_release_fence();
++        if (hwc_layer->releaseFenceFd < 0)
++            return -1;
++        // Only the primary display owns the shared EGL copy worker.
++        if (buf->isShm)
++            pdev->gralloc_handler.update_shm_buffer(pdev->display, buf);
+         surface_context.attach_buffer(*buf);
+         apply_surface_damage(hwc_layer, surface_context);
+     }
+@@ -394,35 +408,16 @@
+         surface_context.set_buffer_scale(display->scale);
+     }
+ 
+-    // TODO: Implement explicit synchronization
+-    if (hwc_layer->acquireFenceFd != -1) {
+-        res = sync_wait(hwc_layer->acquireFenceFd, acquireWarningMS);
+-        if (res < 0 && errno == ETIME) {
+-            ALOGE("hwcomposer waited on fence %d for %d ms", hwc_layer->acquireFenceFd,
+-                  acquireWarningMS);
+-        }
+-    } else {
+-        res = 0;
+-    }
+-
+-out:
+-    if (hwc_layer->acquireFenceFd != -1) {
+-        close(hwc_layer->acquireFenceFd);
+-    }
+-    return res;
++    return 0;
+ }
+ 
+ int apply_hwc_layer_to_window(waydroid_hwc_composer_device_1 *pdev, hwc_layer_1 *hwc_layer, size_t hwc_layer_index, window *window) {
+-    buffer *buf = get_wl_buffer(pdev, hwc_layer, hwc_layer_index, pdev->display);
++    auto &window_layer = window->get_next_layer();
++    buffer *buf = get_wl_buffer(pdev, hwc_layer, hwc_layer_index, pdev->display, window_layer.attached);
+     if (!buf) {
+         ALOGE("Failed to get wayland buffer");
+-        if (hwc_layer->acquireFenceFd != -1) {
+-            close(hwc_layer->acquireFenceFd);
+-        }
+         return -1;
+     }
+-
+-    auto &window_layer = window->get_next_layer();
+ 
+     if (apply_hwc_layer_to_surface_context(pdev, hwc_layer, hwc_layer_index, window_layer, buf) != 0) {
+         return -1;
+@@ -508,8 +503,12 @@
+         if (shown && layer->compositionType == HWC_FRAMEBUFFER_TARGET && layer->handle) {
+             win->reset_per_set_state();
+             // closes the acquire fence
+-            apply_hwc_layer_to_surface_context(pdev, layer, i, win->get_next_layer(), nullptr, d);
+-            wl_surface_commit(win->surface);
++            auto &content = win->get_next_layer();
++            if (apply_hwc_layer_to_surface_context(pdev, layer, i, content, nullptr, d) == 0) {
++                if (content.subsurface)
++                    wl_surface_commit(content.surface);
++                wl_surface_commit(win->surface);
++            }
+         } else if (layer->acquireFenceFd != -1) {
+             close(layer->acquireFenceFd);
+         }
+@@ -555,7 +554,6 @@
+         return 0;
+     }
+ 
+-    purge_retired_buffers(pdev->display);
+     if (contents->flags & HWC_GEOMETRY_CHANGED) {
+         retire_buffers(pdev->display);
+     }
+@@ -567,6 +565,7 @@
+     mode->cleanup_stale_windows(pdev, contents);
+ 
+     reset_per_commit_state_window(pdev);
++    purge_retired_buffers(pdev->display);
+ 
+     bool found_cursor = false;
+     for (size_t l = 0; l < contents->numHwLayers; l++) {
+@@ -600,7 +599,7 @@
+ 
+     if (pdev->display->needHotplug && pdev->procs && pdev->procs->hotplug) {
+         pdev->procs->hotplug(pdev->procs, 0, 1);
+-        pdev->display->buffer_map.clear();
++        retire_buffers(pdev->display);
+         pdev->display->needHotplug = false;
+     }
+     return 0;
+@@ -987,6 +986,7 @@
+         else
+             unsetenv("WAYLAND_DISPLAY");
+         if (pdev->ext_display) {
++            pdev->ext_gralloc_handler = gralloc_handler(pdev->ext_display);
+             if (pdev->ext_display->refresh > 1000 && pdev->ext_display->refresh < 1000000)
+                 pdev->ext_vsync_period_ns = 1000000000000LL / pdev->ext_display->refresh;
+             pdev->ext_display->ext_abs_width = floor(pdev->display->width * pdev->display->scale);
+--- a/hwcomposer/hwcomposer.h
++++ b/hwcomposer/hwcomposer.h
+@@ -66,7 +66,7 @@
+     pthread_t egl_worker_thread;     // constant after init
+     int32_t vsync_period_ns;         // constant after init
+     struct display *display;         // constant after init
+-    gralloc_handler gralloc_handler; // constant after init
++    gralloc_handler gralloc_handler, ext_gralloc_handler; // constant after init
+ 
+     std::map<std::string, std::vector<std::string>> blacklisted_apps;
+ 
+--- a/hwcomposer/wayland-hwc.cpp
++++ b/hwcomposer/wayland-hwc.cpp
+@@ -114,7 +114,10 @@
+     std::lock_guard<std::mutex> lock(release_mutex);
+     if (release_timeline < 0 || (owner && !owner->connected))
+         return -1;
+-    return sw_sync_fence_create(release_timeline, "wl_buffer_release", ++release_point);
++    int fence = sw_sync_fence_create(release_timeline, "wl_buffer_release", release_point + 1);
++    if (fence >= 0)
++        ++release_point;
++    return fence;
+ }
+ 
+ int buffer::current_release_fence() {
+@@ -418,10 +421,6 @@
+ void surface_context::detach() {
+     wl_surface_attach(surface, nullptr, 0, 0);
+     attached = 0;
+-}
+-
+-void surface_context::damage_surface(int32_t x, int32_t y, int32_t width, int32_t height) {
+-    wl_surface_damage(surface, x, y, width, height);
+ }
+ 
+ void surface_context::set_buffer_transform(BufferTransform transform) {
+--- a/hwcomposer/wayland-hwc.h
++++ b/hwcomposer/wayland-hwc.h
+@@ -179,7 +179,6 @@
+     void detach();
+     // Id of the attached buffer
+     unsigned attached = 0;
+-    void damage_surface(int32_t x, int32_t y, int32_t width, int32_t height);
+     void set_buffer_transform(BufferTransform transform);
+     void set_buffer_scale(double scale);
+     // Requires the transformed rectangle
