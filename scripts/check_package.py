@@ -6,6 +6,8 @@ from pathlib import Path
 import sys
 import types
 
+from build_native import ROOT, recipe_digest
+
 
 def check(root: Path) -> None:
     required = ["main.py", "plugin.json", "package.json", "dist/index.js", "README.md", "LICENSE"]
@@ -46,18 +48,24 @@ def check(root: Path) -> None:
     unsigned_provider(root)
     from waydroid_manager.native_payload import NativePayload
     manifests = list((root / "bin/display-native").glob("*/manifest.json"))
-    if not manifests:
-        raise RuntimeError("The packaged native builds are missing")
+    profiles = {path.stem: path for path in (ROOT / "android/native/profiles").glob("*.json")}
+    if not profiles or {path.parent.name for path in manifests} != profiles.keys():
+        raise RuntimeError("The packaged native builds do not match the configured profiles")
     for manifest in manifests:
         payload = NativePayload.load(manifest.parent)
+        if payload.recipe != recipe_digest(profiles[manifest.parent.name]):
+            raise RuntimeError("The packaged display libraries were built from a different native recipe")
         if not payload.binder_vtable_size or not (manifest.parent / "NOTICE.txt").is_file():
             raise RuntimeError("The native ABI contract or license notices are missing")
     from waydroid_manager.display_payload import digest, elf_machine
     tools = list((root / "bin/display-tools").glob("*/manifest.json"))
-    if not tools:
-        raise RuntimeError("The private resource tools are missing")
+    machines = {str(tool["machine"]) for tool in json.loads((ROOT / "android/native/runtime-tools.json").read_text())}
+    if not machines or {path.parent.name for path in tools} != machines:
+        raise RuntimeError("The packaged runtime tools do not match the configured host architectures")
     for manifest in tools:
         metadata = json.loads(manifest.read_text())
+        if str(metadata.get("elfMachine")) != manifest.parent.name or metadata.get("schemaVersion") != 1:
+            raise RuntimeError("Invalid private resource tool manifest")
         if not {"aapt2", "openssl", "home-mount", "NOTICE.txt"}.issubset(metadata.get("files", {})):
             raise RuntimeError("The private resource tool bundle is incomplete")
         for name, checksum in metadata["files"].items():

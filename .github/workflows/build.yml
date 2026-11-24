@@ -190,24 +190,20 @@ jobs:
           fi
           python3 scripts/package.py "${args[@]}"
           python3 scripts/check_package.py package/waydroid-manager
-      - uses: actions/upload-artifact@v7
-        if: inputs.release_version == ''
-        with:
-          name: waydroid-manager-${{ steps.version.outputs.version }}-ci
-          path: package
-          if-no-files-found: error
-      - name: Create release ZIP
-        if: inputs.release_version != ''
+      - name: Create and verify installable ZIP
+        id: archive
         working-directory: package
         env:
-          RELEASE_VERSION: ${{ inputs.release_version }}
+          VERSION: ${{ steps.version.outputs.version }}
+          REVISION: ${{ steps.version.outputs.revision }}
         run: |
-          archive="../waydroid-manager-$RELEASE_VERSION.zip"
-          zip -qr "$archive" waydroid-manager
-          unzip -tq "$archive"
+          archive="waydroid-manager-$VERSION${REVISION:+-ci}.zip"
+          zip -qr "../$archive" waydroid-manager
+          unzip -q "../$archive" -d "$RUNNER_TEMP/installed"
+          python3 ../scripts/check_package.py "$RUNNER_TEMP/installed/waydroid-manager"
+          echo "file=$archive" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v7
-        if: inputs.release_version != ''
         with:
-          path: waydroid-manager-${{ inputs.release_version }}.zip
+          path: ${{ steps.archive.outputs.file }}
           archive: false
           if-no-files-found: error
