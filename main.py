@@ -1,4 +1,5 @@
 import base64
+import copy
 import asyncio
 import json
 import os
@@ -53,6 +54,7 @@ class Plugin:
 
     def __init__(self):
         self._state_lock = threading.RLock()
+        self._removable_stamp = None
         self._package_progress: dict[str, str] = {}
         self._image_progress: dict[str, str | int | None] | None = None
         self._install_confirmation = None
@@ -85,8 +87,10 @@ class Plugin:
     def _edit_state(self, home: Path):
         with self._state_lock:
             state = self._load_state(home)
+            before = copy.deepcopy(state)
             yield state
-            self._save_state(home, state)
+            if state != before:
+                self._save_state(home, state)
 
     def _run(self, command: list[str], timeout: int = 30, *, stdin=None) -> str:
         result = subprocess.run(
@@ -428,15 +432,34 @@ class Plugin:
                         lambda stage: self._set_image_progress(stage, phases[stage]))
 
     def _pending_auto_shortcuts(self, account_id: int, live_ids: list[int] | None = None) -> list[dict[str, Any]]:
-        if self._initialized() and container_pid() is not None:
-            self._removable_packages()
+        self._refresh_removable_packages()
         _, _, home = self._user()
         path = self._shortcuts_path(home, account_id)
-        with self._state_lock:
-            return self._update_auto_shortcuts(home, account_id, path, live_ids)
+        with self._edit_state(home) as state:
+            return self._update_auto_shortcuts(home, account_id, path, live_ids, state)
 
-    def _update_auto_shortcuts(self, home: Path, account_id: int, path: Path, live_ids: list[int] | None) -> list[dict[str, Any]]:
-        state = self._load_state(home)
+    def _refresh_removable_packages(self) -> None:
+        guest = container_identity() if self._initialized() else None
+        if guest is None:
+            self._removable_stamp = None
+            return
+        try:
+            registry = (Path("/proc") / str(guest[0]) / "root/data/system/packages.list").stat()
+            stamp = (guest, registry.st_ino, registry.st_ctime_ns)
+        except OSError:
+            stamp = None
+        if stamp is not None and stamp == self._removable_stamp:
+            return
+        try:
+            self._removable_packages(allow_cached=False)
+        except RuntimeError as error:
+            if str(error) != "WAYDROID_NOT_RUNNING":
+                raise
+            return
+        self._removable_stamp = stamp
+
+    def _update_auto_shortcuts(self, home: Path, account_id: int, path: Path, live_ids: list[int] | None,
+                               state: dict) -> list[dict[str, Any]]:
         history = self._account_state(home, state, account_id)
         if live_ids is not None:
             ids = set(live_ids)
@@ -461,7 +484,6 @@ class Plugin:
                         history["removedShortcuts"].append(key)
                     history["pendingApps"] = [item for item in history["pendingApps"] if item != key]
         if not history["autoAddApps"]:
-            self._save_state(home, state)
             return []
 
         apps = self._desktop_entries(account_id=account_id)
@@ -476,7 +498,6 @@ class Plugin:
         pending &= missing
         history["observedApps"] = sorted(observed | set(installed))
         history["pendingApps"] = sorted(pending)
-        self._save_state(home, state)
         return [
             self._shortcut_details(account_id, app["name"], package, app["iconPath"])
             for package, app in installed.items()
@@ -513,8 +534,7 @@ class Plugin:
     def _legacy_shortcuts(self, account_id: int) -> list[dict[str, Any]]:
         _, _, home = self._user()
         result = []
-        names = {app["package"]: app["name"] for app in self._desktop_entries()}
-        names[WAYDROID_SHORTCUT_KEY] = "Waydroid"
+        names = None
         for _, (_, entry) in read_shortcuts(self._shortcuts_path(home, account_id)).items():
             entry = {key.casefold(): value for key, value in entry.items()}
             exe = str(entry.get("exe", (1, ""))[1]).strip('"')
@@ -527,8 +547,12 @@ class Plugin:
             update: dict[str, Any] = {"appId": app_id & 0xFFFFFFFF}
             if options:
                 update["launchOptions"] = options
-            if entry.get("appname", (1, ""))[1] == self._launcher().name and key in names:
-                update["name"] = names[key]
+            if entry.get("appname", (1, ""))[1] == self._launcher().name:
+                if names is None:
+                    names = {app["package"]: app["name"] for app in self._desktop_entries()}
+                    names[WAYDROID_SHORTCUT_KEY] = "Waydroid"
+                if key in names:
+                    update["name"] = names[key]
             if len(update) > 1:
                 result.append(update)
         return result
@@ -562,17 +586,22 @@ class Plugin:
             grid = self._shortcuts_path(home, account_id).parent / "grid"
         except RuntimeError:
             return []
-        records = self._load_state(home)["artwork"]
-        updates = {key: app_id for key, app_id in self._shortcut_ids(home, account_id).items()
-                   if any(artwork_updates(home, grid, app_id, records))}
-        if container_identity():
-            apps = {app["package"]: app for app in self._desktop_entries(include_icons=True)}
+        state = self._load_state(home)
+        records = state["artwork"]
+        shortcuts = self._shortcut_ids(home, account_id, self._account_state(home, state, account_id))
+        updates = {key: app_id for key, app_id in shortcuts.items() if any(artwork_updates(home, grid, app_id, records))}
+        candidates = {key: app_id for key, app_id in shortcuts.items()
+                      if key != WAYDROID_SHORTCUT_KEY and key not in updates}
+        if candidates and container_identity():
+            data_home = self._data_home(home, home.stat().st_uid)
             cache = IconCache(home)
-            for key, app_id in self._shortcut_ids(home, account_id).items():
-                app = apps.get(key)
-                if (app and not cache.get(key, source_digest(app["icon"]))
-                        and any(artwork_updates(home, grid, app_id, records, ARTWORK_VERSION + 1))):
-                    updates[key] = app_id
+            for app in app_exports(home, data_home=data_home):
+                app_id = candidates.get(app.package)
+                if app_id is None:
+                    continue
+                source = source_digest(self._icon_data_uri(app.icon, data_home))
+                if not cache.get(app.package, source) and any(artwork_updates(home, grid, app_id, records, ARTWORK_VERSION + 1)):
+                    updates[app.package] = app_id
         return [{"key": key, "appId": app_id} for key, app_id in updates.items()]
 
     async def pending_shortcut_artwork(self, account_id: int) -> list[dict[str, Any]]:

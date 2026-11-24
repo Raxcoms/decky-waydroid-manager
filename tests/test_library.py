@@ -262,6 +262,22 @@ class LibraryTests(unittest.TestCase):
         self.plugin._run = run
         self.assertEqual(self.plugin._removable_packages(), {"example.app", "another.app"})
 
+    def test_library_refresh_queries_android_only_after_a_registry_or_guest_change(self):
+        self.plugin._initialized = lambda: True
+        query = Mock(side_effect=[RuntimeError("WAYDROID_NOT_RUNNING"), set(), set(), set()])
+        self.plugin._removable_packages = query
+        entry = types.SimpleNamespace(st_ino=11, st_ctime_ns=2)
+        with patch.object(backend, "container_identity", return_value=(45, "12")) as guest, patch.object(Path, "stat", return_value=entry):
+            self.plugin._refresh_removable_packages()
+            self.plugin._refresh_removable_packages()
+            self.plugin._refresh_removable_packages()
+            self.assertEqual(query.call_count, 2)
+            entry.st_ctime_ns += 1
+            self.plugin._refresh_removable_packages()
+            guest.return_value = (45, "15")
+            self.plugin._refresh_removable_packages()
+            self.assertEqual(query.call_count, 4)
+
     def test_offline_polling_never_activates_waydroid_dbus_service(self):
         self.plugin._service_running = lambda: False
         self.plugin._run = lambda *args, **kwargs: self.fail("Offline check contacted Waydroid")
