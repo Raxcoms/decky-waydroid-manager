@@ -287,8 +287,10 @@ function AppRow({ app, accountId, isLast, rowRef, setShortcutId, onUninstalled, 
 
 function Content() {
   const quickAccessVisible = useQuickAccessVisible();
-  const [status, setStatusState] = useState<Status | null>(cachedStatus);
-  const [apps, setAppsState] = useState<AndroidApp[]>(cachedApps);
+  const [status, setStatusState] = useState<Status | null>(() =>
+    cachedStatus?.accountId === currentSteamAccount() ? cachedStatus : null);
+  const [apps, setAppsState] = useState<AndroidApp[]>(() => status ? cachedApps : []);
+  const refreshGeneration = useRef(0);
   const [message, setMessage] = useState<string | null>(null);
   const [visibleApps, setVisibleAppsState] = useState(appListState.visible);
   const [appToFocus, setAppToFocus] = useState<string>();
@@ -325,16 +327,18 @@ function Content() {
 
   const refresh = useCallback(async () => {
     const accountId = currentSteamAccount();
+    const generation = ++refreshGeneration.current;
+    if (cachedStatus && cachedStatus.accountId !== accountId) {
+      setStatus(null);
+      setApps([]);
+    }
     const nextStatus = await getStatus(accountId);
+    if (generation !== refreshGeneration.current || currentSteamAccount() !== accountId) return;
     const nextApps = nextStatus.initialized ? await listApps(accountId) : [];
-    if (currentSteamAccount() !== accountId) return;
+    if (generation !== refreshGeneration.current || currentSteamAccount() !== accountId) return;
     setStatus(nextStatus);
     setApps(nextApps);
   }, []);
-
-  useEffect(() => {
-    refresh().catch((error) => setMessage(error instanceof Error ? error.message : String(error)));
-  }, [refresh]);
 
   useEffect(() => {
     setVisibleApps((current) => Math.min(Math.max(current, 10), apps.length));
@@ -350,14 +354,17 @@ function Content() {
   }, [appToFocus]);
 
   useEffect(() => {
+    if (!quickAccessVisible) return;
     const sync = () => void refresh().catch((error) => setMessage(String(error)));
+    sync();
     libraryListeners.add(sync);
     const timer = window.setInterval(sync, 15000);
     return () => {
+      refreshGeneration.current++;
       libraryListeners.delete(sync);
       window.clearInterval(timer);
     };
-  }, [refresh]);
+  }, [refresh, quickAccessVisible]);
 
   const sortedApps = [...apps].sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" }));
   const shownApps = sortedApps.slice(0, visibleApps);
@@ -448,14 +455,14 @@ function Content() {
       <Focusable flow-children="column" onGamepadFocus={revealPanelTop}>
       <PanelSection title={t("waydroidStatus")}>
         <PanelSectionRow>
-          <Field bottomSeparator="none" label={status?.initialized ? t("installed") : t("notInstalled")} />
+          <Field bottomSeparator="none" label={t(status ? (status.initialized ? "installed" : "notInstalled") : "checkingStatus")} />
         </PanelSectionRow>
         {status && !status.sessionAvailable && (
           <PanelSectionRow>
             <Field bottomSeparator="none" label={t("gamescopeUnavailable")} description={t("gamescopeUnavailableDescription")} />
           </PanelSectionRow>
         )}
-        {(!status?.initialized || setupPending) && (
+        {status && (!status.initialized || setupPending) && (
           <PanelSectionRow>
             <ButtonItem
               layout="below"
