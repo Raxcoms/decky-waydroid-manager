@@ -48,14 +48,16 @@ export function PackageOperationModal({ name, operation, target, perform, autoSt
           approval.current?.close();
           approval.current = null;
         } else if (approval.current?.token !== next.confirmation) {
+          approval.current?.close();
           const token = next.confirmation;
           let answered = false;
           const decide = (approved: boolean) => {
             if (answered) return;
             answered = true;
             void confirmPackageInstall(target, token, approved).catch((error) => {
-              onError(error);
+              if (disposed || approval.current?.token !== token) return;
               approval.current = null;
+              onError(error);
             });
           };
           const modal = showModal(<ConfirmModal
