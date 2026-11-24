@@ -86,7 +86,7 @@ def _extract(archive: Path, root: Path, strip_root: bool, exclude: tuple[str, ..
                 if not (root / target).resolve().is_relative_to(root):
                     raise RuntimeError("Unsafe dependency archive link")
             members.append(member)
-        source.extractall(root, members=members)
+        source.extractall(root, members=members, filter="data")
 
 
 def prepare(profile: Path, cache: Path, output: Path) -> dict:

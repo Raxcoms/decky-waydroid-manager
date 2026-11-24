@@ -42,7 +42,8 @@ def patched_sources(profile: Path, cache: Path, work: Path) -> tuple[dict, Path]
     source = work / "source"
     if source.exists():
         return metadata, source
-    cached = cache / "sources" / hashlib.sha256(profile.read_bytes()).hexdigest()
+    extraction = Path(__file__).with_name("native_dependencies.py").read_bytes()
+    cached = cache / "sources" / hashlib.sha256(profile.read_bytes() + extraction).hexdigest()
     if not cached.exists():
         cached.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=cached.parent) as temporary:

@@ -8,6 +8,7 @@ import re
 import shutil
 import struct
 import subprocess
+import tempfile
 
 
 def bundle(output: Path, expected_machine: int | None = None) -> Path:
@@ -21,8 +22,25 @@ def bundle(output: Path, expected_machine: int | None = None) -> Path:
     if expected_machine is not None and machine != expected_machine:
         raise RuntimeError("The runtime compiler does not match the requested host architecture")
     target = output / str(machine)
+    output.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=output) as directory:
+        staging = Path(directory) / "bundle"
+        build_tools(staging, compiler, signer, machine)
+        previous = Path(directory) / "previous"
+        if target.exists():
+            target.rename(previous)
+        try:
+            staging.rename(target)
+        except OSError:
+            if previous.exists():
+                previous.rename(target)
+            raise
+    return target
+
+
+def build_tools(target: Path, compiler: Path, signer: Path, machine: int) -> None:
     libraries = target / "lib"
-    libraries.mkdir(parents=True, exist_ok=True)
+    libraries.mkdir(parents=True)
     shutil.copyfile(compiler, target / "aapt2")
     (target / "aapt2").chmod(0o755)
     shutil.copyfile(signer, target / "openssl")
@@ -59,7 +77,6 @@ def bundle(output: Path, expected_machine: int | None = None) -> Path:
     files = {path.relative_to(target).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
              for path in sorted(target.rglob("*")) if path.is_file()}
     (target / "manifest.json").write_text(json.dumps({"schemaVersion": 1, "elfMachine": machine, "files": files}, indent=2) + "\n")
-    return target
 
 
 if __name__ == "__main__":
