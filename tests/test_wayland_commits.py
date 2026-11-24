@@ -94,6 +94,19 @@ class SurfaceCommitTests(unittest.TestCase):
         destroy = message(8, 0)
         self.assertEqual(self.protocol.feed(destroy + EMPTY, [])[0], destroy)
 
+    def test_viewport_on_desynchronized_child_does_not_duplicate_primary_frame(self):
+        create = bind(6, "wl_subcompositor") + message(3, 0, 7) + message(6, 1, 8, 7, 4)
+        create += message(8, 5) + bind(9, "wp_viewporter") + message(9, 1, 10, 7)
+        self.protocol.feed(BUFFER + create + EMPTY, [])
+        viewport = message(10, 1, 0, 0, 1024, 1024) + message(10, 2, 640, 640)
+        child_frame = message(7, 1, 20, 0, 0) + viewport + message(7, 6)
+        self.assertEqual(self.protocol.feed(child_frame + EMPTY, [])[0], child_frame)
+        self.assertEqual(self.protocol.feed(viewport + message(7, 6), [])[0], viewport)
+        resized = message(10, 2, 320, 320) + message(7, 6)
+        self.assertEqual(self.protocol.feed(resized + EMPTY, [])[0], resized)
+        reset = message(10, 0) + message(7, 6)
+        self.assertEqual(self.protocol.feed(reset + EMPTY, [])[0], reset)
+
     def test_unknown_extensions_preserve_pending_state(self):
         self.protocol.feed(BUFFER, [])
         extension = message(99, 1, 4) + EMPTY

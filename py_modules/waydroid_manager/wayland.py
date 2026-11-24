@@ -23,6 +23,7 @@ class SurfaceCommits:
         self.outputs: set[int] = set()
         self.surfaces: dict[int, Surface] = {}
         self.xdg_surfaces: dict[int, int] = {}
+        self.viewports: dict[int, Surface] = {}
         self.regions: dict[int, object] = {}
         self.subsurfaces: dict[int, Surface] = {}
         self.dropped = 0
@@ -127,6 +128,21 @@ class SurfaceCommits:
             else:
                 # Regions are copied by value when assigned. Keep only a revision token.
                 self.regions[object_id] = object()
+        elif kind == "wp_viewporter" and opcode == 1:
+            viewport, surface_id = struct.unpack_from("=II", body)
+            self.objects[viewport] = "wp_viewport"
+            self.viewports[viewport] = self.surfaces[surface_id]
+        elif kind == "wp_viewport":
+            surface = self.viewports[object_id]
+            if opcode == 0:
+                self.viewports.pop(object_id)
+                self.objects.pop(object_id, None)
+                surface.state.pop(("viewport", 1), None)
+                surface.state.pop(("viewport", 2), None)
+                surface.dirty = True
+            elif surface.state.get(("viewport", opcode)) != body:
+                surface.state[("viewport", opcode)] = body
+                surface.dirty = True
         elif kind == "wp_presentation" and opcode == 1:
             self.surfaces[struct.unpack_from("=I", body)[0]].dirty = True
         elif kind == "wl_subcompositor" and opcode == 1:
