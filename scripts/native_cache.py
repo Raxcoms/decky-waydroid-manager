@@ -8,9 +8,13 @@ from build_native import ROOT, recipe_digest
 
 
 def entries() -> list[dict]:
-    native = [{"profile": path.stem, "path": "out/display-native",
-               "key": f"display-native-Linux-{path.stem}-{recipe_digest(path)}"}
-              for path in sorted((ROOT / "android/native/profiles").glob("*.json"))]
+    native = []
+    for path in sorted((ROOT / "android/native/profiles").glob("*.json")):
+        dependencies = json.loads(path.read_text())["dependencies"]
+        archives = sorted((entry["name"], entry.get("treeSha256") or entry["sha256"]) for entry in dependencies)
+        source_digest = hashlib.sha256(json.dumps(archives).encode()).hexdigest()
+        native.append({"profile": path.stem, "path": "out/display-native", "sources": source_digest,
+                       "key": f"display-native-Linux-{path.stem}-{recipe_digest(path)}"})
     digest = hashlib.sha256()
     for name in ("scripts/bundle_runtime_tools.py", "android/native/runtime-tools.json", "native/host/home-mount.c"):
         digest.update((ROOT / name).read_bytes())

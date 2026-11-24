@@ -63,7 +63,10 @@ jobs:
         if: steps.native-cache.outputs.cache-hit != 'true'
         with:
           path: ~/.cache/waydroid-manager-native/archives
-          key: native-sources-${{ runner.os }}-${{ hashFiles('android/native/profiles/*.json') }}
+          key: native-sources-${{ runner.os }}-${{ matrix.profile.profile }}-${{ matrix.profile.sources }}
+          restore-keys: |
+            native-sources-${{ runner.os }}-${{ matrix.profile.profile }}-
+            native-sources-${{ runner.os }}-
       - name: Build native display libraries
         if: steps.native-cache.outputs.cache-hit != 'true'
         env:
