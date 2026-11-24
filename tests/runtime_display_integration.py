@@ -1,4 +1,4 @@
-"""Run explicitly as root on a systemd host with overlayfs and LXC tools."""
+"""Check normal and crash recovery on a systemd host with overlayfs."""
 
 import os
 import socket
@@ -12,11 +12,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
 from waydroid_manager.runtime_display import RuntimeDisplayLease
 
 
-def run(command, **kwargs):
-    return subprocess.check_output(command, stderr=subprocess.STDOUT, text=True, timeout=30)
-
-
 def acquire(base):
+    def run(command, *, timeout):
+        if command[0] == "systemd-run":
+            # Only guest discovery is simulated. The guard and mounts use the host kernel.
+            command = [command[0], f"--setenv=PATH={base / 'test-bin'}:{os.defpath}", *command[1:]]
+        return subprocess.check_output(command, stderr=subprocess.STDOUT, text=True, timeout=timeout)
+
     lease = RuntimeDisplayLease(base / "waydroid", base / "runtime")
     lease.acquire(
         {"vendor/test.so": base / "payload"}, Path("/run/user/1000/test-external"), run,
@@ -34,6 +36,11 @@ if os.geteuid() != 0:
 
 with tempfile.TemporaryDirectory(prefix="waydroid-display-integration-") as directory:
     base = Path(directory)
+    tools = base / "test-bin"
+    tools.mkdir()
+    probe = tools / "lxc-info"
+    probe.write_text("#!/bin/sh\nexit 1\n")
+    probe.chmod(0o755)
     config = base / "waydroid"
     (config / "lxc/waydroid").mkdir(parents=True)
     (config / "overlay/vendor").mkdir(parents=True)

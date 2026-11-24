@@ -168,6 +168,8 @@ jobs:
         run: |
           cc -O2 -Wall -Wextra -Werror native/host/home-mount.c -o "$RUNNER_TEMP/storage-mount-test"
           sudo unshare --mount --propagation private python3 tests/storage_mount_integration.py "$RUNNER_TEMP/storage-mount-test"
+      - name: Test overlay release and crash recovery
+        run: sudo systemd-run --quiet --pipe --wait --collect /usr/bin/python3 "$GITHUB_WORKSPACE/tests/runtime_display_integration.py"
       - name: Install internal cache client
         run: |
           npm install --prefix "$RUNNER_TEMP/display-cache-client" --no-save --ignore-scripts @actions/cache@6.3.0
