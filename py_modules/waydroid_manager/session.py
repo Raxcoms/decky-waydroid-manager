@@ -51,6 +51,13 @@ class LaunchSession:
         self.presented_packages: dict[tuple[int, str], str] = {}
         self.storage = SharedStorage(config, plugin)
 
+    async def ensure_service(self) -> None:
+        async with self.lock:
+            if self.control and self.control.release_task is not None:
+                raise RuntimeError("Waydroid launch is closing")
+            if not self.requests:
+                await self.services.ensure_service()
+
     async def start(self, launch: Launch, owner: bool) -> None:
         async with self.lock:
             if launch.request is None:

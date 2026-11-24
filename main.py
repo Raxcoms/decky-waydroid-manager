@@ -1116,7 +1116,7 @@ class Plugin:
         _, uid, _ = self._user()
         relay = Path(decky.DECKY_PLUGIN_DIR).resolve() / "bin/waydroid-wayland-relay"
         self._control = ServiceControl(
-            control_path(uid), uid, self._ensure_service, relay=relay,
+            control_path(uid), uid, self._session.ensure_service, relay=relay,
             on_launch=self._prepare_launch, on_policy=self._session.present,
             on_release=self._release_launch, start_launch=self._session.start,
             on_departure=self._session.depart, on_present=self._present_launch,

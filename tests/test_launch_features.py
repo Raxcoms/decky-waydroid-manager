@@ -62,6 +62,23 @@ class LaunchFeatureTests(unittest.IsolatedAsyncioTestCase):
         self.plugin.storage = Mock()
         self.launch = Launch((1, "start"), Path("wayland"), LaunchRequest("app", "example.app"))
 
+    async def test_service_start_during_launch_cannot_recover_owned_mounts(self):
+        async with self.plugin.lock:
+            service = asyncio.create_task(self.plugin.ensure_service())
+            await asyncio.sleep(0)
+            self.assertFalse(service.done())
+            self.plugin.requests[self.launch.process] = False
+        await service
+        self.services.ensure_service.assert_not_awaited()
+        self.plugin.requests.clear()
+        self.plugin.control = Mock(release_task=asyncio.current_task())
+        with self.assertRaisesRegex(RuntimeError, "closing"):
+            await self.plugin.ensure_service()
+        self.services.ensure_service.assert_not_awaited()
+        self.plugin.control.release_task = None
+        await self.plugin.ensure_service()
+        self.services.ensure_service.assert_awaited_once()
+
     async def test_standard_launch_stages_only_the_storage_provider(self):
         await self.plugin.start(self.launch, True)
         self.assertFalse(self.plugin.capable)
