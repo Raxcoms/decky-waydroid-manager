@@ -51,7 +51,13 @@ class VendorIdentityTests(unittest.TestCase):
                 Path(target).write_bytes(data)
                 return ""
 
+            def native_only(command, **kwargs):
+                self.assertNotIn(".apk", command[2])
+                return run(command, **kwargs)
+            native = inspect_vendor(root, native_only, display_resources=False)
+            self.assertEqual((native.system_ui_digest, native.framework_digest), ("", ""))
             identity = inspect_vendor(root, run)
+            self.assertEqual(native.binder_vtable_size, identity.binder_vtable_size)
             self.assertEqual(identity.binder_vtable_size, 232)
             payload = NativePayload(root, identity.sdk, identity.vndk, identity.machine, "fixture",
                                     binder_vtable_size=224)

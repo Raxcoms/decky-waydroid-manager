@@ -41,7 +41,7 @@ def digest(path: Path) -> str:
     return result.hexdigest()
 
 
-def inspect_vendor(config_dir: Path, run) -> VendorIdentity:
+def inspect_vendor(config_dir: Path, run, *, display_resources: bool = True) -> VendorIdentity:
     image = images_directory(config_dir) / "vendor.img"
     if not image.is_file():
         raise RuntimeError("The installed Waydroid vendor image is missing")
@@ -57,16 +57,18 @@ def inspect_vendor(config_dir: Path, run) -> VendorIdentity:
         extract(config_dir, "vendor.img", (f"/{HWC_PATH}",), library, run)
         adapter = Path(directory) / "adapter.so"
         extract(config_dir, "vendor.img", ("/lib64/libhwc2on1adapter.so",), adapter, run)
-        system_ui = Path(directory) / "SystemUI.apk"
-        extract(config_dir, "system.img", ("/system_ext/priv-app/SystemUI/SystemUI.apk",
-                "/system/system_ext/priv-app/SystemUI/SystemUI.apk"), system_ui, run)
-        framework = extract(config_dir, "system.img", ("/system/framework/framework-res.apk",),
-                            Path(directory) / "framework-res.apk", run)
+        system_ui_digest = framework_digest = ""
+        if display_resources:
+            system_ui = extract(config_dir, "system.img", ("/system_ext/priv-app/SystemUI/SystemUI.apk",
+                                "/system/system_ext/priv-app/SystemUI/SystemUI.apk"), Path(directory) / "SystemUI.apk", run)
+            framework = extract(config_dir, "system.img", ("/system/framework/framework-res.apk",),
+                                Path(directory) / "framework-res.apk", run)
+            system_ui_digest, framework_digest = digest(system_ui), digest(framework)
         runtime = extract(config_dir, "system.img", ("/system/apex/com.android.vndk.current/lib64/libhidlbase.so",
                      f"/system/apex/com.android.vndk.v{vndk}/lib64/libhidlbase.so",
                      f"/system/lib64/vndk-{vndk}/libhidlbase.so", "/system/lib64/libhidlbase.so"),
                      Path(directory) / "libhidlbase.so", run)
         symbols = dynamic_symbols(runtime)
         return VendorIdentity(fingerprint, int(sdk), digest(library), elf_machine(library), digest(adapter),
-                              digest(system_ui), vndk, frozenset(symbols),
-                              symbols.get("_ZTVN7android8hardware7IBinderE", 0), digest(framework))
+                              system_ui_digest, vndk, frozenset(symbols),
+                              symbols.get("_ZTVN7android8hardware7IBinderE", 0), framework_digest)

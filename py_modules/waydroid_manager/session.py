@@ -77,7 +77,8 @@ class LaunchSession:
                     external = discover_external_display(uid, primary=steam_wayland_socket(uid))
                     if external is None and enabled:
                         raise RuntimeError("The host has no available external Wayland display")
-                    identity = await complete_thread(inspect_vendor, self.config, self.services.run)
+                    identity = await complete_thread(inspect_vendor, self.config, self.services.run,
+                                                     display_resources=external is not None)
                     native = select_native(self.plugin / "bin/display-native", identity.sdk,
                                            identity.vndk, identity.machine)
                     native.validate_runtime(identity)
