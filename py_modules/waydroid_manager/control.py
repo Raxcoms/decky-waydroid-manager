@@ -117,9 +117,12 @@ class ServiceControl:
             if self.on_departure:
                 await self.on_departure(launch)
             return
+        await self._release_last(launch, depart=True)
+
+    async def _release_last(self, launch: Launch, *, depart: bool) -> None:
         async def finish():
             try:
-                if self.on_departure:
+                if depart and self.on_departure:
                     await self.on_departure(launch)
             finally:
                 if self.on_release:
@@ -201,6 +204,8 @@ class ServiceControl:
                         raise RuntimeError("Waydroid Manager service control is busy")
                     self.commands.add(task)
                 if command.startswith(b"HOST ") and command.endswith(b"\n"):
+                    if self.release_task is not None:
+                        raise RuntimeError("Waydroid launch is closing. Try again after it stops.")
                     if self.host is not None:
                         raise RuntimeError("The shared Waydroid relay is already running")
                     host = self.identify_launch(pid, Path(os.fsdecode(command[5:-1])))
@@ -215,6 +220,8 @@ class ServiceControl:
                     owner = not self.launches
                     display, request = self._launch_request(command)
                     registered = self.identify_launch(pid, display)
+                    if registered.process in self.launches:
+                        raise RuntimeError("The Waydroid launch is already registered")
                     launch = Launch(registered.process, self.host.display, request)
                     self.launches[launch.process] = launch
                 elif command in {b"POLICY full\n", b"POLICY app\n", b"PRESENT\n", b"RELEASE\n", b"CHECK\n"}:
@@ -271,8 +278,7 @@ class ServiceControl:
                     launches = tuple(self.launches.values())
                     self.launches.clear()
                     try:
-                        if self.on_release:
-                            await self.on_release(launches[0])
+                        await self._release_last(launches[0], depart=False)
                     except (RuntimeError, OSError, subprocess.SubprocessError) as error:
                         logging.getLogger(__name__).warning("Could not stop the lost Waydroid relay: %s", error)
             if not self.launches and self.release_task is not None and self.release_task.done():
@@ -294,6 +300,11 @@ class ServiceControl:
         for task in clients:
             task.cancel()
         await asyncio.gather(*clients, return_exceptions=True)
+        if self.release_task is not None:
+            try:
+                await asyncio.shield(self.release_task)
+            except (RuntimeError, OSError, subprocess.SubprocessError) as error:
+                logging.getLogger(__name__).warning("Could not finish Waydroid session cleanup: %s", error)
         try:
             if self.path.lstat().st_ino == self.inode:
                 self.path.unlink()

@@ -43,3 +43,31 @@ class SharedSessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(control.release_task.done())
         finish.set()
         await control.release_task
+
+    async def test_unload_waits_for_inflight_cleanup_after_relay_disconnects(self):
+        for lost_host in (False, True):
+            with self.subTest(lost_host=lost_host):
+                started, finish = asyncio.Event(), asyncio.Event()
+                events = []
+
+                async def cleanup(launch):
+                    started.set()
+                    await finish.wait()
+                    events.append("stopped")
+
+                control = ServiceControl(Path("control"), 1000, None, on_release=cleanup)
+                launch = Launch((1, "first"), Path("wayland"))
+                if lost_host:
+                    handler = asyncio.create_task(control._release_last(launch, depart=False))
+                else:
+                    control.launches[launch.process] = launch
+                    handler = asyncio.create_task(control.release(launch))
+                control.clients.add(handler)
+                await asyncio.wait_for(started.wait(), 2)
+                closing = asyncio.create_task(control.close())
+                await asyncio.sleep(0)
+                await asyncio.gather(handler, return_exceptions=True)
+                self.assertFalse(closing.done())
+                finish.set()
+                await asyncio.wait_for(closing, 2)
+                self.assertEqual(events, ["stopped"])
