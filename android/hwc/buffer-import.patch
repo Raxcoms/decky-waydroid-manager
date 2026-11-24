@@ -1,0 +1,214 @@
+--- a/hwcomposer/hwcomposer.cpp
++++ b/hwcomposer/hwcomposer.cpp
+@@ -89,12 +89,10 @@
+     buffer *find_cached_buffer(display *display, const buffer_metadata &metadata, buffer_handle_t handle, unsigned attached) {
+         auto it = display->buffer_map.find(handle);
+         if (it != display->buffer_map.end()) {
+-            /* FIXME We can't be sure that our cached buffer actually refers to the buffer corresponding to the given handle
+-             * It's possible that a new buffer got the same handle after the old one was destroyed
+-             * At least check for the metadata to match. This way this situation is hopefully unlikely */
+             const auto &buf = it->second;
+-            // Each outstanding Wayland attachment needs its own release event.
+-            if (buf->metadata != metadata || (buf->in_use() && (buf->id != attached || buf->isShm))) {
++            bool same_storage = buf->isShm || buf->backing.matches(handle->data, handle->numFds, handle->numInts);
++            if (!same_storage || buf->metadata != metadata ||
++                    (buf->in_use() && (buf->id != attached || buf->isShm))) {
+                 display->retired_buffers.push_back(std::move(it->second));
+                 display->buffer_map.erase(it);
+             } else {
+--- a/hwcomposer/wayland-hwc.cpp
++++ b/hwcomposer/wayland-hwc.cpp
+@@ -161,11 +161,12 @@
+         std::lock_guard<std::mutex> lock(release_mutex);
+         released_buffers.erase(wl_buffer);
+     }
+-    wl_buffer_destroy(wl_buffer);
++    if (wl_buffer)
++        wl_buffer_destroy(wl_buffer);
+     // Closing the timeline signals any fence still pending on it
+     if (release_timeline >= 0)
+         close(release_timeline);
+-    if (isShm)
++    if (isShm && shm_data && shm_data != MAP_FAILED)
+         munmap(shm_data, size);
+ }
+ 
+--- a/hwcomposer/wayland-hwc.h
++++ b/hwcomposer/wayland-hwc.h
+@@ -28,6 +28,8 @@
+ 
+ #pragma once
+ 
++#include "buffer_backing.h"
++
+ #include <mutex>
+ #include <cutils/native_handle.h>
+ 
+@@ -123,6 +125,7 @@
+ }
+ 
+ struct buffer {
++    waydroid_manager::BufferBacking backing;
+     struct wl_buffer *wl_buffer;
+ 
+     buffer_handle_t handle;
+--- a/hwcomposer/gralloc_handler.cpp
++++ b/hwcomposer/gralloc_handler.cpp
+@@ -46,7 +46,7 @@
+ #include "wayland-hwc.h"
+ 
+ namespace {
+-    uint32_t ConvertHalFormatToShm(uint32_t hal_format) {
++    int ConvertHalFormatToShm(uint32_t hal_format) {
+         uint32_t fmt;
+ 
+         switch (hal_format) {
+@@ -70,7 +70,11 @@
+ std::unique_ptr<buffer> create_shm_wl_buffer(display *display, const buffer_metadata& metadata, buffer_handle_t handle) {
+     std::unique_ptr<buffer> buf { new buffer() };
+ 
+-    // Assume 4bpp formats or none of this is going to work
++    int shm_format = ConvertHalFormatToShm(metadata.format);
++    if (shm_format < 0)
++        return nullptr;
++
++    // SHM copies use a 32-bit pixel format.
+     int shm_stride = metadata.width * 4;
+     int size = shm_stride * metadata.height;
+ 
+@@ -79,9 +83,6 @@
+ 
+     buf->isShm = true;
+     buf->size = size;
+-
+-    auto shm_format = ConvertHalFormatToShm(metadata.format);
+-    assert(shm_format >= 0);
+ 
+     int fd = syscall(SYS_memfd_create, "buffer", MFD_ALLOW_SEALING);
+     ftruncate(fd, size);
+@@ -118,39 +119,24 @@
+         return display->formats.count(format) == 1;
+     }
+ 
+-    uint32_t ConvertHalFormatToDrm(struct display *display, uint32_t hal_format) {
++    int ConvertHalFormatToDrm(struct display *display, uint32_t hal_format) {
+         uint32_t fmt;
+ 
+         switch (hal_format) {
+             case HAL_PIXEL_FORMAT_RGB_888:
+                 fmt = DRM_FORMAT_BGR888;
+-                if (!isFormatSupported(display, fmt))
+-                    fmt = DRM_FORMAT_RGB888;
+                 break;
+             case HAL_PIXEL_FORMAT_BGRA_8888:
+                 fmt = DRM_FORMAT_ARGB8888;
+-                if (!isFormatSupported(display, fmt))
+-                    fmt = DRM_FORMAT_ABGR8888;
+                 break;
+             case HAL_PIXEL_FORMAT_RGBX_8888:
+                 fmt = DRM_FORMAT_XBGR8888;
+-                if (!isFormatSupported(display, fmt))
+-                    fmt = DRM_FORMAT_XRGB8888;
+                 break;
+             case HAL_PIXEL_FORMAT_RGBA_8888:
+                 fmt = DRM_FORMAT_ABGR8888;
+-                if (!isFormatSupported(display, fmt))
+-                    fmt = DRM_FORMAT_ARGB8888;
+                 break;
+             case HAL_PIXEL_FORMAT_RGB_565:
+-                fmt = DRM_FORMAT_BGR565;
+-                if (!isFormatSupported(display, fmt))
+-                    fmt = DRM_FORMAT_RGB565;
+-                break;
+-            case HAL_PIXEL_FORMAT_YV12:
+-                fmt = DRM_FORMAT_YVU420;
+-                if (!isFormatSupported(display, fmt))
+-                    fmt = DRM_FORMAT_GR88;
++                fmt = DRM_FORMAT_RGB565;
+                 break;
+             default:
+                 ALOGE("Cannot convert hal format to drm format %u", hal_format);
+@@ -163,24 +149,24 @@
+         return fmt;
+     }
+ }
+-std::unique_ptr<buffer> create_dmabuf_wl_buffer(display *display, const buffer_metadata& metadata,
+-                                                                int prime_fd, int drm_format, int byte_stride,
+-                                                                int offset, uint64_t modifier, buffer_handle_t handle)
+-{
+-    assert(prime_fd >= 0);
+-
++struct dma_plane {
++    int fd;
++    uint32_t stride;
++    uint32_t offset;
++};
++
++static std::unique_ptr<buffer> create_dmabuf_wl_buffer(display *display, const buffer_metadata& metadata,
++        const std::vector<dma_plane>& planes, uint32_t drm_format, uint64_t modifier, buffer_handle_t handle) {
+     std::unique_ptr<buffer> buf { new buffer() };
+-
++    buf->backing.capture(handle->data, handle->numFds, handle->numInts);
+     buf->metadata = metadata;
+     buf->handle = handle;
+ 
+-    if (drm_format < 0) {
+-        drm_format = ConvertHalFormatToDrm(display, metadata.format);
+-    }
+-    assert(drm_format >= 0);
+-
+     zwp_linux_buffer_params_v1 *params = zwp_linux_dmabuf_v1_create_params(display->dmabuf);
+-    zwp_linux_buffer_params_v1_add(params, prime_fd, 0, offset, byte_stride, modifier >> 32, modifier & 0xffffffff);
++    for (size_t i = 0; i < planes.size(); ++i) {
++        const auto &plane = planes[i];
++        zwp_linux_buffer_params_v1_add(params, plane.fd, i, plane.offset, plane.stride, modifier >> 32, modifier & 0xffffffff);
++    }
+     zwp_linux_buffer_params_v1_add_listener(params, &params_listener, nullptr);
+ 
+     buf->wl_buffer = zwp_linux_buffer_params_v1_create_immed(params, buf->metadata.width, buf->metadata.height, drm_format, 0);
+@@ -198,6 +184,7 @@
+     buf->metadata = metadata;
+     buf->handle = handle;
+ 
++    buf->backing.capture(handle->data, handle->numFds, handle->numInts);
+     struct wl_array ints;
+     wl_array_init(&ints);
+     int *the_ints = (int *)wl_array_add(&ints, handle->numInts * sizeof(int));
+@@ -264,11 +251,23 @@
+ }
+ std::unique_ptr<buffer> create_buffer_gbm(display *display, const buffer_metadata& metadata, buffer_handle_t handle) {
+     auto *drm_handle = reinterpret_cast<const gralloc_handle_t *>(handle);
+-    return create_dmabuf_wl_buffer(display, metadata, drm_handle->prime_fd, -1 /* compute drm format */, drm_handle->stride, 0 /* offset */, drm_handle->modifier, handle);
++    int format = ConvertHalFormatToDrm(display, metadata.format);
++    if (format < 0)
++        return create_shm_wl_buffer(display, metadata, handle);
++    return create_dmabuf_wl_buffer(display, metadata, {{drm_handle->prime_fd, drm_handle->stride, 0}},
++                                   format, drm_handle->modifier, handle);
+ }
+ std::unique_ptr<buffer> create_buffer_cros(display *display, const buffer_metadata& metadata, buffer_handle_t handle) {
+     auto *cros_handle = reinterpret_cast<const cros_gralloc_handle *>(handle);
+-    return create_dmabuf_wl_buffer(display, metadata, cros_handle->fds[0], cros_handle->format, cros_handle->strides[0], cros_handle->offsets[0], cros_handle->format_modifier, handle);
++    if (cros_handle->num_planes == 0 || cros_handle->num_planes > DRV_MAX_PLANES ||
++            cros_handle->num_planes > static_cast<uint32_t>(handle->numFds))
++        return nullptr;
++    if (!isFormatSupported(display, cros_handle->format))
++        return create_shm_wl_buffer(display, metadata, handle);
++    std::vector<dma_plane> planes;
++    for (size_t i = 0; i < cros_handle->num_planes; ++i)
++        planes.push_back({cros_handle->fds[i], cros_handle->strides[i], cros_handle->offsets[i]});
++    return create_dmabuf_wl_buffer(display, metadata, planes, cros_handle->format, cros_handle->format_modifier, handle);
+ }
+ std::unique_ptr<buffer> create_buffer_android(display *display, const buffer_metadata& metadata, buffer_handle_t handle) {
+     return create_android_wl_buffer(display, metadata, handle);
+--- a/hwcomposer/gralloc_handler.h
++++ b/hwcomposer/gralloc_handler.h
+@@ -31,9 +31,6 @@
+ #include "wayland-hwc.h"
+ 
+ std::unique_ptr<buffer> create_shm_wl_buffer(display *display, const buffer_metadata& metadata, buffer_handle_t handle);
+-std::unique_ptr<buffer> create_dmabuf_wl_buffer(display *display, const buffer_metadata& metadata,
+-                                                                int prime_fd, int format, int byte_stride,
+-                                                                int offset, uint64_t modifier, buffer_handle_t handle);
+ std::unique_ptr<buffer> create_android_wl_buffer(display *display, const buffer_metadata& metadata, buffer_handle_t target);
+ 
+ 
