@@ -16,6 +16,7 @@ from .file_events import process_handle
 SERVICE = "org.freedesktop.UDisks2"
 FILESYSTEM = SERVICE + ".Filesystem"
 BLOCK = SERVICE + ".Block"
+OBJECT_MANAGER = "org.freedesktop.DBus.ObjectManager"
 
 
 @dataclass(frozen=True)
@@ -27,7 +28,7 @@ class HostVolume:
 
 def mounted_volumes(run) -> list[HostVolume]:
     output = run(["busctl", "--system", "--json=short", "call", SERVICE,
-                  "/org/freedesktop/UDisks2", "org.freedesktop.DBus.ObjectManager", "GetManagedObjects"], timeout=5)
+                  "/org/freedesktop/UDisks2", OBJECT_MANAGER, "GetManagedObjects"], timeout=5)
     objects = json.loads(output)["data"][0]
     result = []
     for identifier, interfaces in sorted(objects.items()):
@@ -47,6 +48,18 @@ def mounted_volumes(run) -> list[HostVolume]:
 def folder_name(label: str) -> str:
     name = re.sub(r'[/\\\x00-\x1f\x7f]', "_", label).strip().strip(".")
     return name[:100] or "Storage"
+
+
+def storage_changed(message: dict) -> bool:
+    data = message.get("payload", {}).get("data", [])
+    member = message.get("member")
+    if member in {"InterfacesAdded", "InterfacesRemoved"}:
+        return len(data) == 2 and FILESYSTEM in data[1]
+    if member != "PropertiesChanged" or len(data) != 3:
+        return False
+    interface, changed, invalidated = data
+    properties = {"MountPoints"} if interface == FILESYSTEM else {"HintSystem", "HintIgnore", "IdLabel"}
+    return interface in {FILESYSTEM, BLOCK} and not properties.isdisjoint((*changed, *invalidated))
 
 
 class StorageMonitor:
@@ -88,14 +101,15 @@ class StorageMonitor:
     async def _run(self):
         process = None
         try:
-            match = f"type='signal',sender='{SERVICE}',interface='org.freedesktop.DBus.Properties',member='PropertiesChanged'"
+            sender = f"type='signal',sender='{SERVICE}'"
+            properties = sender + ",interface='org.freedesktop.DBus.Properties',member='PropertiesChanged'"
+            lifecycle = sender + f",interface='{OBJECT_MANAGER}'"
             process = await asyncio.create_subprocess_exec(
-                "busctl", "--system", "--json=short", f"--match={match}", "monitor",
+                "busctl", "--system", "--json=short", f"--match={properties},arg0='{FILESYSTEM}'",
+                f"--match={properties},arg0='{BLOCK}'", f"--match={lifecycle}", "monitor",
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL, env=clean_env())
             while line := await process.stdout.readline():
-                message = json.loads(line)
-                data = message.get("payload", {}).get("data", [])
-                if len(data) >= 2 and data[0] == FILESYSTEM and "MountPoints" in data[1]:
+                if storage_changed(json.loads(line)):
                     self.changed()
             if await process.wait():
                 raise RuntimeError("UDisks storage notifications are unavailable")

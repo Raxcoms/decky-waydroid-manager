@@ -8,7 +8,7 @@ import sys
 import unittest
 from unittest.mock import Mock, patch
 
-from waydroid_manager.host_storage import BLOCK, FILESYSTEM, HostVolume, StorageMonitor, folder_name, mounted_volumes
+from waydroid_manager.host_storage import BLOCK, FILESYSTEM, HostVolume, StorageMonitor, folder_name, mounted_volumes, storage_changed
 from waydroid_manager.proc import process_identity
 from waydroid_manager.shared_storage import SharedStorage
 
@@ -33,6 +33,38 @@ class HostStorageTests(unittest.TestCase):
         self.assertEqual(folder_name("../Games/SD\\Card\x00"), "_Games_SD_Card_")
         self.assertEqual(folder_name(".."), "Storage")
 
+    def test_monitor_refreshes_on_drive_removal_or_invalidated_mounts(self):
+        def signal(member, *args):
+            return storage_changed({"member": member, "payload": {"data": list(args)}})
+
+        self.assertTrue(signal("InterfacesAdded", "/sd", {FILESYSTEM: {}}))
+        self.assertTrue(signal("InterfacesRemoved", "/sd", [FILESYSTEM]))
+        self.assertTrue(signal("PropertiesChanged", FILESYSTEM, {}, ["MountPoints"]))
+        self.assertTrue(signal("PropertiesChanged", BLOCK, {"IdLabel": "Card"}, []))
+        self.assertFalse(signal("InterfacesRemoved", "/sd", [BLOCK]))
+        self.assertFalse(signal("PropertiesChanged", BLOCK, {"Size": 42}, []))
+
+    def test_provider_restart_removes_old_volume_names_and_retries_partial_home_mount(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            storage = SharedStorage(Path("config"), Path("plugin"), root)
+            storage.process = (1, "old")
+            storage.home = root / "home"
+            storage.volumes = {"old-card": (None, "Old card")}
+            (root / "view/Old card").mkdir(parents=True)
+            storage._connect_provider = Mock(side_effect=lambda run: setattr(storage, "process", (2, "new")))
+            storage._folder = Mock()
+            storage._mount = Mock(side_effect=lambda name, source, run: storage.mounts.update({name: ()}))
+            with patch("waydroid_manager.shared_storage.process_identity", return_value=(2, "new")):
+                storage._initialize_mounts(Mock())
+                self.assertFalse((root / "view/Old card").exists())
+                self.assertEqual(set(storage.mounts), {"", "Home"})
+                del storage.mounts["Home"]
+                storage._mount.reset_mock()
+                storage._initialize_mounts(Mock())
+                self.assertEqual([call.args[0] for call in storage._mount.call_args_list], ["Home"])
+                storage._connect_provider.assert_called_once()
+
     def test_cloned_volume_uuids_do_not_merge_two_drives(self):
         with tempfile.TemporaryDirectory() as directory:
             mount = list(os.fsencode(directory) + b"\0")
@@ -53,7 +85,7 @@ class HostStorageTests(unittest.TestCase):
             storage.user = "7"
             storage.uid, storage.gid = os.getuid(), os.getgid()
             storage.home = root / "home"
-            storage.mounts = {"Home": (1, "/data/user/7/waydroid.manager.storage/files/Host/Home", "2", "0")}
+            storage.mounts = {"": (), "Home": (1, "/data/user/7/waydroid.manager.storage/files/Host/Home", "2", "0")}
             (root / "view").mkdir()
             storage._unmount = Mock(side_effect=lambda name, run: storage.mounts.pop(name))
             storage._mount = Mock(side_effect=lambda name, source, run: storage.mounts.update({name: (1, str(source), "3", "0")}))

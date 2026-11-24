@@ -27,7 +27,7 @@ class SharedStorageTests(unittest.TestCase):
                 with patch("waydroid_manager.shared_storage.container_identity", return_value=current), patch("waydroid_manager.shared_storage.process_identity", return_value=lease.process):
                     lease.release(run)
                 if current == (123, "start"):
-                    run.assert_called_once_with(["lease/home-mount", "unmount", "456", "456",
+                    run.assert_called_once_with([str(lease.root / "home-mount"), "unmount", "456", "456",
                                                  "/data/user/7/waydroid.manager.storage/files/Host/Home", "99", "100"], timeout=10)
                 else:
                     run.assert_not_called()

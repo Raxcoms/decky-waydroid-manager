@@ -91,18 +91,26 @@ class SharedStorage:
                 continue
         if provider is None:
             raise RuntimeError("The Host storage provider stopped during setup")
-        self.process = provider
         self.namespace = Path(f"/proc/{provider[0]}/ns/mnt").stat().st_ino
         self.target = values["PATH"]
         self.android_uid, self.android_gid = str(uid), str(gid)
+        self.process = provider
 
     def _initialize_mounts(self, run) -> None:
-        self._connect_provider(run)
-        self.mounts.clear()
-        self.volumes.clear()
-        self._mount("", self.root / "view", run)
-        self._folder("Home")
-        self._mount("Home", self.home, run)
+        if self.process is None or process_identity(self.process[0]) != self.process:
+            for _, name in self.volumes.values():
+                try:
+                    (self.root / "view" / name).rmdir()
+                except FileNotFoundError:
+                    pass
+            self.mounts.clear()
+            self.volumes.clear()
+            self._connect_provider(run)
+        if "" not in self.mounts:
+            self._mount("", self.root / "view", run)
+        if "Home" not in self.mounts:
+            self._folder("Home")
+            self._mount("Home", self.home, run)
 
     def _notify(self, run) -> None:
         run(["waydroid", "shell", "--", "content", "query", "--user", self.user, "--uri",
@@ -150,8 +158,7 @@ class SharedStorage:
     def refresh(self, run) -> None:
         if not self.ready or container_identity() != self.guest:
             return
-        if self.process is None or process_identity(self.process[0]) != self.process:
-            self._initialize_mounts(run)
+        self._initialize_mounts(run)
         try:
             volumes = {volume.identity: volume for volume in mounted_volumes(run)}
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
