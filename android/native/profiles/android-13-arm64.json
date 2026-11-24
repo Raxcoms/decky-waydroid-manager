@@ -224,6 +224,10 @@
       "file": "android/hwc/buffer-import.patch"
     },
     {
+      "project": "hardware/waydroid",
+      "file": "android/hwc/presentation-timing.patch"
+    },
+    {
       "project": "system/tools/hidl",
       "file": "android/native/host-tools.patch"
     }

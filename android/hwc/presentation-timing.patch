@@ -1,0 +1,115 @@
+--- a/hwcomposer/hwcomposer.cpp
++++ b/hwcomposer/hwcomposer.cpp
+@@ -269,29 +269,29 @@
+         int64_t now = int64_t(rt.tv_sec) * 1000000000LL + rt.tv_nsec;
+         int64_t period = pdev->active_period_ns.load();
+         int64_t ext_period = external_period(pdev);
+-        int64_t next = primary.deadline(now, period);
++        primary.deadline(now, period);
+         bool external_vsync = pdev->ext_display && pdev->ext_display->connected &&
+                               pdev->ext_active && pdev->ext_vsync_enabled;
+         if (external_vsync)
+-            next = std::min(next, external.deadline(now, ext_period));
++            external.deadline(now, ext_period);
+         int64_t timestamp = primary.consume(now);
++        int64_t external_timestamp = external_vsync ? external.consume(now) : 0;
+         if (pdev->procs && pdev->procs->vsync) {
+             if (timestamp && pdev->vsync_callback_enabled) {
+                 pdev->procs->vsync(pdev->procs, HWC_DISPLAY_PRIMARY, timestamp);
+                 ++pdev->primary_vsyncs;
+             }
+-            if (external_vsync) {
+-                timestamp = external.consume(now);
+-                if (timestamp) {
+-                    pdev->procs->vsync(pdev->procs, HWC_DISPLAY_EXTERNAL, timestamp);
+-                    ++pdev->external_vsyncs;
+-                }
++            if (external_timestamp) {
++                pdev->procs->vsync(pdev->procs, HWC_DISPLAY_EXTERNAL, external_timestamp);
++                ++pdev->external_vsyncs;
+             }
+         }
+         if (pdev->ext_display && !pdev->ext_display->connected &&
+                 pdev->ext_announced.exchange(false) && pdev->procs)
+             pdev->procs->hotplug(pdev->procs, HWC_DISPLAY_EXTERNAL, 0);
+-        next = primary.deadline(now, period);
++        if (period == pdev->vsync_period_ns)
++            primary.align(now, pdev->last_vsync_ns.load());
++        int64_t next = primary.deadline(now, period);
+         if (external_vsync)
+             next = std::min(next, external.deadline(now, ext_period));
+         timespec deadline {next / 1000000000LL, next % 1000000000LL};
+@@ -316,15 +316,19 @@
+            uint32_t tv_sec_hi,
+            uint32_t tv_sec_lo,
+            uint32_t tv_nsec,
++           uint32_t refresh,
+            uint32_t,
+            uint32_t,
+-           uint32_t,
+-           uint32_t)
++           uint32_t flags)
+ {
+     auto *pdev = static_cast<waydroid_hwc_composer_device_1 *>(data);
+     wp_presentation_feedback_destroy(feedback);
+ 
+-    pdev->last_vsync_ns = (((uint64_t)tv_sec_hi << 32) + tv_sec_lo) * 1e9 + tv_nsec;
++    // Accept only a scanout timestamp from the primary output's native cadence.
++    if ((flags & WP_PRESENTATION_FEEDBACK_KIND_VSYNC) && pdev->display->monotonic_presentation &&
++            refresh && std::abs(int64_t(refresh) - pdev->vsync_period_ns) <= pdev->vsync_period_ns / 100) {
++        pdev->last_vsync_ns = ((int64_t(tv_sec_hi) << 32) + tv_sec_lo) * 1000000000LL + tv_nsec;
++    }
+ }
+ 
+ static void
+@@ -1006,14 +1010,6 @@
+     pdev->active_period_ns = pdev->vsync_period_ns;
+     property_set("waydroid.frame_limit_modes", "1");
+ 
+-    struct timespec rt;
+-    if (clock_gettime(CLOCK_MONOTONIC, &rt) == -1) {
+-       ALOGE("%s:%d error in vsync thread clock_gettime: %s",
+-            __FILE__, __LINE__, strerror(errno));
+-    }
+-
+-    pdev->last_vsync_ns = int64_t(rt.tv_sec) * 1e9 + rt.tv_nsec;
+-
+     if (!pdev->vsync_thread) {
+         ret = pthread_create (&pdev->vsync_thread, NULL, hwc_vsync_thread, pdev);
+         if (ret) {
+--- a/hwcomposer/hwcomposer.h
++++ b/hwcomposer/hwcomposer.h
+@@ -71,7 +71,7 @@
+     std::map<std::string, std::vector<std::string>> blacklisted_apps;
+ 
+     std::atomic<bool> vsync_callback_enabled;
+-    std::atomic<uint64_t> last_vsync_ns;
++    std::atomic<int64_t> last_vsync_ns {0};
+ 
+     int timeline_fd;
+     int next_sync_point;
+--- a/hwcomposer/wayland-hwc.cpp
++++ b/hwcomposer/wayland-hwc.cpp
+@@ -1750,10 +1750,10 @@
+ };
+ 
+ static void
+-presentation_clock_id(void *, struct wp_presentation *,
++presentation_clock_id(void *data, struct wp_presentation *,
+               uint32_t clk_id)
+ {
+-    ALOGE("*** %s: clk_id %d CLOCK_MONOTONIC %d", __func__, clk_id, CLOCK_MONOTONIC);
++    static_cast<display *>(data)->monotonic_presentation = clk_id == CLOCK_MONOTONIC;
+ }
+ 
+ static const struct wp_presentation_listener presentation_listener = {
+--- a/hwcomposer/wayland-hwc.h
++++ b/hwcomposer/wayland-hwc.h
+@@ -327,6 +327,7 @@
+ 
+ struct display {
+     bool secondary = false;
++    std::atomic<bool> monotonic_presentation {false};
+     std::atomic<bool> connected {true};
+     int ext_abs_width = 0;
+     int ext_abs_height = 0;

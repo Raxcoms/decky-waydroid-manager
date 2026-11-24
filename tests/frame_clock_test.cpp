@@ -36,4 +36,31 @@ int main() {
     assert(arbitrary.consume(period * 5 + 12345) == period * 5);
     assert(arbitrary.deadline(period * 5 + 12345, period) == period * 6);
     assert(arbitrary.deadline(period * 6, 25000000) == period * 6 + 25000000);
+
+    // A nominal 120 Hz panel runs slightly slow and starts half a cycle out of phase.
+    FrameClock locked;
+    const int64_t nominal = 1000000000LL / 120;
+    const int64_t host = nominal + 1000;
+    const int64_t origin = 1000000000LL;
+    int64_t now = origin + nominal / 2;
+    int64_t previous = now;
+    for (int i = 0; i < 2000; ++i) {
+        auto next = locked.deadline(now, nominal);
+        auto latest = origin + ((now - origin) / host) * host;
+        locked.align(now, latest);
+        next = locked.deadline(now, nominal);
+        locked.align(now, latest);  // duplicate feedback from the same commit
+        locked.align(now, now + host);
+        locked.align(now, now - 3 * host);
+        assert(locked.deadline(now, nominal) == next);
+        assert(next - previous >= nominal - nominal / 16);
+        assert(next - previous <= nominal + nominal / 16);
+        if (i > 16) {
+            int64_t phase = (next - origin) % host;
+            assert(std::min(phase, host - phase) <= host - nominal);
+        }
+        now = next + 10000;
+        assert(locked.consume(now) == next);
+        previous = next;
+    }
 }
