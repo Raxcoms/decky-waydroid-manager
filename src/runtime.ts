@@ -34,7 +34,6 @@ export function watchRuntime() {
     }
   };
   const stop = observeFrameLimit((fps) => {
-    if (fps !== null && (!Number.isInteger(fps) || fps < 0 || fps > 1000)) return;
     pending = fps;
     if (retry !== undefined) { clearTimeout(retry); retry = undefined; }
     void sync();

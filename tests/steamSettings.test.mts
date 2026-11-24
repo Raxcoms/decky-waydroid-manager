@@ -83,3 +83,13 @@ test("supports the legacy cap and leaves unknown settings untouched", () => {
   assert.equal(frameLimit(undefined, { fps_limit: 30, is_fps_limit_enabled: true }), 30);
   assert.equal(frameLimit(), null);
 });
+
+test("a loading profile does not turn a missing target into an uncapped or stale frame rate", () => {
+  const current = { gamescope_enable_app_target_framerate: true, gamescope_disable_framelimit: false };
+  const legacy = { is_fps_limit_enabled: true, fps_limit: 60 };
+  assert.equal(frameLimit(settings(current), legacy), null);
+  assert.equal(frameLimit(settings({ ...current, gamescope_disable_framelimit: true }), legacy), 0);
+  assert.equal(frameLimit(settings({ ...current, gamescope_app_target_framerate: NaN }), legacy), null);
+  assert.equal(frameLimit({ GetClientSetting: () => undefined }, legacy), 60);
+  assert.equal(frameLimit(undefined, { is_fps_limit_enabled: true }), null);
+});

@@ -1,18 +1,20 @@
-type SettingsStore = { GetClientSetting(key: string): [unknown, unknown] };
+type SettingsStore = { GetClientSetting(key: string): [unknown, unknown] | undefined };
 type LegacySettings = { fps_limit?: number; is_fps_limit_enabled?: boolean };
+
+function validTarget(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 1000 ? value : null;
+}
 
 export function frameLimit(settings?: SettingsStore, legacy?: LegacySettings): number | null {
   if (settings?.GetClientSetting) {
-    const read = (key: string) => settings.GetClientSetting(key)[0];
+    const read = (key: string) => settings.GetClientSetting(key)?.[0];
     const enabled = read("gamescope_enable_app_target_framerate");
     const disabled = read("gamescope_disable_framelimit");
-    const target = read("gamescope_app_target_framerate");
-    if (typeof enabled === "boolean" && typeof disabled === "boolean" && typeof target === "number") {
-      return enabled && !disabled ? target : 0;
-    }
+    if (disabled === true || enabled === false) return 0;
+    if (enabled === true && disabled === false) return validTarget(read("gamescope_app_target_framerate"));
   }
   if (typeof legacy?.is_fps_limit_enabled === "boolean") {
-    return legacy.is_fps_limit_enabled ? legacy.fps_limit ?? 0 : 0;
+    return legacy.is_fps_limit_enabled ? validTarget(legacy.fps_limit) : 0;
   }
   return null;
 }
