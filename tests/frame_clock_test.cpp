@@ -37,6 +37,25 @@ int main() {
     assert(arbitrary.deadline(period * 5 + 12345, period) == period * 6);
     assert(arbitrary.deadline(period * 6, 25000000) == period * 6 + 25000000);
 
+    // Estimate the display period from presentations, including missed frames.
+    waydroid_manager::RefreshEstimator refresh;
+    const int64_t reported = 1000000000LL / 120;
+    const int64_t measured = reported - 4000;
+    int64_t time = 1000000000LL;
+    assert(refresh.observe(time, reported) == 0);
+    for (int i = 0; i < 130; ++i) {
+        time += measured * (i % 20 == 0 ? 2 : 1);
+        refresh.observe(time, reported);
+    }
+    assert(refresh.observe(time, reported) == measured);
+    assert(refresh.observe(time + 10000000000LL, reported) == measured);
+    assert(refresh.observe(time + 11000000000LL, 1000000000LL / 60) == 0);
+
+    FrameClock adjusted;
+    const auto initial = adjusted.deadline(time, reported);
+    assert(adjusted.deadline(time, measured) == initial);
+    assert(adjusted.consume(initial) == initial);
+    assert(adjusted.deadline(initial, measured) == initial + measured);
     // A nominal 120 Hz panel runs slightly slow and starts half a cycle out of phase.
     FrameClock locked;
     const int64_t nominal = 1000000000LL / 120;

@@ -228,6 +228,10 @@
       "file": "android/hwc/presentation-timing.patch"
     },
     {
+      "project": "hardware/waydroid",
+      "file": "android/hwc/adaptive-presentation.patch"
+    },
+    {
       "project": "system/tools/hidl",
       "file": "android/native/host-tools.patch"
     }

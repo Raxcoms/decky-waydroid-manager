@@ -1,0 +1,51 @@
+--- a/hwcomposer/hwcomposer.h
++++ b/hwcomposer/hwcomposer.h
+@@ -26,6 +26,7 @@
+ #pragma once
+ 
+ #include <hardware/hwcomposer.h>
++#include "frame_clock.h"
+ #include <atomic>
+ #include <string>
+ #include <map>
+@@ -72,6 +73,8 @@
+ 
+     std::atomic<bool> vsync_callback_enabled;
+     std::atomic<int64_t> last_vsync_ns {0};
++    std::atomic<int64_t> observed_period_ns {0};
++    waydroid_manager::RefreshEstimator refresh_estimator;
+ 
+     int timeline_fd;
+     int next_sync_point;
+--- a/hwcomposer/hwcomposer.cpp
++++ b/hwcomposer/hwcomposer.cpp
+@@ -268,6 +268,9 @@
+             return nullptr;
+         int64_t now = int64_t(rt.tv_sec) * 1000000000LL + rt.tv_nsec;
+         int64_t period = pdev->active_period_ns.load();
++        int64_t observed = pdev->observed_period_ns.load();
++        if (period == pdev->vsync_period_ns && observed > 0)
++            period = observed;
+         int64_t ext_period = external_period(pdev);
+         primary.deadline(now, period);
+         bool external_vsync = pdev->ext_display && pdev->ext_display->connected &&
+@@ -289,7 +292,7 @@
+         if (pdev->ext_display && !pdev->ext_display->connected &&
+                 pdev->ext_announced.exchange(false) && pdev->procs)
+             pdev->procs->hotplug(pdev->procs, HWC_DISPLAY_EXTERNAL, 0);
+-        if (period == pdev->vsync_period_ns)
++        if (pdev->active_period_ns.load() == pdev->vsync_period_ns)
+             primary.align(now, pdev->last_vsync_ns.load());
+         int64_t next = primary.deadline(now, period);
+         if (external_vsync)
+@@ -327,7 +330,9 @@
+     // Accept only a scanout timestamp from the primary output's native cadence.
+     if ((flags & WP_PRESENTATION_FEEDBACK_KIND_VSYNC) && pdev->display->monotonic_presentation &&
+             refresh && std::abs(int64_t(refresh) - pdev->vsync_period_ns) <= pdev->vsync_period_ns / 100) {
+-        pdev->last_vsync_ns = ((int64_t(tv_sec_hi) << 32) + tv_sec_lo) * 1000000000LL + tv_nsec;
++        int64_t presented = ((int64_t(tv_sec_hi) << 32) + tv_sec_lo) * 1000000000LL + tv_nsec;
++        pdev->last_vsync_ns = presented;
++        pdev->observed_period_ns = pdev->refresh_estimator.observe(presented, pdev->vsync_period_ns);
+     }
+ }
+ 
