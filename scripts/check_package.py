@@ -57,6 +57,12 @@ def check(root: Path) -> None:
             raise RuntimeError("The packaged display libraries were built from a different native recipe")
         if not payload.binder_vtable_size or not (manifest.parent / "NOTICE.txt").is_file():
             raise RuntimeError("The native ABI contract or license notices are missing")
+    from build_audio import recipe_digest as audio_recipe_digest
+    from waydroid_manager.audio_payload import validate_payload
+    audio = root / "bin/audio-native"
+    if (validate_payload(audio).get("recipeSha256") != audio_recipe_digest()
+            or not (audio / "NOTICE.txt").is_file()):
+        raise RuntimeError("The packaged audio module or license notice is invalid")
     from waydroid_manager.display_payload import digest, elf_machine
     tools = list((root / "bin/display-tools").glob("*/manifest.json"))
     machines = {str(tool["machine"]) for tool in json.loads((ROOT / "android/native/runtime-tools.json").read_text())}
