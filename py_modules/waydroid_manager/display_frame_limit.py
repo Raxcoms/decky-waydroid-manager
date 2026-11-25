@@ -26,7 +26,7 @@ class DisplayModes:
 
     def select(self, fps: int) -> int:
         ceiling = min(float(fps), max(self.rates.values())) if fps else max(self.rates.values())
-        candidates = [(rate, -mode, mode) for mode, rate in self.rates.items() if rate <= ceiling + 0.01]
+        candidates = [(rate, -mode, mode) for mode, rate in self.rates.items() if rate <= ceiling + 0.1]
         if not candidates:
             raise RuntimeError("The composer has no mode within the requested frame limit")
         return max(candidates)[2]

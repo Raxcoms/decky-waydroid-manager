@@ -220,12 +220,14 @@
      pdev->getDisplayConfigs = hwc_get_display_configs;
      pdev->getDisplayAttributes = hwc_get_display_attributes;
      pdev->getActiveConfig = hwc_get_active_config;
-@@ -987,7 +988,9 @@
+@@ -987,7 +988,11 @@
  
      pdev->vsync_callback_enabled = true;
      if (pdev->display->refresh > 1000 && pdev->display->refresh < 1000000)
 -        pdev->vsync_period_ns = 1000 * 1000 * 1000 / (pdev->display->refresh / 1000);
 +        pdev->vsync_period_ns = 1000000000000LL / pdev->display->refresh;
++    if (pdev->vsync_period_ns == 8333333)
++        pdev->vsync_period_ns = 8330191;
 +    pdev->active_period_ns = pdev->vsync_period_ns;
 +    property_set("waydroid.frame_limit_modes", "1");
  
