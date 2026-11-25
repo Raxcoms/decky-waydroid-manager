@@ -96,7 +96,7 @@
          hwc_layer->releaseFenceFd = buf->current_release_fence();
      } else {
          hwc_layer->releaseFenceFd = buf->next_release_fence();
-+        if (hwc_layer->releaseFenceFd < 0)
++        if (hwc_layer->releaseFenceFd < 0 && buf->release_timeline >= 0)
 +            return -1;
 +        // Only the primary display owns the shared EGL copy worker.
 +        if (buf->isShm)
