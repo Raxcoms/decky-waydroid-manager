@@ -66,14 +66,16 @@ public:
         return next_;
     }
 
-    void align(int64_t now, int64_t presented) {
+    void align(int64_t now, int64_t presented, int64_t phase = 0) {
         if (presented <= feedback_ || presented > now || now - presented > 2 * period_)
             return;
         feedback_ = presented;
         // Move toward the nearest scanout phase without skipping or repeating a tick.
-        int64_t offset = (next_ - presented) % period_;
+        int64_t offset = (next_ - presented - phase) % period_;
         if (offset > period_ / 2)
             offset -= period_;
+        if (offset < -period_ / 2)
+            offset += period_;
         const int64_t step = period_ / 16;
         next_ -= std::clamp(offset, -step, step);
     }

@@ -48,7 +48,7 @@
              pdev->procs->hotplug(pdev->procs, HWC_DISPLAY_EXTERNAL, 0);
 -        if (period == pdev->vsync_period_ns)
 +        if (pdev->active_period_ns.load() == pdev->vsync_period_ns)
-             primary.align(now, pdev->last_vsync_ns.load());
+             primary.align(now, pdev->last_vsync_ns.load(), int64_t(property_get_int32("waydroid.vsync_phase_us", 0)) * 1000);
          int64_t next = primary.deadline(now, period);
          if (external_vsync)
 @@ -327,7 +330,9 @@
