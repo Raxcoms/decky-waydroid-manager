@@ -8,7 +8,7 @@ import shutil
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def package(output: Path, revision: str | None = None, native: Path | None = None, runtime_tools: Path | None = None) -> Path:
+def package(output: Path, revision: str | None = None, native: Path | None = None, runtime_tools: Path | None = None, audio: Path | None = None) -> Path:
     if revision is not None and not re.fullmatch(r"[0-9a-f]{7,64}", revision):
         raise ValueError("Expected a short Git commit SHA")
     target = output / "waydroid-manager"
@@ -31,6 +31,8 @@ def package(output: Path, revision: str | None = None, native: Path | None = Non
         for name in ("aapt2", "openssl", "home-mount"):
             for helper in (target / "bin/display-tools").glob(f"*/{name}"):
                 helper.chmod(0o755)
+    if audio is not None:
+        shutil.copytree(audio, target / "bin/audio-native")
     resources = target / "resources/display"
     resources.mkdir(parents=True)
     for source, name in (("overlay", "framework"), ("navigation-overlay", "navigation")):
@@ -50,5 +52,6 @@ if __name__ == "__main__":
     parser.add_argument("--revision", help="Append this Git revision to the packaged Decky version")
     parser.add_argument("--native", type=Path, help="Native libraries produced by the matching CI recipe")
     parser.add_argument("--runtime-tools", type=Path, help="Offline resource compilers packaged by CI")
+    parser.add_argument("--audio", type=Path, help="Audio module built by CI")
     args = parser.parse_args()
-    print(package(args.output, args.revision, args.native, args.runtime_tools))
+    print(package(args.output, args.revision, args.native, args.runtime_tools, args.audio))
