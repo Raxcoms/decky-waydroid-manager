@@ -73,16 +73,16 @@
  void* egl_loop(void* data);
  void egl_render_to_pixels(struct display* display, struct buffer* buf);
 +
-+bool egl_copy_to_buffer(struct display *display, buffer_handle_t source, const buffer_metadata &metadata, android::GraphicBuffer *target);
++bool egl_copy_to_buffer(struct display *display, buffer_handle_t source, const buffer_metadata &metadata, android::GraphicBuffer *target, int *release_fence);
 --- a/hwcomposer/egl-tools.cpp
 +++ b/hwcomposer/egl-tools.cpp
-@@ -119,6 +119,43 @@
+@@ -119,6 +119,55 @@
      eglDestroyImageKHR(display->egl_dpy, image);
  }
  
 +
 +bool egl_copy_to_buffer(struct display *display, buffer_handle_t source,
-+                        const buffer_metadata &metadata, android::GraphicBuffer *target) {
++                        const buffer_metadata &metadata, android::GraphicBuffer *target, int *release_fence) {
 +    android::sp<android::GraphicBuffer> input = new android::GraphicBuffer(
 +            (native_handle_t *) source, android::GraphicBuffer::WRAP_HANDLE,
 +            metadata.width, metadata.height, metadata.format, 1,
@@ -107,8 +107,20 @@
 +        glBindTexture(GL_TEXTURE_2D, textures[1]);
 +        glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, dst);
 +        glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, metadata.width, metadata.height);
-+        glFinish();
 +        ok = glGetError() == GL_NO_ERROR;
++        if (ok) {
++            const EGLint fence_attrs[] = {
++                EGL_SYNC_NATIVE_FENCE_FD_ANDROID, EGL_NO_NATIVE_FENCE_FD_ANDROID, EGL_NONE
++            };
++            EGLSyncKHR fence = eglCreateSyncKHR(display->egl_dpy, EGL_SYNC_NATIVE_FENCE_ANDROID, fence_attrs);
++            glFlush();
++            if (fence != EGL_NO_SYNC_KHR) {
++                *release_fence = eglDupNativeFenceFDANDROID(display->egl_dpy, fence);
++                eglDestroySyncKHR(display->egl_dpy, fence);
++            }
++        }
++        if (!ok || *release_fence < 0)
++            glFinish();
 +    }
 +    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
 +    glDeleteTextures(2, textures);
@@ -122,7 +134,7 @@
      egl_init(display);
 --- a/hwcomposer/hwcomposer.cpp
 +++ b/hwcomposer/hwcomposer.cpp
-@@ -102,6 +102,51 @@
+@@ -102,6 +102,55 @@
          return nullptr;
      }
  
@@ -158,23 +170,27 @@
 +            display->private_buffers.push_back(std::move(result));
 +        }
 +        bool copied = false;
++        int copy_fence = -1;
 +        {
 +            // Both displays share the primary EGL worker.
 +            std::lock_guard<std::mutex> lock(pdev->display->egl_queue_mutex);
 +            pdev->display->egl_work_queue.emplace_back([&] {
 +                copied = egl_copy_to_buffer(pdev->display, layer->handle, metadata,
-+                                            candidate->private_buffer.get());
++                                            candidate->private_buffer.get(), &copy_fence);
 +            });
 +            sem_post(&pdev->display->egl_go);
 +            while (sem_wait(&pdev->display->egl_done) < 0 && errno == EINTR) {}
 +        }
-+        return copied ? candidate : nullptr;
++        if (!copied)
++            return nullptr;
++        layer->releaseFenceFd = copy_fence;
++        return candidate;
 +    }
 +
      buffer *get_wl_buffer(waydroid_hwc_composer_device_1 *pdev, hwc_layer_1_t *layer, size_t pos, display *display, unsigned attached) {
          if (layer->acquireFenceFd >= 0) {
              const int fd = layer->acquireFenceFd;
-@@ -121,6 +166,8 @@
+@@ -121,6 +170,8 @@
  
          const auto& gralloc_handler = display->secondary ? pdev->ext_gralloc_handler : pdev->gralloc_handler;
          auto metadata = gralloc_handler.get_buffer_metadata(display, layer, pos);
@@ -183,12 +199,19 @@
          buffer *buf = find_cached_buffer(display, metadata, layer->handle, attached);
  
          if (!buf) {
-@@ -387,7 +434,7 @@
+@@ -386,9 +437,12 @@
+         // Attaching again could pair this use with a release event already queued
          hwc_layer->releaseFenceFd = buf->current_release_fence();
      } else {
-         hwc_layer->releaseFenceFd = buf->next_release_fence();
+-        hwc_layer->releaseFenceFd = buf->next_release_fence();
 -        if (hwc_layer->releaseFenceFd < 0 && buf->release_timeline >= 0)
-+        if (hwc_layer->releaseFenceFd < 0 && !buf->private_buffer)
-             return -1;
+-            return -1;
++        int release = buf->next_release_fence();
++        if (!buf->private_buffer) {
++            hwc_layer->releaseFenceFd = release;
++            if (release < 0)
++                return -1;
++        }
          // Only the primary display owns the shared EGL copy worker.
          if (buf->isShm)
+             pdev->gralloc_handler.update_shm_buffer(pdev->display, buf);
