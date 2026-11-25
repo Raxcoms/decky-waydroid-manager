@@ -3,6 +3,7 @@ import ctypes
 import errno
 import os
 from pathlib import Path
+import selectors
 import socket
 import stat
 import struct
@@ -86,6 +87,7 @@ class MetricsSocket:
     def __init__(self, path: Path, sender_uid: int = 0):
         self.path = path
         self.sender_uid = sender_uid
+        self.selector = None
         self.handles: list[int] = []
         self.pending: set[socket.socket] = set()
         self.listener = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
@@ -93,6 +95,10 @@ class MetricsSocket:
         path.chmod(0o600)
         self.listener.listen(4)
         self.listener.setblocking(False)
+
+    def watch(self, selector) -> None:
+        self.selector = selector
+        selector.register(self.listener, selectors.EVENT_READ, self.poll)
 
     def poll(self) -> None:
         try:
@@ -103,6 +109,8 @@ class MetricsSocket:
             else:
                 connection.setblocking(False)
                 self.pending.add(connection)
+                if self.selector is not None:
+                    self.selector.register(connection, selectors.EVENT_READ, self.poll)
         except BlockingIOError:
             pass
         for connection in tuple(self.pending):
@@ -125,6 +133,8 @@ class MetricsSocket:
                 pass
             finally:
                 close_handles(handles)
+            if self.selector is not None:
+                self.selector.unregister(connection)
             connection.close()
             self.pending.remove(connection)
 

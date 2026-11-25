@@ -5,10 +5,12 @@ import importlib.util
 import os
 from pathlib import Path
 import socket
+import subprocess
 import sys
 import tempfile
 import time
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 
@@ -177,16 +179,42 @@ class RelayTests(unittest.TestCase):
             os.close(read_fd)
             os.close(write_fd)
 
-    def test_child_exit_removes_private_socket(self):
-        args = [str(SCRIPT), self.parent_path, "--", sys.executable, "-c", "pass"]
-        control = unittest.mock.Mock()
-        control.result = {"owner": True, "display": self.parent_path}
-        with (patch.dict(os.environ, {"XDG_RUNTIME_DIR": self.directory.name, "WAYDROID_MANAGER_MODE": "full"}),
-              patch.object(sys, "argv", args), patch.object(relay_module.signal, "signal"),
-              patch.object(relay_module, "service_connection", return_value=nullcontext(control)),
-              patch.object(relay_module.select, "select", return_value=([], [], []))):
-            self.assertEqual(relay_module.main(), 0)
+    def launch(self, code, owner=""):
+        args = [str(SCRIPT), self.parent_path, "--", sys.executable, "-c", code]
+        control, peer = socket.socketpair()
+        env = {"XDG_RUNTIME_DIR": self.directory.name, "WAYDROID_MANAGER_MODE": "full",
+               "WAYDROID_MANAGER_STEAM_OWNER_PID": owner}
+        with control, peer:
+            registration = SimpleNamespace(socket=control, result={"owner": True, "display": self.parent_path})
+            with (patch.dict(os.environ, env), patch.object(sys, "argv", args),
+                  patch.object(relay_module, "service_connection", return_value=nullcontext(registration))):
+                result = relay_module.main()
         self.assertEqual(list(Path(self.directory.name).glob("waydroid-manager-*")), [])
+        return result
+
+    def test_child_exit_wakes_idle_relay_and_preserves_status(self):
+        self.assertEqual(self.launch("raise SystemExit(7)"), 7)
+
+    @unittest.skipUnless(hasattr(os, "pidfd_open"), "Requires Linux pidfds")
+    def test_owner_exit_wakes_idle_relay_and_allows_graceful_child_cleanup(self):
+        marker = Path(self.directory.name) / "stopped"
+        with subprocess.Popen([sys.executable, "-c", "import time; time.sleep(10)"]) as owner:
+            try:
+                code = f"""import os, signal, time
+from pathlib import Path
+def stop(*_):
+    Path({str(marker)!r}).touch()
+    raise SystemExit(0)
+signal.signal(signal.SIGTERM, stop)
+os.kill({owner.pid}, signal.SIGTERM)
+time.sleep(5)
+raise SystemExit(3)
+"""
+                self.assertEqual(self.launch(code, str(owner.pid)), 0)
+                self.assertTrue(marker.exists())
+            finally:
+                owner.kill()
+
 
 
 if __name__ == "__main__":

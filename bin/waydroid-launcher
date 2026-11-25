@@ -71,6 +71,7 @@ if [[ ! -S "$shared_socket" || ! -f "$shared_ready" ]]; then
   fi
 fi
 flock -u 9
+exec 9>&-
 if [[ ! -S "$shared_socket" || ! -f "$shared_ready" ]]; then
   echo "Waydroid Manager could not start its shared Wayland relay." >&2
   exit 1
@@ -87,29 +88,5 @@ export WAYDROID_MANAGER_SESSION_RUNNER="$session_runner"
 if [[ "$mode" == app ]]; then
   : >"$log_dir/app.log"
 fi
-"$launcher_dir/waydroid-wayland-relay" "$parent_wayland" -- \
-  "$launcher_dir/waydroid-game-session" >>"$log_dir/wayland.log" 2>&1 &
-host_pid=$!
-
-stop_host() {
-  trap - EXIT HUP INT TERM
-  if kill -0 "$host_pid" 2>/dev/null; then
-    kill -TERM "$host_pid" 2>/dev/null || true
-    for _ in {1..600}; do
-      [[ ! -r "/proc/$host_pid/stat" ]] && break
-      [[ "$(awk '{print $3}' "/proc/$host_pid/stat" 2>/dev/null)" == Z ]] && break
-      sleep 0.1
-    done
-    kill -KILL "$host_pid" 2>/dev/null || true
-    wait "$host_pid" 2>/dev/null || true
-  fi
-}
-
-trap stop_host EXIT HUP INT TERM
-while kill -0 "$host_pid" 2>/dev/null; do
-  if [ -n "$steam_owner_pid" ] && { [ ! -r "/proc/$steam_owner_pid/stat" ] || [ "$(awk '{print $3}' "/proc/$steam_owner_pid/stat" 2>/dev/null)" = Z ]; }; then
-    exit 0
-  fi
-  sleep 1
-done
-wait "$host_pid"
+exec "$launcher_dir/waydroid-wayland-relay" "$parent_wayland" -- \
+  "$launcher_dir/waydroid-game-session" >>"$log_dir/wayland.log" 2>&1

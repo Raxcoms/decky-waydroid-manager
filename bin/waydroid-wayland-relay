@@ -8,7 +8,6 @@ from dataclasses import dataclass, field
 import os
 from pathlib import Path
 import json
-import select
 import selectors
 import signal
 import socket
@@ -19,6 +18,8 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "py_modules"))
 from waydroid_manager.wayland import SurfaceCommits
+from waydroid_manager.file_events import process_handle
+from waydroid_manager.proc import process_identity
 from waydroid_manager.metrics import MetricsSocket
 from waydroid_manager.resolution import launch_resolution
 from waydroid_manager.control import control_path, service_connection
@@ -168,9 +169,18 @@ class Relay:
         self.update(endpoint)
         self.update(endpoint.peer)
 
-    def step(self, timeout: float = 0.25) -> None:
+    def watch_once(self, source, callback) -> None:
+        def ready():
+            self.selector.unregister(source)
+            callback()
+        self.selector.register(source, selectors.EVENT_READ, ready)
+
+    def step(self, timeout: float | None = None) -> None:
         for key, events in self.selector.select(timeout):
             endpoint = key.data
+            if callable(endpoint):
+                endpoint()
+                continue
             if isinstance(endpoint, Listener):
                 try:
                     self.accept(endpoint)
@@ -219,9 +229,6 @@ def main() -> int:
         nonlocal stopping
         stopping = True
 
-    signal.signal(signal.SIGTERM, stop)
-    signal.signal(signal.SIGINT, stop)
-    signal.signal(signal.SIGHUP, stop)
     with tempfile.TemporaryDirectory(prefix="waydroid-manager-", dir=runtime) if not host else nullcontext() as directory:
         if host:
             path = socket_arg
@@ -254,7 +261,31 @@ def main() -> int:
                 protocols = [endpoint.protocol for endpoint in relay.endpoints if endpoint.protocol and not endpoint.upstream]
                 print(f"Wayland commits: {sum(p.commits for p in protocols)}, empty commits suppressed: {sum(p.dropped for p in protocols)}", file=sys.stderr, flush=True)
                 print(f"GPU metrics: {len(metrics.handles)} DRM clients", file=sys.stderr, flush=True)
-            signal.signal(signal.SIGUSR1, report)
+            stack.callback(relay.close)
+            wake, notify = os.pipe2(os.O_NONBLOCK | os.O_CLOEXEC)
+            stack.callback(os.close, wake)
+            stack.callback(os.close, notify)
+            stack.callback(signal.set_wakeup_fd, signal.set_wakeup_fd(notify))
+            relay.selector.register(wake, selectors.EVENT_READ, lambda: os.read(wake, 4096))
+            for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+                stack.callback(signal.signal, sig, signal.signal(sig, stop))
+            stack.callback(signal.signal, signal.SIGUSR1, signal.signal(signal.SIGUSR1, report))
+            # A child exit wakes select even when no display is submitting frames.
+            stack.callback(signal.signal, signal.SIGCHLD, signal.signal(signal.SIGCHLD, lambda *_: None))
+            metrics.watch(relay.selector)
+            owner = None
+            if not host and (pid := os.environ.get("WAYDROID_MANAGER_STEAM_OWNER_PID")):
+                owner = process_identity(int(pid))
+                if owner is None:
+                    return 0
+                try:
+                    handle = process_handle(owner)
+                except ProcessLookupError:
+                    return 0
+                if handle is not None:
+                    stack.callback(os.close, handle)
+                    relay.watch_once(handle, stop)
+                    owner = None
             print(f"Wayland relay started: {os.getpid()}", file=sys.stderr, flush=True)
             environment = os.environ.copy()
             environment.update(WAYLAND_DISPLAY=path, GAMESCOPE_WAYLAND_DISPLAY=path)
@@ -268,44 +299,51 @@ def main() -> int:
                     "package": os.environ.get("WAYDROID_MANAGER_PACKAGE") or None,
                 }, separators=(",", ":")).encode()
             with service_connection(control_path(os.getuid()), command) as control:
+                disconnected = False
+
+                def control_closed():
+                    nonlocal disconnected
+                    disconnected = True
+
+                relay.watch_once(control.socket, control_closed)
                 if host:
                     ready = Path(path).parent / "ready"
                     ready.write_text(str(os.getpid()), encoding="ascii")
-                    try:
-                        while not stopping:
-                            if select.select([control], [], [], 0)[0]:
-                                return 1
-                            relay.step()
-                            metrics.poll()
-                    finally:
-                        ready.unlink(missing_ok=True)
-                        relay.close()
-                    return 0
+                    stack.callback(ready.unlink, missing_ok=True)
+                    while not stopping and not disconnected:
+                        relay.step()
+                    return int(disconnected)
                 environment["WAYDROID_MANAGER_LEASE_OWNER"] = "1" if control.result.get("owner") else "0"
                 environment["WAYDROID_MANAGER_SHARED_DISPLAY"] = control.result["display"]
+                relay.step(0)
+                if stopping or disconnected:
+                    return int(disconnected)
                 child = subprocess.Popen(sys.argv[3:], env=environment, start_new_session=True)
                 try:
-                    while not stopping and child.poll() is None:
-                        if select.select([control], [], [], 0)[0]:
-                            print("Waydroid launch registration ended", file=sys.stderr)
-                            return 1
-                        relay.step()
-                        metrics.poll()
+                    while not stopping and not disconnected and child.poll() is None:
+                        if owner and process_identity(owner[0]) != owner:
+                            break
+                        relay.step(1 if owner else None)
+                    if disconnected:
+                        print("Waydroid launch registration ended", file=sys.stderr)
+                        return 1
                     return child.returncode if child.returncode is not None else 0
                 finally:
-                    try:
-                        os.killpg(child.pid, signal.SIGTERM)
-                    except ProcessLookupError:
-                        pass
                     if child.poll() is None:
-                        # Android may still need its Wayland connection during cleanup.
+                        try:
+                            os.killpg(child.pid, signal.SIGTERM)
+                        except ProcessLookupError:
+                            pass
+                        # Continue serving Wayland until the session runner releases its lease.
                         deadline = time.monotonic() + 55
-                        while child.poll() is None and time.monotonic() < deadline:
-                            relay.step()
+                        while child.poll() is None and (remaining := deadline - time.monotonic()) > 0:
+                            relay.step(remaining)
                         if child.poll() is None:
-                            os.killpg(child.pid, signal.SIGKILL)
+                            try:
+                                os.killpg(child.pid, signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
                             child.wait()
-                    relay.close()
 
 
 if __name__ == "__main__":

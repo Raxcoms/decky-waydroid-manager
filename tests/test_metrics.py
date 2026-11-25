@@ -1,6 +1,7 @@
 import array
 import os
 from pathlib import Path
+import selectors
 import socket
 import stat
 import sys
@@ -44,6 +45,21 @@ class MetricsSocketTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 os.fstat(held)
         self.assertEqual(self.metrics.handles, [])
+
+    def test_delayed_metrics_packet_wakes_selector_after_accept(self):
+        with selectors.DefaultSelector() as selector, socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET) as sender:
+            self.metrics.watch(selector)
+            sender.connect(str(self.metrics.path))
+            for key, _ in selector.select(1):
+                key.data()
+            self.assertEqual(len(self.metrics.pending), 1)
+            sender.send(b"DRM1")
+            for key, _ in selector.select(1):
+                key.data()
+            sender.settimeout(1)
+            self.assertEqual(sender.recv(2), b"OK")
+            self.assertEqual(self.metrics.pending, set())
+            self.assertEqual(len(selector.get_map()), 1)
 
     def test_rejects_non_drm_handles_and_wrong_sender(self):
         self.transfer([self.read_fd])
