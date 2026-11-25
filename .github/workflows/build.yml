@@ -212,3 +212,24 @@ jobs:
           path: ${{ steps.archive.outputs.file }}
           archive: false
           if-no-files-found: error
+
+  audio-prototype:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: android-actions/setup-android@v4
+        with:
+          accept-android-sdk-licenses: false
+          packages: ''
+      - name: Install NDK
+        run: |
+          ndk=$(python3 -c 'import json; print(json.load(open("android/native/profiles/android-13-arm64.json"))["ndkVersion"])')
+          android --sdk="$ANDROID_HOME" sdk install "ndk/$ndk"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ndk" >> "$GITHUB_ENV"
+      - name: Build audio prototype
+        run: python3 scripts/build_audio.py out/audio-native
+      - uses: actions/upload-artifact@v7
+        with:
+          name: audio-prototype
+          path: out/audio-native
+          if-no-files-found: error
