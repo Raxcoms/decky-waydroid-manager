@@ -70,7 +70,7 @@ def build(output: Path, cache: Path, ndk: Path):
             run(toolchain / compiler, "-shared", "-fPIC", "-DPIC", "-D_GNU_SOURCE",
                 "-I", work / "headers", "-I", source / "pulse/src",
                 source / "plugins/pulse/pcm_pulse.c", source / "plugins/pulse/pulse.c",
-                "-L", stubs, "-Wl,--no-as-needed", "-lasound", "-lpulse",
+                "-L", stubs, "-Wl,--no-as-needed", "-lasound", "-lpulse", "-llog",
                 "-Wl,-soname,libasound_module_pcm_pulse.so",
                 "-o", target / "libasound_module_pcm_pulse.so")
             module = target / "libasound_module_pcm_pulse.so"
