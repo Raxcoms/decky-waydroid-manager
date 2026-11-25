@@ -1,0 +1,13 @@
+--- a/pulse/pcm_pulse.c
++++ b/pulse/pcm_pulse.c
+@@ -651,6 +651,10 @@
+ 	err = check_active(pcm);
+ 	if (err < 0)
+ 		goto finish;
++
++	/* Clear stale wakeups while the PulseAudio stream is not ready. */
++	if (err == 0)
++		pulse_poll_deactivate(pcm->p);
+ 
+ 	if (err > 0)
+ 		*revents = io->stream == SND_PCM_STREAM_PLAYBACK ? POLLOUT : POLLIN;
