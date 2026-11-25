@@ -8,7 +8,7 @@
  
  #include <errno.h>
  #include <pthread.h>
-@@ -228,79 +229,67 @@
+@@ -228,79 +229,68 @@
      return 0;
  }
  
@@ -71,6 +71,7 @@
 +            return nullptr;
 +        int64_t now = int64_t(rt.tv_sec) * 1000000000LL + rt.tv_nsec;
 +        int64_t period = pdev->active_period_ns.load();
++        if (period == pdev->vsync_period_ns) period = property_get_int32("waydroid.vsync_period_ns", period);
 +        int64_t ext_period = external_period(pdev);
 +        int64_t next = primary.deadline(now, period);
          bool external_vsync = pdev->ext_display && pdev->ext_display->connected &&
