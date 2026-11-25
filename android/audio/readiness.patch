@@ -1,13 +1,13 @@
 --- a/pulse/pcm_pulse.c
 +++ b/pulse/pcm_pulse.c
-@@ -26,6 +26,7 @@
+@@ -26,5 +26,6 @@
  #include <alsa/asoundlib.h>
  #include <alsa/pcm_external.h>
 +#include <android/log.h>
  
  #include "pulse.h"
  
-@@ -651,6 +652,17 @@
+@@ -651,6 +652,16 @@
  	err = check_active(pcm);
  	if (err < 0)
  		goto finish;
