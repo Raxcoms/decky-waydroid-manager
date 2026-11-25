@@ -19,6 +19,19 @@
      int next_sync_point;
 --- a/hwcomposer/hwcomposer.cpp
 +++ b/hwcomposer/hwcomposer.cpp
+@@ -251,10 +251,10 @@
+     auto *pdev = static_cast<waydroid_hwc_composer_device_1 *>(dev);
+     snprintf(buffer, length,
+              "Waydroid cadence: primary_period_ns=%lld primary_vsyncs=%llu "
+-             "external_period_ns=%lld external_vsyncs=%llu\n",
++             "external_period_ns=%lld external_vsyncs=%llu observed_period_ns=%lld\n",
+              (long long)pdev->active_period_ns.load(),
+              (unsigned long long)pdev->primary_vsyncs.load(),
+-             (long long)external_period(pdev), (unsigned long long)pdev->external_vsyncs.load());
++             (long long)external_period(pdev), (unsigned long long)pdev->external_vsyncs.load(), (long long)pdev->observed_period_ns.load());
+ }
+ 
+ static void* hwc_vsync_thread(void* data) {
 @@ -268,6 +268,9 @@
              return nullptr;
          int64_t now = int64_t(rt.tv_sec) * 1000000000LL + rt.tv_nsec;
