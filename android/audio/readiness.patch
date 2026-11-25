@@ -1,11 +1,24 @@
 --- a/pulse/pcm_pulse.c
 +++ b/pulse/pcm_pulse.c
-@@ -651,6 +651,10 @@
+@@ -26,6 +26,7 @@
+ #include <alsa/asoundlib.h>
+ #include <alsa/pcm_external.h>
++#include <android/log.h>
+ 
+ #include "pulse.h"
+ 
+@@ -651,6 +652,17 @@
  	err = check_active(pcm);
  	if (err < 0)
  		goto finish;
-+
-+	/* Clear stale wakeups while the PulseAudio stream is not ready. */
++	static unsigned int probes;
++	if ((++probes & 16383) == 0) {
++		__android_log_print(ANDROID_LOG_WARN, "WaydroidAudioProbe",
++			"active=%d writable=%zu minreq=%u hw=%lu app=%lu period=%lu buffer=%lu",
++			err, pa_stream_writable_size(pcm->stream), pcm->buffer_attr.minreq,
++			(unsigned long)io->hw_ptr, (unsigned long)io->appl_ptr,
++			(unsigned long)io->period_size, (unsigned long)io->buffer_size);
++	}
 +	if (err == 0)
 +		pulse_poll_deactivate(pcm->p);
  
