@@ -10,6 +10,7 @@ import time
 from typing import Callable
 
 from .async_work import complete_thread
+from .audio_payload import AudioPayload
 from .container import container_identity, container_pid, session_uses_socket
 from .control import Launch, ServiceControl
 from .display_payload import HWC_PATH, inspect_vendor
@@ -38,6 +39,7 @@ class LaunchSession:
     def __init__(self, config: Path, plugin: Path, services: SessionServices):
         self.config, self.plugin, self.services = config, plugin, services
         self.overlay = RuntimeDisplayLease(config)
+        self.audio = AudioPayload(config, plugin)
         self.policy = LaunchPolicy(services.run, container_identity)
         self.control: ServiceControl | None = None
         self.lock = asyncio.Lock()
@@ -118,6 +120,10 @@ class LaunchSession:
                     files.update(resources)
                     density_reference = native.density_reference
                     native_display = True
+            try:
+                files.update(await complete_thread(self.audio.files, self.services.run))
+            except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+                self.services.logger.info("Audio extension unavailable for this session: %s", error)
             await complete_thread(self.overlay.acquire, files, external_relay,
                                   self.services.run, launch.display, density_reference=density_reference)
             capable = external_relay is not None
