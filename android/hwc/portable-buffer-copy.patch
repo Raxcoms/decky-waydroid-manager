@@ -166,7 +166,7 @@
 +                                            candidate->private_buffer.get());
 +            });
 +            sem_post(&pdev->display->egl_go);
-+            sem_wait(&pdev->display->egl_done);
++            while (sem_wait(&pdev->display->egl_done) < 0 && errno == EINTR) {}
 +        }
 +        return copied ? candidate : nullptr;
 +    }
