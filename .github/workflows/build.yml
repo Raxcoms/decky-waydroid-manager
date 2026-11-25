@@ -20,6 +20,7 @@ jobs:
       profiles: ${{ steps.profiles.outputs.value }}
       tools: ${{ steps.profiles.outputs.tools }}
       caches: ${{ steps.profiles.outputs.caches }}
+      audio: ${{ steps.profiles.outputs.audio }}
     steps:
       - uses: actions/checkout@v7
       - id: profiles
@@ -30,6 +31,8 @@ jobs:
           echo "value=$profiles" >> "$GITHUB_OUTPUT"
           tools=$(echo "$caches" | python3 -c 'import json,sys; print(json.dumps([p for p in json.load(sys.stdin) if "runner" in p]))')
           echo "tools=$tools" >> "$GITHUB_OUTPUT"
+          audio=$(echo "$caches" | python3 -c 'import json,sys; print(json.dumps(next(p for p in json.load(sys.stdin) if "audio" in p)))')
+          echo "audio=$audio" >> "$GITHUB_OUTPUT"
 
   native:
     needs: profiles
@@ -105,8 +108,43 @@ jobs:
           path: out/display-tools
           key: ${{ steps.tools-cache.outputs.cache-primary-key }}
 
+  audio:
+    needs: profiles
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/cache/restore@v6
+        id: audio-cache
+        with:
+          path: out/audio-native
+          key: ${{ fromJSON(needs.profiles.outputs.audio).key }}
+      - uses: android-actions/setup-android@v4
+        if: steps.audio-cache.outputs.cache-hit != 'true'
+        with:
+          accept-android-sdk-licenses: false
+          packages: ''
+      - name: Install Android NDK
+        if: steps.audio-cache.outputs.cache-hit != 'true'
+        run: |
+          ndk=$(python3 -c 'import json; print(json.load(open("android/native/profiles/android-13-arm64.json"))["ndkVersion"])')
+          android --sdk="$ANDROID_HOME" sdk install "ndk/$ndk"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ndk" >> "$GITHUB_ENV"
+      - uses: actions/cache@v6
+        if: steps.audio-cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/.cache/waydroid-manager-audio
+          key: audio-sources-${{ hashFiles('android/audio/sources.json') }}
+      - name: Build audio module
+        if: steps.audio-cache.outputs.cache-hit != 'true'
+        run: python3 scripts/build_audio.py out/audio-native
+      - uses: actions/cache/save@v6
+        if: steps.audio-cache.outputs.cache-hit != 'true'
+        with:
+          path: out/audio-native
+          key: ${{ steps.audio-cache.outputs.cache-primary-key }}
+
   build:
-    needs: [profiles, native, runtime-tools]
+    needs: [profiles, native, runtime-tools, audio]
     outputs:
       revision: ${{ steps.version.outputs.revision }}
       version: ${{ steps.version.outputs.version }}
@@ -189,7 +227,7 @@ jobs:
         env:
           BUILD_REVISION: ${{ steps.version.outputs.revision }}
         run: |
-          args=(package --native out/display-native --runtime-tools out/display-tools)
+          args=(package --native out/display-native --runtime-tools out/display-tools --audio out/audio-native)
           if [[ -n "$BUILD_REVISION" ]]; then
             args+=(--revision "$BUILD_REVISION")
           fi
@@ -211,25 +249,4 @@ jobs:
         with:
           path: ${{ steps.archive.outputs.file }}
           archive: false
-          if-no-files-found: error
-
-  audio-prototype:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-      - uses: android-actions/setup-android@v4
-        with:
-          accept-android-sdk-licenses: false
-          packages: ''
-      - name: Install NDK
-        run: |
-          ndk=$(python3 -c 'import json; print(json.load(open("android/native/profiles/android-13-arm64.json"))["ndkVersion"])')
-          android --sdk="$ANDROID_HOME" sdk install "ndk/$ndk"
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ndk" >> "$GITHUB_ENV"
-      - name: Build audio prototype
-        run: python3 scripts/build_audio.py out/audio-native
-      - uses: actions/upload-artifact@v7
-        with:
-          name: audio-prototype
-          path: out/audio-native
           if-no-files-found: error

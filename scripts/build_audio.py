@@ -1,5 +1,6 @@
 """Build Waydroid's ALSA Pulse PCM module for supported ARM Android ABIs."""
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -7,16 +8,31 @@ import re
 import shutil
 import subprocess
 import tempfile
+import sys
 
 from native_dependencies import prepare
 
 ROOT = Path(__file__).resolve().parents[1]
 PROFILE = ROOT / "android/audio/sources.json"
+sys.path.insert(0, str(ROOT / "py_modules"))
+from waydroid_manager.elf_symbols import dynamic_symbols, undefined_symbols
+
+
+def recipe_digest():
+    checksum = hashlib.sha256()
+    for name in ("android/audio/sources.json", "android/audio/readiness.patch",
+                 "scripts/build_audio.py", "scripts/native_dependencies.py",
+                 "py_modules/waydroid_manager/elf_symbols.py",
+                 "android/native/profiles/android-13-arm64.json"):
+        checksum.update((ROOT / name).read_bytes())
+    return checksum.hexdigest()
 
 def run(*command):
     subprocess.run(list(map(str, command)), check=True)
 
 def build(output: Path, cache: Path, ndk: Path):
+    output.mkdir(parents=True, exist_ok=True)
+    libraries = {}
     with tempfile.TemporaryDirectory(prefix="waydroid-audio-build-") as name:
         work = Path(name)
         source = work / "source"
@@ -43,7 +59,7 @@ def build(output: Path, cache: Path, ndk: Path):
         for abi, compiler in (("arm64-v8a", "aarch64-linux-android29-clang"),
                               ("armeabi-v7a", "armv7a-linux-androideabi29-clang")):
             target = output / abi
-            target.mkdir(parents=True)
+            target.mkdir(parents=True, exist_ok=True)
             stubs = work / ("stubs-" + abi)
             stubs.mkdir()
             empty = work / "empty.c"
@@ -57,7 +73,22 @@ def build(output: Path, cache: Path, ndk: Path):
                 "-L", stubs, "-Wl,--no-as-needed", "-lasound", "-lpulse",
                 "-Wl,-soname,libasound_module_pcm_pulse.so",
                 "-o", target / "libasound_module_pcm_pulse.so")
-            run(toolchain / "llvm-readelf", "-d", target / "libasound_module_pcm_pulse.so")
+            module = target / "libasound_module_pcm_pulse.so"
+            required = undefined_symbols(module)
+            alsa = sorted(name for name in required if name.startswith(("snd_", "_snd_")))
+            pulse = sorted(name for name in required if name.startswith("pa_"))
+            if not alsa or not pulse or "_snd_pcm_pulse_open" not in dynamic_symbols(module):
+                raise RuntimeError("The audio module has an invalid dynamic ABI")
+            libraries[abi] = {
+                "sha256": hashlib.sha256(module.read_bytes()).hexdigest(),
+                "alsaSymbols": alsa,
+                "pulseSymbols": pulse,
+            }
+        shutil.copyfile(source / "plugins/COPYING", output / "NOTICE.txt")
+    (output / "manifest.json").write_text(json.dumps({
+        "schemaVersion": 1, "sdk": 33, "recipeSha256": recipe_digest(),
+        "libraries": libraries,
+    }, indent=2) + "\n")
     return output
 
 if __name__ == "__main__":

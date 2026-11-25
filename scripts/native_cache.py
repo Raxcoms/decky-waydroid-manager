@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from build_native import ROOT, recipe_digest
+from build_audio import recipe_digest as audio_recipe_digest
 
 
 def entries() -> list[dict]:
@@ -21,7 +22,9 @@ def entries() -> list[dict]:
     tools = [{**tool, "path": "out/display-tools",
               "key": f"display-tools-{tool['runner']}-{digest.hexdigest()}"}
              for tool in json.loads((ROOT / "android/native/runtime-tools.json").read_text())]
-    return native + tools
+    audio = [{"audio": True, "path": "out/audio-native",
+              "key": f"audio-native-Linux-{audio_recipe_digest()}"}]
+    return native + tools + audio
 
 
 if __name__ == "__main__":
