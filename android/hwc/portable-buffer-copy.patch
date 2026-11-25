@@ -1,0 +1,194 @@
+--- a/hwcomposer/wayland-hwc.h
++++ b/hwcomposer/wayland-hwc.h
+@@ -31,6 +31,7 @@
+ #include "buffer_backing.h"
+ 
+ #include <mutex>
++#include <ui/GraphicBuffer.h>
+ #include <cutils/native_handle.h>
+ 
+ #include <stdint.h>
+@@ -126,6 +127,7 @@
+ 
+ struct buffer {
+     waydroid_manager::BufferBacking backing;
++    android::sp<android::GraphicBuffer> private_buffer;
+     struct wl_buffer *wl_buffer;
+ 
+     buffer_handle_t handle;
+@@ -393,6 +395,7 @@
+     std::list<std::function<void()>> egl_work_queue;
+     sem_t egl_go;
+     sem_t egl_done;
++    std::mutex egl_queue_mutex;
+ 
+     int width;
+     int height;
+@@ -411,6 +414,7 @@
+     std::unordered_map<buffer_handle_t, std::unique_ptr<buffer>> buffer_map;
+     // Replaced buffers the compositor has not released yet
+     std::vector<std::unique_ptr<buffer>> retired_buffers;
++    std::vector<std::unique_ptr<buffer>> private_buffers;
+     int retire_fence = -1;
+     std::array<uint8_t, 239> keysDown;
+ 
+--- a/hwcomposer/wayland-hwc.cpp
++++ b/hwcomposer/wayland-hwc.cpp
+@@ -105,14 +105,21 @@
+         return;
+     buffer *buf = it->second;
+     if (buf->released_point < buf->release_point) {
+-        sw_sync_timeline_inc(buf->release_timeline, buf->release_point - buf->released_point);
++        if (buf->release_timeline >= 0)
++            sw_sync_timeline_inc(buf->release_timeline, buf->release_point - buf->released_point);
+         buf->released_point = buf->release_point;
+     }
+ }
+ 
+ int buffer::next_release_fence() {
+     std::lock_guard<std::mutex> lock(release_mutex);
+-    if (release_timeline < 0 || (owner && !owner->connected))
++    if (owner && !owner->connected)
++        return -1;
++    if (release_timeline < 0 && private_buffer) {
++        ++release_point;
++        return -1;
++    }
++    if (release_timeline < 0)
+         return -1;
+     int fence = sw_sync_fence_create(release_timeline, "wl_buffer_release", release_point + 1);
+     if (fence >= 0)
+@@ -136,6 +143,7 @@
+     std::lock_guard<std::mutex> lock(release_mutex);
+     for (auto &[proxy, buf] : released_buffers) {
+         if (buf->owner == owner && buf->released_point < buf->release_point) {
++            if (buf->release_timeline >= 0)
+             sw_sync_timeline_inc(buf->release_timeline, buf->release_point - buf->released_point);
+             buf->released_point = buf->release_point;
+         }
+--- a/hwcomposer/egl-tools.h
++++ b/hwcomposer/egl-tools.h
+@@ -29,3 +29,5 @@
+ 
+ void* egl_loop(void* data);
+ void egl_render_to_pixels(struct display* display, struct buffer* buf);
++
++bool egl_copy_to_buffer(struct display *display, buffer_handle_t source, const buffer_metadata &metadata, android::GraphicBuffer *target);
+--- a/hwcomposer/egl-tools.cpp
++++ b/hwcomposer/egl-tools.cpp
+@@ -119,6 +119,43 @@
+     eglDestroyImageKHR(display->egl_dpy, image);
+ }
+ 
++
++bool egl_copy_to_buffer(struct display *display, buffer_handle_t source,
++                        const buffer_metadata &metadata, android::GraphicBuffer *target) {
++    android::sp<android::GraphicBuffer> input = new android::GraphicBuffer(
++            (native_handle_t *) source, android::GraphicBuffer::WRAP_HANDLE,
++            metadata.width, metadata.height, metadata.format, 1,
++            (uint64_t) android::GraphicBuffer::USAGE_HW_TEXTURE, metadata.pixel_stride);
++    const EGLint attrs[] = { EGL_IMAGE_PRESERVED_KHR, EGL_TRUE, EGL_NONE };
++    EGLImageKHR src = eglCreateImageKHR(display->egl_dpy, EGL_NO_CONTEXT, EGL_NATIVE_BUFFER_ANDROID,
++                                       (EGLClientBuffer) input->getNativeBuffer(), attrs);
++    EGLImageKHR dst = eglCreateImageKHR(display->egl_dpy, EGL_NO_CONTEXT, EGL_NATIVE_BUFFER_ANDROID,
++                                       (EGLClientBuffer) target->getNativeBuffer(), attrs);
++    if (src == EGL_NO_IMAGE_KHR || dst == EGL_NO_IMAGE_KHR) {
++        if (src != EGL_NO_IMAGE_KHR) eglDestroyImageKHR(display->egl_dpy, src);
++        if (dst != EGL_NO_IMAGE_KHR) eglDestroyImageKHR(display->egl_dpy, dst);
++        return false;
++    }
++    GLuint textures[2];
++    glGenTextures(2, textures);
++    glBindTexture(GL_TEXTURE_2D, textures[0]);
++    glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, src);
++    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, textures[0], 0);
++    bool ok = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
++    if (ok) {
++        glBindTexture(GL_TEXTURE_2D, textures[1]);
++        glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, dst);
++        glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, metadata.width, metadata.height);
++        glFinish();
++        ok = glGetError() == GL_NO_ERROR;
++    }
++    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
++    glDeleteTextures(2, textures);
++    eglDestroyImageKHR(display->egl_dpy, src);
++    eglDestroyImageKHR(display->egl_dpy, dst);
++    return ok;
++}
++
+ void* egl_loop(void* data) {
+     struct display* display = (struct display*) data;
+     egl_init(display);
+--- a/hwcomposer/hwcomposer.cpp
++++ b/hwcomposer/hwcomposer.cpp
+@@ -102,6 +102,51 @@
+         return nullptr;
+     }
+ 
++    buffer *copy_wl_buffer(waydroid_hwc_composer_device_1 *pdev, hwc_layer_1_t *layer,
++                           display *display, const buffer_metadata &metadata,
++                           const gralloc_handler &handler) {
++        buffer *candidate = nullptr;
++        for (const auto &entry : display->private_buffers) {
++            if (!entry->in_use() && entry->metadata.width == metadata.width &&
++                    entry->metadata.height == metadata.height && entry->metadata.format == metadata.format) {
++                candidate = entry.get();
++                break;
++            }
++        }
++        if (!candidate) {
++            // Bound the pool if the compositor stops releasing buffers.
++            if (display->private_buffers.size() >= 32)
++                return nullptr;
++            const uint64_t usage = android::GraphicBuffer::USAGE_HW_TEXTURE |
++                                   android::GraphicBuffer::USAGE_HW_RENDER |
++                                   android::GraphicBuffer::USAGE_HW_COMPOSER;
++            android::sp<android::GraphicBuffer> storage = new android::GraphicBuffer(
++                    metadata.width, metadata.height, metadata.format, 1, usage, "Waydroid Manager");
++            if (storage->initCheck() != android::OK)
++                return nullptr;
++            buffer_metadata output = metadata;
++            output.pixel_stride = storage->getStride();
++            auto result = handler.create_buffer(display, output, storage->handle);
++            if (!result || result->isShm)
++                return nullptr;
++            result->private_buffer = storage;
++            candidate = result.get();
++            display->private_buffers.push_back(std::move(result));
++        }
++        bool copied = false;
++        {
++            // Both displays share the primary EGL worker.
++            std::lock_guard<std::mutex> lock(pdev->display->egl_queue_mutex);
++            pdev->display->egl_work_queue.emplace_back([&] {
++                copied = egl_copy_to_buffer(pdev->display, layer->handle, metadata,
++                                            candidate->private_buffer.get());
++            });
++            sem_post(&pdev->display->egl_go);
++            sem_wait(&pdev->display->egl_done);
++        }
++        return copied ? candidate : nullptr;
++    }
++
+     buffer *get_wl_buffer(waydroid_hwc_composer_device_1 *pdev, hwc_layer_1_t *layer, size_t pos, display *display, unsigned attached) {
+         if (layer->acquireFenceFd >= 0) {
+             const int fd = layer->acquireFenceFd;
+@@ -121,6 +166,8 @@
+ 
+         const auto& gralloc_handler = display->secondary ? pdev->ext_gralloc_handler : pdev->gralloc_handler;
+         auto metadata = gralloc_handler.get_buffer_metadata(display, layer, pos);
++        if (pdev->timeline_fd < 0)
++            return copy_wl_buffer(pdev, layer, display, metadata, gralloc_handler);
+         buffer *buf = find_cached_buffer(display, metadata, layer->handle, attached);
+ 
+         if (!buf) {
+@@ -387,7 +434,7 @@
+         hwc_layer->releaseFenceFd = buf->current_release_fence();
+     } else {
+         hwc_layer->releaseFenceFd = buf->next_release_fence();
+-        if (hwc_layer->releaseFenceFd < 0 && buf->release_timeline >= 0)
++        if (hwc_layer->releaseFenceFd < 0 && !buf->private_buffer)
+             return -1;
+         // Only the primary display owns the shared EGL copy worker.
+         if (buf->isShm)

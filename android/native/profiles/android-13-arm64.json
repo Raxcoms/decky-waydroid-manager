@@ -228,6 +228,10 @@
       "file": "android/hwc/presentation-timing.patch"
     },
     {
+      "project": "hardware/waydroid",
+      "file": "android/hwc/portable-buffer-copy.patch"
+    },
+    {
       "project": "system/tools/hidl",
       "file": "android/native/host-tools.patch"
     }
