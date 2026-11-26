@@ -11,16 +11,35 @@
  #include <sys/un.h>
  #include <string>
  #include <sstream>
-@@ -78,6 +82,8 @@
-     return int64_t(now.tv_sec) * 1000000000LL + now.tv_nsec;
+@@ -79,6 +83,9 @@
  }
  static void trace_duration(unsigned kind, int64_t duration);
-+
-+void trace_buffer_used(unsigned id);
  
++void trace_buffer_used(unsigned id);
++void trace_detail(unsigned kind, uint64_t value);
++
  namespace {
      hwc_frect_t rect_apply_transform(hwc_frect_t src, uint32_t transform) {
-@@ -150,6 +156,7 @@
+         /* Transform bits are defined so that for both 90° and 270° this bit is set */
+@@ -94,12 +101,16 @@
+     }
+ 
+     buffer *find_cached_buffer(display *display, const buffer_metadata &metadata, buffer_handle_t handle, unsigned attached) {
++        trace_detail(10, reinterpret_cast<uintptr_t>(handle));
+         auto it = display->buffer_map.find(handle);
+         if (it != display->buffer_map.end()) {
+             const auto &buf = it->second;
++            trace_detail(11, buf->id);
+             bool same_storage = buf->isShm || buf->backing.matches(handle->data, handle->numFds, handle->numInts);
++            bool in_use = buf->in_use();
++            trace_detail(12, (same_storage ? 1 : 0) | (buf->metadata == metadata ? 2 : 0) | (in_use ? 4 : 0));
+             if (!same_storage || buf->metadata != metadata ||
+-                    (buf->in_use() && (buf->id != attached || buf->isShm))) {
++                    (in_use && (buf->id != attached || buf->isShm))) {
+                 display->retired_buffers.push_back(std::move(it->second));
+                 display->buffer_map.erase(it);
+             } else {
+@@ -150,6 +161,7 @@
              buf = emplace_result.first->second.get();
          }
  
@@ -28,7 +47,7 @@
          return buf;
      }
  
-@@ -259,6 +266,44 @@
+@@ -259,6 +271,45 @@
                       pdev->ext_vsync_period_ns;
  }
  
@@ -40,7 +59,7 @@
 +};
 +struct FrameTrace {
 +    std::atomic<uint32_t> count;
-+    FrameRecord records[131072];
++    FrameRecord records[262144];
 +};
 +static FrameTrace *frame_trace() {
 +    static FrameTrace *trace = []() -> FrameTrace * {
@@ -64,16 +83,17 @@
 +    auto *trace = frame_trace();
 +    if (!trace) return;
 +    uint32_t i = trace->count.fetch_add(1, std::memory_order_relaxed);
-+    if (i < 131072) trace->records[i] = {when, value, kind, i};
++    if (i < 262144) trace->records[i] = {when, value, kind, i};
 +}
 +
++void trace_detail(unsigned kind, uint64_t value) { record_frame(trace_time(), value, kind); }
 +void trace_buffer_used(unsigned id) { record_frame(trace_time(), id, 8); }
 +void trace_buffer_released(unsigned id) { record_frame(trace_time(), id, 9); }
 +
  struct TraceBucket {
      std::atomic<uint64_t> count[8] {};
      std::atomic<uint64_t> deviation[8] {};
-@@ -279,6 +324,7 @@
+@@ -279,6 +330,7 @@
      int64_t second = (when - zero) / 1000000000LL;
      if (second < 0 || second >= 240) return;
      int64_t event = value ? value : when;
@@ -81,7 +101,7 @@
      int64_t previous = trace_previous[kind].exchange(event);
      auto &slot = trace_buckets[second];
      ++slot.count[kind];
-@@ -291,7 +337,9 @@
+@@ -291,7 +343,9 @@
  }
  
  static void trace_duration(unsigned kind, int64_t duration) {
@@ -92,15 +112,25 @@
      if (second < 0 || second >= 240 || duration < 0) return;
      auto &slot = trace_buckets[second];
      ++slot.count[kind];
+@@ -638,6 +692,7 @@
+         return 0;
+     }
+ 
++    trace_detail(13, contents->flags);
+     if (contents->flags & HWC_GEOMETRY_CHANGED) {
+         retire_buffers(pdev->display);
+     }
 --- a/hwcomposer/wayland-hwc.cpp
 +++ b/hwcomposer/wayland-hwc.cpp
-@@ -98,12 +98,15 @@
+@@ -98,12 +98,17 @@
      released_buffers[buf->wl_buffer] = buf;
  }
  
 +void trace_buffer_released(unsigned id);
++void trace_detail(unsigned kind, uint64_t value);
 +
  void buffer_released(struct wl_buffer *wl_buffer) {
++    trace_detail(14, reinterpret_cast<uintptr_t>(wl_buffer));
      std::lock_guard<std::mutex> lock(release_mutex);
      auto it = released_buffers.find(wl_buffer);
      if (it == released_buffers.end())
