@@ -1,9 +1,10 @@
 --- a/hwcomposer/hwcomposer.cpp
 +++ b/hwcomposer/hwcomposer.cpp
-@@ -27,6 +27,9 @@
+@@ -27,6 +27,10 @@
  #include <unistd.h>
  #include <wayland-client.h>
  #include <sys/socket.h>
++#include <new>
 +#include <sys/mman.h>
 +#include <sys/syscall.h>
 +#include <linux/memfd.h>
@@ -38,7 +39,7 @@
 +            return nullptr;
 +        }
 +        ALOGI("Frame trace fd=%d", fd);
-+        return static_cast<FrameTrace *>(data);
++        return new (data) FrameTrace{};
 +    }();
 +    return trace;
 +}
