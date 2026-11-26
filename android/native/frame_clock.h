@@ -74,6 +74,8 @@ public:
         int64_t offset = (next_ - presented) % period_;
         if (offset > period_ / 2)
             offset -= period_;
+        else if (offset < -period_ / 2)
+            offset += period_;
         const int64_t step = period_ / 16;
         next_ -= std::clamp(offset, -step, step);
     }
