@@ -1,0 +1,28 @@
+{
+  "dependencies": [
+    {
+      "name": "alsa-plugins",
+      "path": "plugins",
+      "url": "https://codeload.github.com/waydroid/android_external_alsa-plugins/tar.gz/fcc0a2c3002ab0e68694896ded9c76dcd4cc1352",
+      "revision": "fcc0a2c3002ab0e68694896ded9c76dcd4cc1352",
+      "stripRoot": true,
+      "treeSha256": "52a2f161db8ff9add57d2f487c984b4a10118861717a50a2b9abae308e231da3"
+    },
+    {
+      "name": "alsa-lib",
+      "path": "alsa",
+      "url": "https://codeload.github.com/waydroid/android_external_alsa-lib/tar.gz/8a1eff33a2430b29ea2fc11f32a0a349e90c1c93",
+      "revision": "8a1eff33a2430b29ea2fc11f32a0a349e90c1c93",
+      "stripRoot": true,
+      "treeSha256": "8e5b0d81c503ecadeac9162d3a54c180bbf359b6c677239ad7ad16fe75d4f794"
+    },
+    {
+      "name": "pulseaudio",
+      "path": "pulse",
+      "url": "https://codeload.github.com/waydroid/android_external_pulseaudio/tar.gz/c680b1eec38d618062c0e903cbeacda37297a0b2",
+      "revision": "c680b1eec38d618062c0e903cbeacda37297a0b2",
+      "stripRoot": true,
+      "treeSha256": "3f237ecfaf5cb364966beeffc9628ad20f94c079abfd81bcb3038553f84d3807"
+    }
+  ]
+}

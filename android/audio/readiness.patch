@@ -1,0 +1,22 @@
+--- a/pulse/pcm_pulse.c
++++ b/pulse/pcm_pulse.c
+@@ -460,6 +460,7 @@
+ 
+ 	/* Make sure the buffer pointer is in sync */
+-	pcm->last_size -= writebytes;
++	/* A full write can exceed the capped writable count. */
++	pcm->last_size = writebytes >= pcm->last_size ? 0 : pcm->last_size - writebytes;
+ 	pcm->written += writebytes;
+ 	ret = update_ptr(pcm);
+ 	if (ret < 0)
+@@ -651,6 +652,10 @@
+ 	err = check_active(pcm);
+ 	if (err < 0)
+ 		goto finish;
++
++	/* Clear stale wakeups while the PulseAudio stream is not ready. */
++	if (err == 0)
++		pulse_poll_deactivate(pcm->p);
+ 
+ 	if (err > 0)
+ 		*revents = io->stream == SND_PCM_STREAM_PLAYBACK ? POLLOUT : POLLIN;
