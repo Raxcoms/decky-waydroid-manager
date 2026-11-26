@@ -11,7 +11,24 @@
  #include <sys/un.h>
  #include <string>
  #include <sstream>
-@@ -259,6 +262,41 @@
+@@ -78,6 +82,8 @@
+     return int64_t(now.tv_sec) * 1000000000LL + now.tv_nsec;
+ }
+ static void trace_duration(unsigned kind, int64_t duration);
++
++void trace_buffer_used(unsigned id);
+ 
+ namespace {
+     hwc_frect_t rect_apply_transform(hwc_frect_t src, uint32_t transform) {
+@@ -150,6 +156,7 @@
+             buf = emplace_result.first->second.get();
+         }
+ 
++        trace_buffer_used(buf->id);
+         return buf;
+     }
+ 
+@@ -259,6 +266,44 @@
                       pdev->ext_vsync_period_ns;
  }
  
@@ -50,10 +67,13 @@
 +    if (i < 131072) trace->records[i] = {when, value, kind, i};
 +}
 +
++void trace_buffer_used(unsigned id) { record_frame(trace_time(), id, 8); }
++void trace_buffer_released(unsigned id) { record_frame(trace_time(), id, 9); }
++
  struct TraceBucket {
      std::atomic<uint64_t> count[8] {};
      std::atomic<uint64_t> deviation[8] {};
-@@ -279,6 +317,7 @@
+@@ -279,6 +324,7 @@
      int64_t second = (when - zero) / 1000000000LL;
      if (second < 0 || second >= 240) return;
      int64_t event = value ? value : when;
@@ -61,7 +81,7 @@
      int64_t previous = trace_previous[kind].exchange(event);
      auto &slot = trace_buckets[second];
      ++slot.count[kind];
-@@ -291,7 +330,9 @@
+@@ -291,7 +337,9 @@
  }
  
  static void trace_duration(unsigned kind, int64_t duration) {
@@ -72,3 +92,21 @@
      if (second < 0 || second >= 240 || duration < 0) return;
      auto &slot = trace_buckets[second];
      ++slot.count[kind];
+--- a/hwcomposer/wayland-hwc.cpp
++++ b/hwcomposer/wayland-hwc.cpp
+@@ -98,12 +98,15 @@
+     released_buffers[buf->wl_buffer] = buf;
+ }
+ 
++void trace_buffer_released(unsigned id);
++
+ void buffer_released(struct wl_buffer *wl_buffer) {
+     std::lock_guard<std::mutex> lock(release_mutex);
+     auto it = released_buffers.find(wl_buffer);
+     if (it == released_buffers.end())
+         return;
+     buffer *buf = it->second;
++    trace_buffer_released(buf->id);
+     if (buf->released_point < buf->release_point) {
+         sw_sync_timeline_inc(buf->release_timeline, buf->release_point - buf->released_point);
+         buf->released_point = buf->release_point;
