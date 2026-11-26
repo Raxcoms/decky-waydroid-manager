@@ -56,6 +56,13 @@ int main() {
     assert(adjusted.deadline(time, measured) == initial);
     assert(adjusted.consume(initial) == initial);
     assert(adjusted.deadline(initial, measured) == initial + measured);
+    FrameClock late;
+    const int64_t late_period = 1000000;
+    const int64_t late_deadline = late.deadline(time, late_period);
+    const int64_t late_presented = late_deadline + late_period * 9 / 10;
+    late.align(late_presented, late_presented);
+    assert(late.deadline(late_presented, late_period) == late_deadline - late_period / 16);
+
     // A nominal 120 Hz panel runs slightly slow and starts half a cycle out of phase.
     FrameClock locked;
     const int64_t nominal = 1000000000LL / 120;
