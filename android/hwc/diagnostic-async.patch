@@ -55,7 +55,7 @@
                  ALOGE("failed to create a wayland buffer");
                  return nullptr;
              }
-@@ -149,7 +139,27 @@
+@@ -149,7 +139,31 @@
              assert(emplace_result.second);
              buf = emplace_result.first->second.get();
          }
@@ -69,6 +69,10 @@
 +            if (imported) {
 +                trace_duration(8, trace_time() - wait_start);
 +            } else {
++                static std::atomic<unsigned> reports {0};
++                if (reports.fetch_add(1) < 4)
++                    ALOGW("Fence import fallback: shm=%d fds=%d errno=%d",
++                          buf->isShm, layer->handle->numFds, errno);
 +                int result = sync_wait(fence, 100);
 +                int saved_errno = errno;
 +                trace_duration(6, trace_time() - wait_start);
