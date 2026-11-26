@@ -1,0 +1,73 @@
+--- a/hwcomposer/hwcomposer.cpp
++++ b/hwcomposer/hwcomposer.cpp
+@@ -27,6 +27,9 @@
+ #include <unistd.h>
+ #include <wayland-client.h>
+ #include <sys/socket.h>
++#include <sys/mman.h>
++#include <sys/syscall.h>
++#include <linux/memfd.h>
+ #include <sys/un.h>
+ #include <string>
+ #include <sstream>
+@@ -259,6 +262,41 @@
+                      pdev->ext_vsync_period_ns;
+ }
+ 
++struct FrameRecord {
++    int64_t when;
++    int64_t value;
++    uint32_t kind;
++    uint32_t sequence;
++};
++struct FrameTrace {
++    std::atomic<uint32_t> count;
++    FrameRecord records[131072];
++};
++static FrameTrace *frame_trace() {
++    static FrameTrace *trace = []() -> FrameTrace * {
++        int fd = syscall(__NR_memfd_create, "waydroid-frame-trace", MFD_CLOEXEC);
++        if (fd < 0) return nullptr;
++        if (ftruncate(fd, sizeof(FrameTrace)) < 0) {
++            close(fd);
++            return nullptr;
++        }
++        void *data = mmap(nullptr, sizeof(FrameTrace), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
++        if (data == MAP_FAILED) {
++            close(fd);
++            return nullptr;
++        }
++        ALOGI("Frame trace fd=%d", fd);
++        return static_cast<FrameTrace *>(data);
++    }();
++    return trace;
++}
++static void record_frame(int64_t when, int64_t value, unsigned kind) {
++    auto *trace = frame_trace();
++    if (!trace) return;
++    uint32_t i = trace->count.fetch_add(1, std::memory_order_relaxed);
++    if (i < 131072) trace->records[i] = {when, value, kind, i};
++}
++
+ struct TraceBucket {
+     std::atomic<uint64_t> count[8] {};
+     std::atomic<uint64_t> deviation[8] {};
+@@ -279,6 +317,7 @@
+     int64_t second = (when - zero) / 1000000000LL;
+     if (second < 0 || second >= 240) return;
+     int64_t event = value ? value : when;
++    record_frame(when, event, kind);
+     int64_t previous = trace_previous[kind].exchange(event);
+     auto &slot = trace_buckets[second];
+     ++slot.count[kind];
+@@ -291,7 +330,9 @@
+ }
+ 
+ static void trace_duration(unsigned kind, int64_t duration) {
+-    int64_t second = (trace_time() - trace_origin.load()) / 1000000000LL;
++    int64_t now = trace_time();
++    record_frame(now, duration, kind);
++    int64_t second = (now - trace_origin.load()) / 1000000000LL;
+     if (second < 0 || second >= 240 || duration < 0) return;
+     auto &slot = trace_buckets[second];
+     ++slot.count[kind];

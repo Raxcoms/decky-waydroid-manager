@@ -252,6 +252,10 @@
     {
       "project": "hardware/waydroid",
       "file": "android/hwc/diagnostic-trace.patch"
+    },
+    {
+      "project": "hardware/waydroid",
+      "file": "android/hwc/diagnostic-frames.patch"
     }
   ]
 }
