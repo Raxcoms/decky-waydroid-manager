@@ -1,0 +1,131 @@
+--- a/hwcomposer/hwcomposer.cpp
++++ b/hwcomposer/hwcomposer.cpp
+@@ -27,6 +27,7 @@
+ #include <unistd.h>
+ #include <wayland-client.h>
+ #include <sys/socket.h>
++#include <sys/ioctl.h>
+ #include <sys/un.h>
+ #include <string>
+ #include <sstream>
+@@ -109,32 +110,20 @@
+         return nullptr;
+     }
+ 
++    struct DmabufFence { uint32_t flags; int32_t fd; };
++    constexpr unsigned long import_sync_file = _IOW('b', 3, DmabufFence);
++
+     buffer *get_wl_buffer(waydroid_hwc_composer_device_1 *pdev, hwc_layer_1_t *layer, size_t pos, display *display, unsigned attached) {
+-        if (layer->acquireFenceFd >= 0) {
+-            const int fd = layer->acquireFenceFd;
+-            layer->acquireFenceFd = -1;
+-            // The producer may still be writing, including when SHM copies the pixels.
+-            int64_t wait_start = trace_time();
+-            int wait_result = sync_wait(fd, 100);
+-            int wait_errno = errno;
+-            trace_duration(6, trace_time() - wait_start);
+-            errno = wait_errno;
+-            if (wait_result < 0) {
+-                ALOGW("Dropping buffer after acquire fence wait failed: %s", strerror(errno));
+-                layer->releaseFenceFd = fd;
+-                return nullptr;
+-            }
+-            close(fd);
+-        }
++        const int fence = layer->acquireFenceFd;
++        layer->acquireFenceFd = -1;
+         if (!layer->handle) {
++            layer->releaseFenceFd = fence;
+             ALOGE("cannot create a wayland buffer for a null handle");
+             return nullptr;
+         }
+-
+         const auto& gralloc_handler = display->secondary ? pdev->ext_gralloc_handler : pdev->gralloc_handler;
+         auto metadata = gralloc_handler.get_buffer_metadata(display, layer, pos);
+         buffer *buf = find_cached_buffer(display, metadata, layer->handle, attached);
+-
+         if (!buf) {
+             std::unique_ptr<buffer> result;
+             if (layer->flags & HWC_IS_CURSOR_LAYER)
+@@ -142,6 +131,7 @@
+             else
+                 result = gralloc_handler.create_buffer(display, metadata, layer->handle);
+             if (!result) {
++                layer->releaseFenceFd = fence;
+                 ALOGE("failed to create a wayland buffer");
+                 return nullptr;
+             }
+@@ -149,7 +139,27 @@
+             assert(emplace_result.second);
+             buf = emplace_result.first->second.get();
+         }
+-
++        if (fence >= 0) {
++            int64_t wait_start = trace_time();
++            bool imported = !buf->isShm && layer->handle->numFds > 0 && layer->handle->numFds <= 16;
++            DmabufFence sync {2, fence};
++            for (int i = 0; imported && i < layer->handle->numFds; ++i)
++                imported = ioctl(layer->handle->data[i], import_sync_file, &sync) == 0;
++            if (imported) {
++                trace_duration(8, trace_time() - wait_start);
++            } else {
++                int result = sync_wait(fence, 100);
++                int saved_errno = errno;
++                trace_duration(6, trace_time() - wait_start);
++                errno = saved_errno;
++                if (result < 0) {
++                    ALOGW("Dropping buffer after acquire fence wait failed: %s", strerror(errno));
++                    layer->releaseFenceFd = fence;
++                    return nullptr;
++                }
++            }
++            close(fence);
++        }
+         return buf;
+     }
+ 
+@@ -260,13 +270,13 @@
+ }
+ 
+ struct TraceBucket {
+-    std::atomic<uint64_t> count[8] {};
+-    std::atomic<uint64_t> deviation[8] {};
+-    std::atomic<uint64_t> maximum[8] {};
++    std::atomic<uint64_t> count[9] {};
++    std::atomic<uint64_t> deviation[9] {};
++    std::atomic<uint64_t> maximum[9] {};
+ };
+ static TraceBucket trace_buckets[240];
+ static std::atomic<int64_t> trace_origin {0};
+-static std::atomic<int64_t> trace_previous[8] {};
++static std::atomic<int64_t> trace_previous[9] {};
+ static void trace_event(unsigned kind, int64_t value = 0) {
+     timespec now;
+     if (clock_gettime(CLOCK_MONOTONIC, &now)) return;
+@@ -309,13 +319,13 @@
+              (unsigned long long)pdev->primary_vsyncs.load(),
+              (long long)external_period(pdev), (unsigned long long)pdev->external_vsyncs.load(), (long long)pdev->observed_period_ns.load());
+     int page = property_get_int32("waydroid.trace_page", -1);
+-    if (page < 0 || page >= 12) return;
++    if (page < 0 || page >= 24) return;
+     int used = strlen(buffer);
+     used += snprintf(buffer + used, length - used, "Trace origin %lld page %d\n", (long long)trace_origin.load(), page);
+-    for (int second = page * 20; second < page * 20 + 20 && used < length - 256; ++second) {
++    for (int second = page * 10; second < page * 10 + 10 && used < length - 384; ++second) {
+         auto &slot = trace_buckets[second];
+         used += snprintf(buffer + used, length - used,
+-                "T %d %llu:%llu:%llu %llu:%llu:%llu %llu:%llu:%llu %llu:%llu:%llu %llu:%llu:%llu %llu:%llu:%llu %llu:%llu:%llu %llu:%llu:%llu\n",
++                "T %d %llu:%llu:%llu %llu:%llu:%llu %llu:%llu:%llu %llu:%llu:%llu %llu:%llu:%llu %llu:%llu:%llu %llu:%llu:%llu %llu:%llu:%llu %llu:%llu:%llu\n",
+                 second,
+                 (unsigned long long)slot.count[0].load(), (unsigned long long)slot.deviation[0].load(), (unsigned long long)slot.maximum[0].load(),
+                 (unsigned long long)slot.count[1].load(), (unsigned long long)slot.deviation[1].load(), (unsigned long long)slot.maximum[1].load(),
+@@ -324,7 +334,8 @@
+                 (unsigned long long)slot.count[4].load(), (unsigned long long)slot.deviation[4].load(), (unsigned long long)slot.maximum[4].load(),
+                 (unsigned long long)slot.count[5].load(), (unsigned long long)slot.deviation[5].load(), (unsigned long long)slot.maximum[5].load(),
+                 (unsigned long long)slot.count[6].load(), (unsigned long long)slot.deviation[6].load(), (unsigned long long)slot.maximum[6].load(),
+-                (unsigned long long)slot.count[7].load(), (unsigned long long)slot.deviation[7].load(), (unsigned long long)slot.maximum[7].load());
++                (unsigned long long)slot.count[7].load(), (unsigned long long)slot.deviation[7].load(), (unsigned long long)slot.maximum[7].load(),
++                (unsigned long long)slot.count[8].load(), (unsigned long long)slot.deviation[8].load(), (unsigned long long)slot.maximum[8].load());
+     }
+ }
+ 
