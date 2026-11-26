@@ -17,6 +17,7 @@
  	pcm->last_size -= writebytes;
  	pcm->written += writebytes;
  	ret = update_ptr(pcm);
+ 	if (ret < 0)
 @@ -651,6 +656,17 @@
  	err = check_active(pcm);
  	if (err < 0)
