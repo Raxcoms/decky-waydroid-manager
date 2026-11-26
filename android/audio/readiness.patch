@@ -16,7 +16,8 @@
 +			"underflow write=%zu last=%zu length=%u", writebytes,
 +			pcm->last_size, pcm->buffer_attr.tlength);
 +
- 	pcm->last_size -= writebytes;
+-	pcm->last_size -= writebytes;
++	pcm->last_size = writebytes >= pcm->last_size ? 0 : pcm->last_size - writebytes;
  	pcm->written += writebytes;
  	ret = update_ptr(pcm);
  	if (ret < 0)
