@@ -1,0 +1,139 @@
+# Performance investigation handoff
+
+This document records the remaining performance and startup work from the Nova
+investigation. The current implementation and these findings are not a complete
+fix for the issues below.
+
+## Current state
+
+- Branch: `fix/install-startup`. The audio accounting change is in `366e060`;
+  its CI build integration is in `573b689`.
+- CI run [45729177211](https://github.com/Raxcoms/decky-waydroid-manager/actions/runs/45729177211)
+  passed. Nova is running the corresponding plugin build. Super Hexagon launched
+  on a retry and its Waydroid audio stream was active when last checked.
+- The temporary timing and logging experiments are on `fix/phase-test`, not the
+  working branch. They contain a Nova-specific test value and must not be merged
+  as a production solution. `fix/audio-loop` also contains diagnostic work.
+- Steam composition must not be forced. Keep display handling device-independent,
+  preserve direct scanout, avoid continuous diagnostic polling, and do not require
+  installing or overlaying host system packages on immutable Armada devices.
+
+## Motion wobble and frame pacing
+
+### What was observed
+
+Super Hexagon on Nova shows recurring periods of smooth motion followed by a
+visible trembling or catch-up effect. The user also previously observed startup
+switching between 60 and 120 FPS and intermittent flicker and wrong colors.
+Those earlier symptoms have not been conclusively reproduced or resolved in the
+latest tests. A refresh-matched HWC timing experiment reduced the visible effect,
+according to the user, but did not remove it.
+
+During a synchronized one-minute capture, MangoHUD showed frame-time variation
+of about 5.5 to 11 ms during a strong wobble. Independent DRM vblank measurements
+stayed near 8.32 to 8.34 ms. Gamescope's per-app frame counter and Android's
+reported presentation timestamps were close to the physical cadence where the
+samples overlapped. These interfaces measure different stages; their agreement
+or disagreement does not by itself establish which image was scanned out. The
+Android surface timestamp ring buffer also had gaps between samples.
+
+The game's Android buffer-ready times drifted against physical vblank. In one
+capture their average was about 8.333 ms, compared with about 8.330 ms for the
+physical display. The game render thread was observed sleeping in
+`ofTimer::waitNext()` inside its openFrameworks library. This supports an
+independent game timer as a contributor, but does not prove it is the only
+cause of visible wobble.
+
+A temporary test gave Android the measured display period at startup. Android
+accepted it, but the game buffer-ready cadence stayed near 8.333 ms and the
+MangoHUD variation remained. The actual display period also changed slightly
+between captures. Do not use the diagnostic's fixed period as a general fix.
+A short comparison of different callback offsets was inconclusive.
+
+### Remaining work
+
+1. Trace the timing from game buffer submission through Android, the Waydroid
+   HWC and Gamescope to the actual displayed image. Correlate full-frame
+   timestamps and use a low-overhead capture that does not create the stutter.
+2. Determine how the game timer interacts with Android buffer backpressure and
+   physical presentation. Check other Android games before generalizing from
+   Super Hexagon or adding an app-specific workaround.
+3. Nova does not expose `/dev/sw_sync`. The current fallback restores launch
+   compatibility but cannot provide the normal Wayland release fence. A GPU-copy
+   prototype provided safer ownership at a measurable cost and did not improve
+   the user's reported jitter. Do not merge it on that evidence. Investigate
+   a portable, copy-free release-fence path and verify its cost and correctness
+   before using it. DRM sync objects are available on Nova, but an empty
+   unsignaled sync object could not be exported as a sync file in a simple test.
+4. Revalidate live limiter changes, arbitrary caps, startup at 120 FPS, single
+   and dual-screen shortcuts, and visual output on supported devices. Confirm
+   that MangoHUD statistics continue to describe the primary screen.
+
+Relevant implementation: `android/native/frame_clock.h`,
+`android/hwc/adaptive-presentation.patch`, `android/hwc/frame-rate.patch`,
+and `py_modules/waydroid_manager/display_frame_limit.py`.
+
+## Audio CPU usage
+
+An Android audio service writer was observed using almost one full CPU core
+while blocked in the ALSA Pulse playback path. Restarting that guest service
+returned its usage to around 1% and the user reported quieter fans and working
+audio. Motion jitter remained, so the audio load is a separate problem.
+
+A first patch to drain stale Pulse poll notifications did not prevent the loop
+from returning during a longer device test. It was reverted, then reintroduced
+alongside the counter correction below. Do not claim that the full busy-loop
+issue is resolved solely from a short healthy sample.
+
+Instrumentation confirmed that the playback bridge can write more bytes than
+its capped `last_size` counter: observed examples were 4,096 bytes against
+4,092 and 4,092 against 2,048. The original unsigned subtraction wraps. The
+current branch bounds that subtraction and retains the stale-notification fix.
+The corrected diagnostic ran for 90 seconds with the writer around 0–2% of a
+core; the production module was verified loaded on Nova and a retry produced
+an active audio stream. The intermittent high-CPU loop has not been reproduced
+since that fix, and a longer validation is still needed.
+
+The audio module is built from pinned upstream sources in CI and cached. The
+plugin checks image SDK, library architecture, exports and required symbols,
+and preserves existing user audio overrides. It applies compatible files through
+its launch-scoped vendor overlay. Unsupported images skip the module; no device
+compiler or host package installation is required.
+
+### Remaining work
+
+1. Run longer sessions and repeated cold starts with audio, including the
+   conditions that originally triggered high CPU. Check sound and fan behavior.
+2. If the loop returns, capture the writer's stack and poll system calls while
+   it is spinning. The isolated diagnostic branch can report Pulse readiness,
+   ring pointers and buffer sizes; avoid leaving its logging or test period in
+   the production build. Distinguish a stale wakeup from ALSA/Pulse readiness
+   disagreement before changing the fix.
+3. Validate compatible and incompatible image behavior, user-provided vendor
+   overrides, 32-bit and 64-bit modules, crash recovery, and plain Waydroid after
+   the plugin session closes or the plugin is removed.
+
+Relevant implementation: `android/audio/readiness.patch`,
+`android/audio/sources.json`, `scripts/build_audio.py`, and
+`py_modules/waydroid_manager/audio_payload.py`.
+
+## Shortcut startup timeout
+
+During the final Nova validation, the first launch on build `573b689` reported
+that Android did not activate the requested display mode within the two-second
+wait. The subsequent `am start -W` returned `Status: timeout` after about ten
+seconds for Super Hexagon's activity, so the plugin ended the launch. A retry
+reached the resumed game activity and started the audio stream. Similar
+intermittent startup timeouts appeared during diagnostic builds; their cause is
+not established.
+
+Reproduce from a cold plugin-owned session, capture the display-mode transition,
+activity state, HWC and relay presentation together, and determine whether this
+is a readiness race or a genuine failure to draw. Do not treat a resumed
+activity alone as proof that a usable frame is visible. Fix the ordering or
+readiness check and add regression coverage without weakening permission-dialog
+and failed-launch handling.
+
+Relevant implementation: `py_modules/waydroid_manager/display_frame_limit.py`,
+`py_modules/waydroid_manager/guest.py`, `py_modules/waydroid_manager/session.py`,
+and `main.py`.
