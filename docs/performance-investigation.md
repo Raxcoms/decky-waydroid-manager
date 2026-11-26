@@ -8,9 +8,9 @@ fix for the issues below.
 
 - Branch: `fix/install-startup`. The audio accounting change is in `366e060`;
   its CI build integration is in `573b689`.
-- CI run [45729177211](https://github.com/Raxcoms/decky-waydroid-manager/actions/runs/45729177211)
-  passed. Nova is running the corresponding plugin build. Super Hexagon launched
-  on a retry and its Waydroid audio stream was active when last checked.
+- CI run [45898319260](https://github.com/Raxcoms/decky-waydroid-manager/actions/runs/45898319260)
+  passed for `0259c8c`. Nova was restored to this build after the latest
+  display experiment.
 - The temporary timing and logging experiments are on `fix/phase-test`, not the
   working branch. They contain a Nova-specific test value and must not be merged
   as a production solution. `fix/audio-loop` also contains diagnostic work.
@@ -49,6 +49,34 @@ accepted it, but the game buffer-ready cadence stayed near 8.333 ms and the
 MangoHUD variation remained. The actual display period also changed slightly
 between captures. Do not use the diagnostic's fixed period as a general fix.
 A short comparison of different callback offsets was inconclusive.
+
+### Latest display comparison
+
+One-minute captures on Nova compared the normal blocking acquire-fence wait
+with an experimental DMA-BUF fence import on the `test/hwc-trace` branch. In
+the 59 complete seconds available for comparison, the blocking capture had
+about 4 discarded presentation feedback events per second. The experiment had
+about 0.3 per second, and its Android HWC made about 120 imports per second
+without blocking acquire waits. Gamescope reported 365 intervals above 12.5 ms
+in the first capture and 140 in the second. These were separate runs, not a
+controlled benchmark. The verified screenshot after the second capture showed
+the game's stage-complete screen; the captures do not prove a gameplay fix.
+
+The worst MangoHUD seconds correlated strongly with missed Gamescope intervals
+in the blocking capture, but not in the experiment. The experiment still had
+frame-time variation, so missed presentations are not the whole explanation.
+Physical vblank stayed near 120 Hz. Android SurfaceFlinger was using client
+composition during the test; this does not mean Steam composition was enabled.
+
+The test initially tried every native-handle file descriptor, including a
+metadata memfd. A short ioctl trace showed that importing the metadata failed.
+The revised test imports only the image planes already identified by the Cros
+gralloc handler, and falls back to the original wait elsewhere. This remains a
+diagnostic only. Without a working release fence, it is not established that
+Android can safely reuse buffers after handing them to the compositor. Do not
+ship the asynchronous path until ownership and synchronization are proven on
+supported image and compositor combinations. The experiment does not force
+Steam composition or copy frames.
 
 ### Remaining work
 
@@ -137,3 +165,8 @@ and failed-launch handling.
 Relevant implementation: `py_modules/waydroid_manager/display_frame_limit.py`,
 `py_modules/waydroid_manager/guest.py`, `py_modules/waydroid_manager/session.py`,
 and `main.py`.
+
+The duplicate-mode warning was traced to equivalent Android modes with different
+IDs. Commit `0259c8c` accepts matching resolution and refresh rate and adds
+tests. Two Nova cold launches then succeeded without the warning. This does not
+by itself establish the cause of every intermittent activity timeout.
