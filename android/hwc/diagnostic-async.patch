@@ -55,17 +55,20 @@
                  ALOGE("failed to create a wayland buffer");
                  return nullptr;
              }
-@@ -149,7 +139,31 @@
+@@ -149,7 +139,34 @@
              assert(emplace_result.second);
              buf = emplace_result.first->second.get();
          }
 -
 +        if (fence >= 0) {
 +            int64_t wait_start = trace_time();
-+            bool imported = !buf->isShm && layer->handle->numFds > 0 && layer->handle->numFds <= 16;
++            const auto *cros = reinterpret_cast<const cros_gralloc_handle *>(layer->handle);
++            bool imported = !buf->isShm && display->gtype == GrallocType::GRALLOC_CROS &&
++                    cros->num_planes > 0 && cros->num_planes <= DRV_MAX_PLANES &&
++                    cros->num_planes <= static_cast<uint32_t>(layer->handle->numFds);
 +            DmabufFence sync {2, fence};
-+            for (int i = 0; imported && i < layer->handle->numFds; ++i)
-+                imported = ioctl(layer->handle->data[i], import_sync_file, &sync) == 0;
++            for (size_t i = 0; imported && i < cros->num_planes; ++i)
++                imported = ioctl(cros->fds[i], import_sync_file, &sync) == 0;
 +            if (imported) {
 +                trace_duration(8, trace_time() - wait_start);
 +            } else {
@@ -88,7 +91,7 @@
          return buf;
      }
  
-@@ -260,13 +270,13 @@
+@@ -260,13 +277,13 @@
  }
  
  struct TraceBucket {
@@ -106,7 +109,7 @@
  static void trace_event(unsigned kind, int64_t value = 0) {
      timespec now;
      if (clock_gettime(CLOCK_MONOTONIC, &now)) return;
-@@ -309,13 +319,13 @@
+@@ -309,13 +326,13 @@
               (unsigned long long)pdev->primary_vsyncs.load(),
               (long long)external_period(pdev), (unsigned long long)pdev->external_vsyncs.load(), (long long)pdev->observed_period_ns.load());
      int page = property_get_int32("waydroid.trace_page", -1);
@@ -123,7 +126,7 @@
                  second,
                  (unsigned long long)slot.count[0].load(), (unsigned long long)slot.deviation[0].load(), (unsigned long long)slot.maximum[0].load(),
                  (unsigned long long)slot.count[1].load(), (unsigned long long)slot.deviation[1].load(), (unsigned long long)slot.maximum[1].load(),
-@@ -324,7 +334,8 @@
+@@ -324,7 +341,8 @@
                  (unsigned long long)slot.count[4].load(), (unsigned long long)slot.deviation[4].load(), (unsigned long long)slot.maximum[4].load(),
                  (unsigned long long)slot.count[5].load(), (unsigned long long)slot.deviation[5].load(), (unsigned long long)slot.maximum[5].load(),
                  (unsigned long long)slot.count[6].load(), (unsigned long long)slot.deviation[6].load(), (unsigned long long)slot.maximum[6].load(),
