@@ -7,17 +7,18 @@
  
  #include "pulse.h"
  
-@@ -651,6 +652,16 @@
+@@ -651,6 +652,17 @@
  	err = check_active(pcm);
  	if (err < 0)
  		goto finish;
 +	static unsigned int probes;
 +	if ((++probes & 1048575) == 0) {
 +		__android_log_print(ANDROID_LOG_WARN, "WaydroidAudioProbe",
-+			"active=%d writable=%zu minreq=%u hw=%lu app=%lu period=%lu buffer=%lu",
++			"active=%d writable=%zu minreq=%u hw=%lu app=%lu period=%lu buffer=%lu last=%zu ptr=%zu length=%u",
 +			err, pa_stream_writable_size(pcm->stream), pcm->buffer_attr.minreq,
 +			(unsigned long)io->hw_ptr, (unsigned long)io->appl_ptr,
-+			(unsigned long)io->period_size, (unsigned long)io->buffer_size);
++			(unsigned long)io->period_size, (unsigned long)io->buffer_size,
++			pcm->last_size, pcm->ptr, pcm->buffer_attr.tlength);
 +	}
 +	if (err == 0)
 +		pulse_poll_deactivate(pcm->p);
