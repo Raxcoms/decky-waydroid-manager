@@ -7,18 +7,20 @@
  
  #include "pulse.h"
  
-@@ -460,6 +461,10 @@
+@@ -460,6 +461,12 @@
  
  	/* Make sure the buffer pointer is in sync */
-+	if (writebytes > pcm->last_size)
++	static unsigned underflows;
++	if (writebytes > pcm->last_size && underflows++ < 4)
 +		__android_log_print(ANDROID_LOG_WARN, "WaydroidAudioProbe",
 +			"underflow write=%zu last=%zu length=%u", writebytes,
 +			pcm->last_size, pcm->buffer_attr.tlength);
++
  	pcm->last_size -= writebytes;
  	pcm->written += writebytes;
  	ret = update_ptr(pcm);
  	if (ret < 0)
-@@ -651,6 +656,17 @@
+@@ -651,6 +658,17 @@
  	err = check_active(pcm);
  	if (err < 0)
  		goto finish;
