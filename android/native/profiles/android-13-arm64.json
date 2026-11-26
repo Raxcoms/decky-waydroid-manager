@@ -155,14 +155,28 @@
   "ndkVersion": "25.2.9519653",
   "elfMachine": 183,
   "vndkVersion": "33",
-  "densityReference": {"width": 1280, "height": 720, "dpi": 180},
-  "capabilities": ["external-presentation", "display-frame-limit"],
-  "exportedHeaderPatches": [
-    {"project": "system/libhwbinder", "include": "include/hwbinder/IBinder.h"}
+  "densityReference": {
+    "width": 1280,
+    "height": 720,
+    "dpi": 180
+  },
+  "capabilities": [
+    "external-presentation",
+    "display-frame-limit"
   ],
-  "runtimeSymbols": ["_ZN7android8hardware7IBinder14isHostHwBinderEv"],
+  "exportedHeaderPatches": [
+    {
+      "project": "system/libhwbinder",
+      "include": "include/hwbinder/IBinder.h"
+    }
+  ],
+  "runtimeSymbols": [
+    "_ZN7android8hardware7IBinder14isHostHwBinderEv"
+  ],
   "requiredRuntimeSymbols": {
-    "hwcomposer.waydroid.so": ["_ZN7android8hardware7IBinder14isHostHwBinderEv"]
+    "hwcomposer.waydroid.so": [
+      "_ZN7android8hardware7IBinder14isHostHwBinderEv"
+    ]
   },
   "ffiArch": "aarch64",
   "ffiConfig": "arm64",
@@ -234,6 +248,10 @@
     {
       "project": "system/tools/hidl",
       "file": "android/native/host-tools.patch"
+    },
+    {
+      "project": "hardware/waydroid",
+      "file": "android/hwc/diagnostic-trace.patch"
     }
   ]
 }

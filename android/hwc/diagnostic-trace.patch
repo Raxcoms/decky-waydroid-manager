@@ -1,0 +1,95 @@
+--- a/hwcomposer/hwcomposer.cpp
++++ b/hwcomposer/hwcomposer.cpp
+@@ -247,6 +247,37 @@
+                      pdev->ext_vsync_period_ns;
+ }
+ 
++struct TraceBucket {
++    std::atomic<uint64_t> count[5] {};
++    std::atomic<uint64_t> deviation[5] {};
++    std::atomic<uint64_t> maximum[5] {};
++};
++static TraceBucket trace_buckets[240];
++static std::atomic<int64_t> trace_origin {0};
++static std::atomic<int64_t> trace_previous[5] {};
++static void trace_event(unsigned kind, int64_t value = 0) {
++    timespec now;
++    if (clock_gettime(CLOCK_MONOTONIC, &now)) return;
++    int64_t when = int64_t(now.tv_sec) * 1000000000LL + now.tv_nsec;
++    int64_t zero = trace_origin.load();
++    if (!zero) {
++        trace_origin.compare_exchange_strong(zero, when);
++        zero = trace_origin.load();
++    }
++    int64_t second = (when - zero) / 1000000000LL;
++    if (second < 0 || second >= 240) return;
++    int64_t event = value ? value : when;
++    int64_t previous = trace_previous[kind].exchange(event);
++    auto &slot = trace_buckets[second];
++    ++slot.count[kind];
++    if (previous && event > previous) {
++        uint64_t delta = event - previous;
++        slot.deviation[kind] += delta > 8333333 ? delta - 8333333 : 8333333 - delta;
++        uint64_t maximum = slot.maximum[kind].load();
++        while (delta > maximum && !slot.maximum[kind].compare_exchange_weak(maximum, delta)) {}
++    }
++}
++
+ static void hwc_dump(hwc_composer_device_1 *dev, char *buffer, int length) {
+     auto *pdev = static_cast<waydroid_hwc_composer_device_1 *>(dev);
+     snprintf(buffer, length,
+@@ -255,6 +286,21 @@
+              (long long)pdev->active_period_ns.load(),
+              (unsigned long long)pdev->primary_vsyncs.load(),
+              (long long)external_period(pdev), (unsigned long long)pdev->external_vsyncs.load(), (long long)pdev->observed_period_ns.load());
++    int page = property_get_int32("waydroid.trace_page", -1);
++    if (page < 0 || page >= 12) return;
++    int used = strlen(buffer);
++    used += snprintf(buffer + used, length - used, "Trace origin %lld page %d\n", (long long)trace_origin.load(), page);
++    for (int second = page * 20; second < page * 20 + 20 && used < length - 256; ++second) {
++        auto &slot = trace_buckets[second];
++        used += snprintf(buffer + used, length - used,
++                "T %d %llu:%llu:%llu %llu:%llu:%llu %llu:%llu:%llu %llu:%llu:%llu %llu:%llu:%llu\n",
++                second,
++                (unsigned long long)slot.count[0].load(), (unsigned long long)slot.deviation[0].load(), (unsigned long long)slot.maximum[0].load(),
++                (unsigned long long)slot.count[1].load(), (unsigned long long)slot.deviation[1].load(), (unsigned long long)slot.maximum[1].load(),
++                (unsigned long long)slot.count[2].load(), (unsigned long long)slot.deviation[2].load(), (unsigned long long)slot.maximum[2].load(),
++                (unsigned long long)slot.count[3].load(), (unsigned long long)slot.deviation[3].load(), (unsigned long long)slot.maximum[3].load(),
++                (unsigned long long)slot.count[4].load(), (unsigned long long)slot.deviation[4].load(), (unsigned long long)slot.maximum[4].load());
++    }
+ }
+ 
+ static void* hwc_vsync_thread(void* data) {
+@@ -281,6 +327,7 @@
+         int64_t external_timestamp = external_vsync ? external.consume(now) : 0;
+         if (pdev->procs && pdev->procs->vsync) {
+             if (timestamp && pdev->vsync_callback_enabled) {
++                trace_event(2, timestamp);
+                 pdev->procs->vsync(pdev->procs, HWC_DISPLAY_PRIMARY, timestamp);
+                 ++pdev->primary_vsyncs;
+             }
+@@ -326,6 +373,8 @@
+ {
+     auto *pdev = static_cast<waydroid_hwc_composer_device_1 *>(data);
+     wp_presentation_feedback_destroy(feedback);
++    trace_event(3);
++    trace_event(4, ((int64_t(tv_sec_hi) << 32) + tv_sec_lo) * 1000000000LL + tv_nsec);
+ 
+     // Accept only a scanout timestamp from the primary output's native cadence.
+     if ((flags & WP_PRESENTATION_FEEDBACK_KIND_VSYNC) && pdev->display->monotonic_presentation &&
+@@ -540,6 +589,7 @@
+         return 0;
+ 
+     auto *pdev = static_cast<waydroid_hwc_composer_device_1 *>(dev);
++    trace_event(0);
+ 
+     hwc_display_contents_1_t *ext = nullptr;
+     {
+@@ -597,6 +647,7 @@
+         wl_surface_commit(window->surface);
+     }
+     wl_display_flush(pdev->display->display);
++    trace_event(1);
+ 
+     sw_sync_timeline_inc(pdev->timeline_fd, 1);
+     ++pdev->next_sync_point;
