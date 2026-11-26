@@ -1,6 +1,7 @@
 """Select temporary composer modes without changing Android's saved settings."""
 
 from dataclasses import dataclass
+import math
 import re
 import time
 
@@ -10,6 +11,7 @@ class DisplayModes:
     display: int
     active: int
     rates: dict[int, float]
+    sizes: dict[int, tuple[int, int]]
 
     @classmethod
     def primary(cls, output: str) -> "DisplayModes":
@@ -18,11 +20,12 @@ class DisplayModes:
         if not section:
             raise RuntimeError("Android did not report its primary display modes")
         active = re.search(r"\bactiveModeId=(\d+)", section[2])
-        rates = {int(mode): float(rate) for mode, rate in
-                 re.findall(r"\{id=(\d+), hwcId=\d+, resolution=\d+x\d+, refreshRate=([\d.]+) Hz", section[2])}
+        entries = re.findall(r"\{id=(\d+), hwcId=\d+, resolution=(\d+)x(\d+), refreshRate=([\d.]+) Hz", section[2])
+        rates = {int(mode): float(rate) for mode, _, _, rate in entries}
+        sizes = {int(mode): (int(width), int(height)) for mode, width, height, _ in entries}
         if not active or int(active[1]) not in rates or not rates or any(rate <= 0 for rate in rates.values()):
             raise RuntimeError("Android reported invalid primary display modes")
-        return cls(int(section[1]), int(active[1]), rates)
+        return cls(int(section[1]), int(active[1]), rates, sizes)
 
     def select(self, fps: int) -> int:
         ceiling = min(float(fps), max(self.rates.values())) if fps else max(self.rates.values())
@@ -30,6 +33,11 @@ class DisplayModes:
         if not candidates:
             raise RuntimeError("The composer has no mode within the requested frame limit")
         return max(candidates)[2]
+
+    def matches(self, first: int, second: int) -> bool:
+        # SurfaceFlinger may keep another mode ID with the same refresh rate.
+        return (self.sizes[first] == self.sizes[second] and
+                math.isclose(self.rates[first], self.rates[second], rel_tol=0, abs_tol=0.005))
 
 
 class DisplayFrameLimiter:
@@ -74,17 +82,23 @@ class DisplayFrameLimiter:
         if force or self.applied != target or modes.active != selected:
             self.set_mode(*target)
             self.applied = target
-            if force and modes.active != selected:
+            if force and not modes.matches(modes.active, selected):
                 # SurfaceFlinger acknowledges the request before the new mode is active.
                 deadline = self.clock() + self.MODE_SWITCH_TIMEOUT
                 while True:
                     modes = self.modes()
                     if modes.display != target[0]:
                         raise RuntimeError("Android's primary display changed during the mode switch")
-                    if modes.active == selected:
+                    if selected not in modes.rates:
+                        raise RuntimeError("Android's requested display mode disappeared during the mode switch")
+                    if modes.matches(modes.active, selected):
                         break
                     if self.clock() >= deadline:
-                        raise RuntimeError("Android did not activate the requested refresh rate before launch")
+                        raise RuntimeError(
+                            f"Android did not activate the requested refresh rate before launch "
+                            f"(requested {selected}: {modes.rates[selected]:g} Hz, "
+                            f"active {modes.active}: {modes.rates[modes.active]:g} Hz)"
+                        )
                     time.sleep(0.05)
         self.rate = modes.rates[selected]
         self.next_check = now + self.POLICY_CHECK_INTERVAL

@@ -243,6 +243,22 @@ class DisplayFrameLimitTests(unittest.TestCase):
         self.assertEqual(limiter.sync(144, force=True), 144)
         self.assertEqual(reports, [])
 
+    def test_equivalent_mode_does_not_block_launch(self):
+        dump = display_dump(88).replace("id=88, hwcId=88, resolution=1280x800, refreshRate=60.00",
+                                        "id=88, hwcId=88, resolution=1280x800, refreshRate=144.00")
+        def android(*args):
+            if args == ("dumpsys", "SurfaceFlinger", "--displays"):
+                return dump
+            return self.android(*args)
+        limiter = DisplayFrameLimiter(android)
+        self.assertEqual(limiter.sync(144, force=True), 144)
+        self.assertEqual(self.writes, [(967, 3)])
+
+    def test_equal_refresh_at_different_resolution_is_not_equivalent(self):
+        dump = display_dump(88).replace("id=88, hwcId=88, resolution=1280x800, refreshRate=60.00",
+                                        "id=88, hwcId=88, resolution=640x400, refreshRate=144.00")
+        self.assertFalse(DisplayModes.primary(dump).matches(3, 88))
+
     def test_replacement_guest_cannot_receive_an_old_app_policy(self):
         limiter = self.native_limiter()
         limiter.sync(47, (200, "launch"), package="example.game")
