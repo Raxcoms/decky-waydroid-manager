@@ -1,6 +1,7 @@
 --- a/hwcomposer/hwcomposer.cpp
 +++ b/hwcomposer/hwcomposer.cpp
-@@ -72,6 +72,13 @@ 
+@@ -72,6 +72,13 @@
+ 
  #define WINDOW_DECORATION_OUTSET 15
  
 +static int64_t trace_time() {
@@ -12,8 +13,9 @@
 +
  namespace {
      hwc_frect_t rect_apply_transform(hwc_frect_t src, uint32_t transform) {
-         /* Transform bits are defined so that for both 90Ã‚Â° and 270Ã‚Â° this bit is set */
-@@ -107,7 +114,12 @@             const int fd = layer->acquireFenceFd;
+         /* Transform bits are defined so that for both 90Â° and 270Â° this bit is set */
+@@ -107,7 +114,12 @@
+             const int fd = layer->acquireFenceFd;
              layer->acquireFenceFd = -1;
              // The producer may still be writing, including when SHM copies the pixels.
 -            if (sync_wait(fd, 100) < 0) {
@@ -26,7 +28,8 @@
                  ALOGW("Dropping buffer after acquire fence wait failed: %s", strerror(errno));
                  layer->releaseFenceFd = fd;
                  return nullptr;
-@@ -247,6 +259,47 @@                      pdev->ext_vsync_period_ns;
+@@ -247,6 +259,47 @@
+                      pdev->ext_vsync_period_ns;
  }
  
 +struct TraceBucket {
@@ -73,7 +76,8 @@
  static void hwc_dump(hwc_composer_device_1 *dev, char *buffer, int length) {
      auto *pdev = static_cast<waydroid_hwc_composer_device_1 *>(dev);
      snprintf(buffer, length,
-@@ -255,6 +308,24 @@              (long long)pdev->active_period_ns.load(),
+@@ -255,6 +308,24 @@
+              (long long)pdev->active_period_ns.load(),
               (unsigned long long)pdev->primary_vsyncs.load(),
               (long long)external_period(pdev), (unsigned long long)pdev->external_vsyncs.load(), (long long)pdev->observed_period_ns.load());
 +    int page = property_get_int32("waydroid.trace_page", -1);
@@ -97,14 +101,16 @@
  }
  
  static void* hwc_vsync_thread(void* data) {
-@@ -281,6 +351,7 @@         int64_t external_timestamp = external_vsync ? external.consume(now) : 0;
+@@ -281,6 +351,7 @@
+         int64_t external_timestamp = external_vsync ? external.consume(now) : 0;
          if (pdev->procs && pdev->procs->vsync) {
              if (timestamp && pdev->vsync_callback_enabled) {
 +                trace_event(2, timestamp);
                  pdev->procs->vsync(pdev->procs, HWC_DISPLAY_PRIMARY, timestamp);
                  ++pdev->primary_vsyncs;
              }
-@@ -326,6 +397,8 @@ {
+@@ -326,6 +397,8 @@
+ {
      auto *pdev = static_cast<waydroid_hwc_composer_device_1 *>(data);
      wp_presentation_feedback_destroy(feedback);
 +    trace_event(3);
@@ -112,14 +118,16 @@
  
      // Accept only a scanout timestamp from the primary output's native cadence.
      if ((flags & WP_PRESENTATION_FEEDBACK_KIND_VSYNC) && pdev->display->monotonic_presentation &&
-@@ -340,6 +407,7 @@ feedback_discarded(void *, struct wp_presentation_feedback *feedback)
+@@ -340,6 +407,7 @@
+ feedback_discarded(void *, struct wp_presentation_feedback *feedback)
  {
      wp_presentation_feedback_destroy(feedback);
 +    trace_event(7);
  }
  
  static const struct wp_presentation_feedback_listener feedback_listener = {
-@@ -540,6 +613,8 @@         return 0;
+@@ -540,6 +613,8 @@
+         return 0;
  
      auto *pdev = static_cast<waydroid_hwc_composer_device_1 *>(dev);
 +    int64_t set_start = trace_time();
@@ -127,7 +135,8 @@
  
      hwc_display_contents_1_t *ext = nullptr;
      {
-@@ -597,6 +672,8 @@         wl_surface_commit(window->surface);
+@@ -597,6 +672,8 @@
+         wl_surface_commit(window->surface);
      }
      wl_display_flush(pdev->display->display);
 +    trace_event(1);
