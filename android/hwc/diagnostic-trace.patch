@@ -1,17 +1,45 @@
 --- a/hwcomposer/hwcomposer.cpp
 +++ b/hwcomposer/hwcomposer.cpp
-@@ -247,6 +247,37 @@
+@@ -72,6 +72,13 @@
+ 
+ #define WINDOW_DECORATION_OUTSET 15
+ 
++static int64_t trace_time() {
++    timespec now;
++    clock_gettime(CLOCK_MONOTONIC, &now);
++    return int64_t(now.tv_sec) * 1000000000LL + now.tv_nsec;
++}
++static void trace_duration(unsigned kind, int64_t duration);
++
+ namespace {
+     hwc_frect_t rect_apply_transform(hwc_frect_t src, uint32_t transform) {
+         /* Transform bits are defined so that for both 90Â° and 270Â° this bit is set */
+@@ -107,7 +114,12 @@
+             const int fd = layer->acquireFenceFd;
+             layer->acquireFenceFd = -1;
+             // The producer may still be writing, including when SHM copies the pixels.
+-            if (sync_wait(fd, 100) < 0) {
++            int64_t wait_start = trace_time();
++            int wait_result = sync_wait(fd, 100);
++            int wait_errno = errno;
++            trace_duration(6, trace_time() - wait_start);
++            errno = wait_errno;
++            if (wait_result < 0) {
+                 ALOGW("Dropping buffer after acquire fence wait failed: %s", strerror(errno));
+                 layer->releaseFenceFd = fd;
+                 return nullptr;
+@@ -247,6 +259,47 @@
                       pdev->ext_vsync_period_ns;
  }
  
 +struct TraceBucket {
-+    std::atomic<uint64_t> count[5] {};
-+    std::atomic<uint64_t> deviation[5] {};
-+    std::atomic<uint64_t> maximum[5] {};
++    std::atomic<uint64_t> count[7] {};
++    std::atomic<uint64_t> deviation[7] {};
++    std::atomic<uint64_t> maximum[7] {};
 +};
 +static TraceBucket trace_buckets[240];
 +static std::atomic<int64_t> trace_origin {0};
-+static std::atomic<int64_t> trace_previous[5] {};
++static std::atomic<int64_t> trace_previous[7] {};
 +static void trace_event(unsigned kind, int64_t value = 0) {
 +    timespec now;
 +    if (clock_gettime(CLOCK_MONOTONIC, &now)) return;
@@ -35,10 +63,20 @@
 +    }
 +}
 +
++static void trace_duration(unsigned kind, int64_t duration) {
++    int64_t second = (trace_time() - trace_origin.load()) / 1000000000LL;
++    if (second < 0 || second >= 240 || duration < 0) return;
++    auto &slot = trace_buckets[second];
++    ++slot.count[kind];
++    slot.deviation[kind] += duration;
++    uint64_t maximum = slot.maximum[kind].load();
++    while (uint64_t(duration) > maximum && !slot.maximum[kind].compare_exchange_weak(maximum, duration)) {}
++}
++
  static void hwc_dump(hwc_composer_device_1 *dev, char *buffer, int length) {
      auto *pdev = static_cast<waydroid_hwc_composer_device_1 *>(dev);
      snprintf(buffer, length,
-@@ -255,6 +286,21 @@
+@@ -255,6 +308,23 @@
               (long long)pdev->active_period_ns.load(),
               (unsigned long long)pdev->primary_vsyncs.load(),
               (long long)external_period(pdev), (unsigned long long)pdev->external_vsyncs.load(), (long long)pdev->observed_period_ns.load());
@@ -49,18 +87,20 @@
 +    for (int second = page * 20; second < page * 20 + 20 && used < length - 256; ++second) {
 +        auto &slot = trace_buckets[second];
 +        used += snprintf(buffer + used, length - used,
-+                "T %d %llu:%llu:%llu %llu:%llu:%llu %llu:%llu:%llu %llu:%llu:%llu %llu:%llu:%llu\n",
++                "T %d %llu:%llu:%llu %llu:%llu:%llu %llu:%llu:%llu %llu:%llu:%llu %llu:%llu:%llu %llu:%llu:%llu %llu:%llu:%llu\n",
 +                second,
 +                (unsigned long long)slot.count[0].load(), (unsigned long long)slot.deviation[0].load(), (unsigned long long)slot.maximum[0].load(),
 +                (unsigned long long)slot.count[1].load(), (unsigned long long)slot.deviation[1].load(), (unsigned long long)slot.maximum[1].load(),
 +                (unsigned long long)slot.count[2].load(), (unsigned long long)slot.deviation[2].load(), (unsigned long long)slot.maximum[2].load(),
 +                (unsigned long long)slot.count[3].load(), (unsigned long long)slot.deviation[3].load(), (unsigned long long)slot.maximum[3].load(),
-+                (unsigned long long)slot.count[4].load(), (unsigned long long)slot.deviation[4].load(), (unsigned long long)slot.maximum[4].load());
++                (unsigned long long)slot.count[4].load(), (unsigned long long)slot.deviation[4].load(), (unsigned long long)slot.maximum[4].load(),
++                (unsigned long long)slot.count[5].load(), (unsigned long long)slot.deviation[5].load(), (unsigned long long)slot.maximum[5].load(),
++                (unsigned long long)slot.count[6].load(), (unsigned long long)slot.deviation[6].load(), (unsigned long long)slot.maximum[6].load());
 +    }
  }
  
  static void* hwc_vsync_thread(void* data) {
-@@ -281,6 +327,7 @@
+@@ -281,6 +351,7 @@
          int64_t external_timestamp = external_vsync ? external.consume(now) : 0;
          if (pdev->procs && pdev->procs->vsync) {
              if (timestamp && pdev->vsync_callback_enabled) {
@@ -68,7 +108,7 @@
                  pdev->procs->vsync(pdev->procs, HWC_DISPLAY_PRIMARY, timestamp);
                  ++pdev->primary_vsyncs;
              }
-@@ -326,6 +373,8 @@
+@@ -326,6 +397,8 @@
  {
      auto *pdev = static_cast<waydroid_hwc_composer_device_1 *>(data);
      wp_presentation_feedback_destroy(feedback);
@@ -77,19 +117,21 @@
  
      // Accept only a scanout timestamp from the primary output's native cadence.
      if ((flags & WP_PRESENTATION_FEEDBACK_KIND_VSYNC) && pdev->display->monotonic_presentation &&
-@@ -540,6 +589,7 @@
+@@ -540,6 +613,8 @@
          return 0;
  
      auto *pdev = static_cast<waydroid_hwc_composer_device_1 *>(dev);
++    int64_t set_start = trace_time();
 +    trace_event(0);
  
      hwc_display_contents_1_t *ext = nullptr;
      {
-@@ -597,6 +647,7 @@
+@@ -597,6 +672,8 @@
          wl_surface_commit(window->surface);
      }
      wl_display_flush(pdev->display->display);
 +    trace_event(1);
++    trace_duration(5, trace_time() - set_start);
  
      sw_sync_timeline_inc(pdev->timeline_fd, 1);
      ++pdev->next_sync_point;
