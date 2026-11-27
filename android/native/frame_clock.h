@@ -55,6 +55,13 @@ private:
     int64_t period_ = 0;
 };
 
+inline bool is_refresh_multiple(int64_t period, int64_t native) {
+    if (native <= 0 || period < native)
+        return false;
+    const int64_t multiple = (period + native / 2) / native;
+    return std::abs(period - multiple * native) <= multiple;
+}
+
 class FrameClock {
 public:
     int64_t deadline(int64_t now, int64_t period) {
