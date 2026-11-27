@@ -32,12 +32,13 @@
  }
  
  static void* hwc_vsync_thread(void* data) {
-@@ -268,6 +268,9 @@
+@@ -268,6 +268,10 @@
              return nullptr;
          int64_t now = int64_t(rt.tv_sec) * 1000000000LL + rt.tv_nsec;
          int64_t period = pdev->active_period_ns.load();
 +        int64_t observed = pdev->observed_period_ns.load();
-+        if (period == pdev->vsync_period_ns && observed > 0)
++        const bool native_clock = property_get_bool("waydroid.native_clock", false);
++        if (!native_clock && period == pdev->vsync_period_ns && observed > 0)
 +            period = observed;
          int64_t ext_period = external_period(pdev);
          primary.deadline(now, period);
@@ -47,7 +48,7 @@
                  pdev->ext_announced.exchange(false) && pdev->procs)
              pdev->procs->hotplug(pdev->procs, HWC_DISPLAY_EXTERNAL, 0);
 -        if (period == pdev->vsync_period_ns)
-+        if (pdev->active_period_ns.load() == pdev->vsync_period_ns)
++        if (!native_clock && pdev->active_period_ns.load() == pdev->vsync_period_ns)
              primary.align(now, pdev->last_vsync_ns.load());
          int64_t next = primary.deadline(now, period);
          if (external_vsync)
