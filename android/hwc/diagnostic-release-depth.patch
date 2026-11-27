@@ -1,0 +1,29 @@
+--- a/hwcomposer/hwcomposer.cpp
++++ b/hwcomposer/hwcomposer.cpp
+@@ -19,6 +19,7 @@
+ #include "frame_clock.h"
+ #include "buffer_cache.h"
+ 
++#include <deque>
+ #include <errno.h>
+ #include <pthread.h>
+ #include <semaphore.h>
+@@ -763,6 +764,18 @@
+     wl_display_flush(pdev->display->display);
+     trace_event(1);
+     auto previous_buffers = std::move(pdev->display->submitted_buffers);
++    static std::deque<std::vector<std::pair<struct wl_buffer *, unsigned>>> queue;
++    if (!previous_buffers.empty() && property_get_bool("waydroid.wait_release", false)) {
++        queue.push_back(std::move(previous_buffers));
++        previous_buffers.clear();
++        int depth = std::clamp(property_get_int32("waydroid.wait_depth", 1), 1, 4);
++        if (queue.size() >= static_cast<size_t>(depth)) {
++            previous_buffers = std::move(queue.front());
++            queue.pop_front();
++        }
++    } else {
++        queue.clear();
++    }
+     if (!previous_buffers.empty() && property_get_bool("waydroid.wait_release", false)) {
+         lock.unlock();
+         int64_t started = trace_time();

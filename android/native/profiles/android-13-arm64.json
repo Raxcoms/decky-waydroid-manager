@@ -262,6 +262,10 @@
     {
       "project": "hardware/waydroid",
       "file": "android/hwc/diagnostic-release-replacement.patch"
+    },
+    {
+      "project": "hardware/waydroid",
+      "file": "android/hwc/diagnostic-release-depth.patch"
     }
   ]
 }
