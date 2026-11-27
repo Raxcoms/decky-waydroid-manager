@@ -25,7 +25,7 @@
                  display->retired_buffers.push_back(std::move(it->second));
                  display->buffer_map.erase(it);
              } else {
-@@ -138,7 +140,21 @@
+@@ -138,7 +140,24 @@
              buf = emplace_result.first->second.get();
          }
  
@@ -35,6 +35,9 @@
 +
 +    void trim_import_cache(display *display, size_t layers, const window *external = nullptr) {
 +        const size_t limit = std::max<size_t>(layers, 1) * android::BufferQueueDefs::NUM_BUFFER_SLOTS;
++        if (display->buffer_map.size() <= limit)
++            return;
++        std::lock_guard<std::recursive_mutex> lock(display->windowsMutex);
 +        waydroid_manager::trim_buffer_cache(display->buffer_map, limit, [&](buffer &candidate) {
 +            if (candidate.in_use() || (external && external->last_layer_buffer == &candidate))
 +                return false;
