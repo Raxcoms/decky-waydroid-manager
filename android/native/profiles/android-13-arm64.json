@@ -270,6 +270,10 @@
     {
       "project": "hardware/waydroid",
       "file": "android/hwc/diagnostic-release-generation.patch"
+    },
+    {
+      "project": "hardware/waydroid",
+      "file": "android/hwc/diagnostic-reused-damage.patch"
     }
   ]
 }

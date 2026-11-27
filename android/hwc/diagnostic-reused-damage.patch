@@ -1,0 +1,17 @@
+--- a/hwcomposer/hwcomposer.cpp
++++ b/hwcomposer/hwcomposer.cpp
+@@ -551,6 +551,14 @@
+     if (surface_context.attached == buf->id && buf->in_use()) {
+         // Attaching again could pair this use with a release event already queued
+         hwc_layer->releaseFenceFd = buf->current_release_fence();
++        if (buf->release_timeline < 0) {
++            record_frame(trace_time(), 0, 11);
++            if (property_get_bool("waydroid.damage_reused", false)) {
++                if (buf->isShm)
++                    pdev->gralloc_handler.update_shm_buffer(pdev->display, buf);
++                apply_surface_damage(hwc_layer, surface_context);
++            }
++        }
+     } else {
+         hwc_layer->releaseFenceFd = buf->next_release_fence();
+         if (hwc_layer->releaseFenceFd < 0 && buf->release_timeline >= 0)
