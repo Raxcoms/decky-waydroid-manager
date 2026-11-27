@@ -1,0 +1,109 @@
+--- a/hwcomposer/wayland-hwc.h
++++ b/hwcomposer/wayland-hwc.h
+@@ -152,6 +152,7 @@
+ void track_buffer_release(buffer *buf, struct display *owner);
+ void release_display_buffers(struct display *owner);
+ void buffer_released(struct wl_buffer *wl_buffer);
++bool wait_buffer_releases(const std::vector<std::pair<struct wl_buffer *, unsigned>> &buffers, int64_t timeout_ns);
+ void retire_buffers(struct display *d);
+ void purge_retired_buffers(struct display *d);
+ 
+@@ -411,6 +412,7 @@
+     struct handleExt target_layer_handle_ext;
+     std::unordered_map<buffer_handle_t, std::unique_ptr<buffer>> buffer_map;
+     uint64_t buffer_cache_sequence = 0;
++    std::vector<std::pair<struct wl_buffer *, unsigned>> submitted_buffers;
+     // Replaced buffers the compositor has not released yet
+     std::vector<std::unique_ptr<buffer>> retired_buffers;
+     int retire_fence = -1;
+--- a/hwcomposer/wayland-hwc.cpp
++++ b/hwcomposer/wayland-hwc.cpp
+@@ -68,6 +68,8 @@
+ 
+ #include "gralloc_handler.h"
+ 
++#include <condition_variable>
++#include <chrono>
+ #include <wayland-client.h>
+ #include <wayland-android-client-protocol.h>
+ #include "linux-dmabuf-unstable-v1-client-protocol.h"
+@@ -87,6 +89,7 @@
+ // Release events arrive on the display thread while the composer thread may be
+ // destroying the buffer, so they find it by proxy under this lock.
+ static std::mutex release_mutex;
++static std::condition_variable release_condition;
+ static std::unordered_map<struct wl_buffer *, buffer *> released_buffers;
+ 
+ void track_buffer_release(buffer *buf, struct display *owner) {
+@@ -107,6 +110,19 @@
+     unsigned pending = buf->release_state.release();
+     if (pending && buf->release_timeline >= 0)
+         sw_sync_timeline_inc(buf->release_timeline, pending);
++    release_condition.notify_all();
++}
++
++bool wait_buffer_releases(const std::vector<std::pair<struct wl_buffer *, unsigned>> &buffers, int64_t timeout_ns) {
++    std::unique_lock<std::mutex> lock(release_mutex);
++    return release_condition.wait_for(lock, std::chrono::nanoseconds(timeout_ns), [&] {
++        for (const auto &[proxy, id] : buffers) {
++            auto it = released_buffers.find(proxy);
++            if (it != released_buffers.end() && it->second->id == id && it->second->release_state.in_use())
++                return false;
++        }
++        return true;
++    });
+ }
+ 
+ int buffer::next_release_fence() {
+@@ -144,6 +160,7 @@
+                 sw_sync_timeline_inc(buf->release_timeline, pending);
+         }
+     }
++    release_condition.notify_all();
+ }
+ 
+ // Destroying a buffer would signal its fences while it may still be on screen
+@@ -164,6 +181,7 @@
+     {
+         std::lock_guard<std::mutex> lock(release_mutex);
+         released_buffers.erase(wl_buffer);
++        release_condition.notify_all();
+     }
+     if (wl_buffer)
+         wl_buffer_destroy(wl_buffer);
+--- a/hwcomposer/hwcomposer.cpp
++++ b/hwcomposer/hwcomposer.cpp
+@@ -621,6 +621,8 @@
+     if (window_layer.subsurface)
+         wl_surface_commit(window_layer.surface);
+ 
++    if (buf->release_timeline < 0 && property_get_bool("waydroid.wait_release", false))
++        pdev->display->submitted_buffers.emplace_back(buf->wl_buffer, buf->id);
+     window->last_layer_buffer = buf;
+ 
+     // Snapshot buffer should be detached by now, clean up
+@@ -729,7 +731,9 @@
+     auto& mode = pdev->selected_mode;
+     mode->setup_set(pdev, contents);
+ 
+-    std::scoped_lock lock(pdev->display->windowsMutex);
++    std::unique_lock lock(pdev->display->windowsMutex);
++    auto previous_buffers = std::move(pdev->display->submitted_buffers);
++    pdev->display->submitted_buffers.clear();
+     mode->cleanup_stale_windows(pdev, contents);
+ 
+     reset_per_commit_state_window(pdev);
+@@ -759,6 +763,13 @@
+     }
+     wl_display_flush(pdev->display->display);
+     trace_event(1);
++    if (!previous_buffers.empty() && property_get_bool("waydroid.wait_release", false)) {
++        lock.unlock();
++        int64_t started = trace_time();
++        bool released = wait_buffer_releases(previous_buffers, pdev->vsync_period_ns * 12);
++        record_frame(trace_time(), trace_time() - started, released ? 9 : 10);
++        lock.lock();
++    }
+     trace_duration(5, trace_time() - set_start);
+     trim_import_cache(pdev->display, contents->numHwLayers);
+ 

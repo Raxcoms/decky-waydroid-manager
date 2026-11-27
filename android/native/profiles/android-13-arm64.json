@@ -254,6 +254,10 @@
     {
       "project": "hardware/waydroid",
       "file": "android/hwc/diagnostic-callback-clock.patch"
+    },
+    {
+      "project": "hardware/waydroid",
+      "file": "android/hwc/diagnostic-release-wait.patch"
     }
   ]
 }
