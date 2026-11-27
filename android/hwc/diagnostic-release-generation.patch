@@ -1,0 +1,64 @@
+--- a/hwcomposer/wayland-hwc.h
++++ b/hwcomposer/wayland-hwc.h
+@@ -31,6 +31,7 @@
+ #include "buffer_backing.h"
+ #include "buffer_cache.h"
+ 
++#include <tuple>
+ #include <mutex>
+ #include <cutils/native_handle.h>
+ 
+@@ -153,7 +154,7 @@
+ void release_display_buffers(struct display *owner);
+ void buffer_released(struct wl_buffer *wl_buffer);
+ void queue_buffer_release(struct display *owner, unsigned id);
+-bool wait_buffer_releases(const std::vector<std::pair<struct wl_buffer *, unsigned>> &buffers, int64_t timeout_ns);
++bool wait_buffer_releases(const std::vector<std::tuple<struct wl_buffer *, unsigned, unsigned>> &buffers, int64_t timeout_ns);
+ void retire_buffers(struct display *d);
+ void purge_retired_buffers(struct display *d);
+ 
+@@ -413,7 +414,7 @@
+     struct handleExt target_layer_handle_ext;
+     std::unordered_map<buffer_handle_t, std::unique_ptr<buffer>> buffer_map;
+     uint64_t buffer_cache_sequence = 0;
+-    std::vector<std::pair<struct wl_buffer *, unsigned>> submitted_buffers;
++    std::vector<std::tuple<struct wl_buffer *, unsigned, unsigned>> submitted_buffers;
+     // Replaced buffers the compositor has not released yet
+     std::vector<std::unique_ptr<buffer>> retired_buffers;
+     int retire_fence = -1;
+--- a/hwcomposer/wayland-hwc.cpp
++++ b/hwcomposer/wayland-hwc.cpp
+@@ -118,18 +118,18 @@
+     std::lock_guard<std::mutex> lock(release_mutex);
+     for (const auto &[proxy, buf] : released_buffers) {
+         if (buf->id == id && buf->release_timeline < 0 && buf->release_state.in_use()) {
+-            owner->submitted_buffers.emplace_back(proxy, id);
++            owner->submitted_buffers.emplace_back(proxy, id, buf->release_state.current_point());
+             return;
+         }
+     }
+ }
+ 
+-bool wait_buffer_releases(const std::vector<std::pair<struct wl_buffer *, unsigned>> &buffers, int64_t timeout_ns) {
++bool wait_buffer_releases(const std::vector<std::tuple<struct wl_buffer *, unsigned, unsigned>> &buffers, int64_t timeout_ns) {
+     std::unique_lock<std::mutex> lock(release_mutex);
+     return release_condition.wait_for(lock, std::chrono::nanoseconds(timeout_ns), [&] {
+-        for (const auto &[proxy, id] : buffers) {
++        for (const auto &[proxy, id, generation] : buffers) {
+             auto it = released_buffers.find(proxy);
+-            if (it != released_buffers.end() && it->second->id == id && it->second->release_state.in_use())
++            if (it != released_buffers.end() && it->second->id == id && !it->second->release_state.released(generation))
+                 return false;
+         }
+         return true;
+--- a/hwcomposer/hwcomposer.cpp
++++ b/hwcomposer/hwcomposer.cpp
+@@ -764,7 +764,7 @@
+     wl_display_flush(pdev->display->display);
+     trace_event(1);
+     auto previous_buffers = std::move(pdev->display->submitted_buffers);
+-    static std::deque<std::vector<std::pair<struct wl_buffer *, unsigned>>> queue;
++    static std::deque<std::vector<std::tuple<struct wl_buffer *, unsigned, unsigned>>> queue;
+     if (!previous_buffers.empty() && property_get_bool("waydroid.wait_release", false)) {
+         queue.push_back(std::move(previous_buffers));
+         previous_buffers.clear();

@@ -11,6 +11,7 @@ public:
     unsigned current_point() const { return submitted_; }
     void submit() { ++submitted_; }
     bool in_use() const { return submitted_ != released_; }
+    bool released(unsigned point) const { return released_ >= point; }
     unsigned release() {
         unsigned pending = submitted_ - released_;
         released_ = submitted_;
