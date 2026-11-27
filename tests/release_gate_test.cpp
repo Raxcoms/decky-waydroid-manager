@@ -47,6 +47,8 @@ int main() {
     gate.submit(4);
     auto next = gate.snapshot(4);
     assert(wait.wait(gate, {next}, 1s) == ReleaseWaitResult::Deferred);
+    waydroid_manager::ReleaseWait other_display;
+    assert(other_display.wait(gate, {}, 0ns) == ReleaseWaitResult::Complete);
     gate.release(3);
     assert(wait.wait(gate, {next}, 0ns) == ReleaseWaitResult::TimedOut);
     gate.release(4);
