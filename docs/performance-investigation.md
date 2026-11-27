@@ -68,6 +68,22 @@ frame-time variation, so missed presentations are not the whole explanation.
 Physical vblank stayed near 120 Hz. Android SurfaceFlinger was using client
 composition during the test; this does not mean Steam composition was enabled.
 
+A later per-frame capture found that the Android HWC received the geometry
+changed flag on every frame. Over ten seconds, it cycled through three native
+buffer handles but created 1,199 different Wayland buffers, because the current
+implementation clears its entire import cache on each geometry change. None of
+those tracked buffers reached the release callback before retirement. In the
+one-minute capture, per-second MangoHUD frame-time variation correlated with
+discarded Wayland presentations (0.90), and was also associated with longer
+acquire-fence waits. During the worst periods, commits arrived later in the
+physical display cycle. This is evidence of a Waydroid-side bottleneck; it does
+not establish that cache churn is its sole cause.
+
+A temporary experiment on `test/frame-trace` keeps imported buffers across
+geometry updates and tracks compositor release even when software sync is not
+available. It still needs device validation, bounded cache lifetime, and a safe
+Android release fence before it can become a production solution.
+
 The test initially tried every native-handle file descriptor, including a
 metadata memfd. A short ioctl trace showed that importing the metadata failed.
 The revised test imports only the image planes already identified by the Cros
