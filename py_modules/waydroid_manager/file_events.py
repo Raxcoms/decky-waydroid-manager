@@ -4,6 +4,8 @@ import ctypes
 import errno
 import os
 import select
+import struct
+import time
 
 from .proc import process_identity
 
@@ -32,8 +34,10 @@ def process_handle(identity):
 
 
 class FileEvents:
-    def __init__(self, paths):
+    def __init__(self, paths, event_filter=None):
         self.paths = paths
+        self.event_filter = event_filter
+        self.watches = {}
         self.libc = ctypes.CDLL(None, use_errno=True)
         self.libc.inotify_init1.argtypes = [ctypes.c_int]
         self.libc.inotify_init1.restype = ctypes.c_int
@@ -56,10 +60,13 @@ class FileEvents:
         mask = (IN_ATTRIB | IN_CLOSE_WRITE | IN_MOVED_FROM | IN_MOVED_TO | IN_CREATE
                 | IN_DELETE | IN_DELETE_SELF | IN_MOVE_SELF)
         for path in self.paths:
-            if self.libc.inotify_add_watch(self.handle, os.fsencode(path), mask) < 0:
+            watch = self.libc.inotify_add_watch(self.handle, os.fsencode(path), mask)
+            if watch < 0:
                 code = ctypes.get_errno()
                 if code != errno.ENOENT:
                     raise OSError(code, os.strerror(code), str(path))
+            else:
+                self.watches[watch] = path
 
     def wake(self):
         try:
@@ -68,16 +75,39 @@ class FileEvents:
             pass
 
     def wait(self, processes=(), timeout=None):
-        ready, _, _ = select.select([self.handle, self.read, *processes], [], [], timeout)
-        for handle in (self.handle, self.read):
-            if handle in ready:
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while True:
+            remaining = None if deadline is None else max(0, deadline - time.monotonic())
+            ready, _, _ = select.select([self.handle, self.read, *processes], [], [], remaining)
+            relevant = False
+            if self.handle in ready:
                 while True:
                     try:
-                        if not os.read(handle, 65536):
+                        data = os.read(self.handle, 65536)
+                    except BlockingIOError:
+                        break
+                    if not data:
+                        break
+                    offset = 0
+                    while offset + 16 <= len(data):
+                        watch, mask, _, length = struct.unpack_from("iIII", data, offset)
+                        name = os.fsdecode(data[offset + 16:offset + 16 + length].split(b"\0", 1)[0])
+                        path = self.watches.get(watch)
+                        if (path is None or mask & (0x4000 | 0x8000) or self.event_filter is None
+                                or self.event_filter(path, name)):
+                            relevant = True
+                        offset += 16 + length
+                if not relevant:
+                    ready.remove(self.handle)
+            if self.read in ready:
+                while True:
+                    try:
+                        if not os.read(self.read, 65536):
                             break
                     except BlockingIOError:
                         break
-        return ready
+            if ready or deadline is not None and time.monotonic() >= deadline:
+                return ready
 
     def close(self):
         for handle in (self.handle, self.read, self.write):

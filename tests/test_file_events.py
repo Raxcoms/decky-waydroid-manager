@@ -1,9 +1,13 @@
 import os
+import runpy
+import stat
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from waydroid_manager.file_events import FileEvents, process_handle
 from waydroid_manager.proc import process_identity
@@ -23,6 +27,33 @@ class FileEventTests(unittest.TestCase):
                 self.assertEqual(changes.wait(timeout=0), [])
             finally:
                 changes.close()
+
+    def test_irrelevant_events_do_not_wake_the_waiter(self):
+        with tempfile.TemporaryDirectory() as directory:
+            changes = FileEvents([Path(directory)], lambda path, name: name.startswith("event"))
+            try:
+                (Path(directory) / "other").touch()
+                self.assertEqual(changes.wait(timeout=0), [])
+                (Path(directory) / "event0").touch()
+                self.assertIn(changes.handle, changes.wait(timeout=1))
+                changes.wake()
+                self.assertIn(changes.read, changes.wait(timeout=1))
+            finally:
+                changes.close()
+
+    def test_input_monitor_filters_unrelated_udev_entries(self):
+        script = Path(__file__).resolve().parents[1] / "bin/waydroid-input-sync"
+        matches = runpy.run_path(str(script))["input_event"]
+        class Device:
+            def stat(self):
+                return SimpleNamespace(st_mode=stat.S_IFCHR | 0o600, st_rdev=os.makedev(13, 64))
+        with patch.object(Path, "glob", return_value=[Device()]):
+            self.assertTrue(matches(Path("/run/udev/data"), "c13:64"))
+            self.assertFalse(matches(Path("/run/udev/data"), "c13:65"))
+            self.assertFalse(matches(Path("/run/udev/data"), "+unrelated:device"))
+        self.assertTrue(matches(Path("/dev/input"), "event4"))
+        self.assertTrue(matches(Path("/run/udev"), "data"))
+        self.assertFalse(matches(Path("/run/udev"), "queue"))
 
     @unittest.skipUnless(hasattr(os, "pidfd_open"), "Requires pidfd_open")
     def test_process_exit_wakes_without_a_polling_timeout(self):

@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 from pathlib import Path
 import signal
+import stat
 import os
 import sys
 
@@ -11,6 +12,28 @@ from waydroid_manager.input import InputNodes, RuntimeKeylayout, controller_sour
 from waydroid_manager.file_events import FileEvents, process_handle
 
 
+def input_event(path: Path, name: str) -> bool:
+    if path == Path("/dev/input"):
+        return name.startswith("event") or not name
+    if path == Path("/run/udev"):
+        return name == "data" or not name
+    if not name.startswith("c") or ":" not in name:
+        return not name
+    try:
+        major, minor = map(int, name[1:].split(":"))
+        number = os.makedev(major, minor)
+    except (ValueError, OverflowError):
+        return False
+    for device in Path("/dev/input").glob("event*"):
+        try:
+            info = device.stat()
+            if stat.S_ISCHR(info.st_mode) and info.st_rdev == number:
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def main() -> None:
     launch = (int(sys.argv[1]), sys.argv[2])
     display = Path(sys.argv[3])
@@ -18,7 +41,7 @@ def main() -> None:
     layout = nodes = None
     stopping = False
     last_error = None
-    changes = FileEvents([Path("/dev/input"), Path("/run/udev"), Path("/run/udev/data")])
+    changes = FileEvents([Path("/dev/input"), Path("/run/udev"), Path("/run/udev/data")], input_event)
     launch_handle = process_handle(launch)
     guest_handle = None
 
