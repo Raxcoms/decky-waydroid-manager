@@ -9,9 +9,9 @@ fix for the issues below.
 - Branch: `fix/install-startup`. The audio accounting change is in `366e060`;
   its CI build integration is in `573b689`.
 - CI run [46039876670](https://github.com/Raxcoms/decky-waydroid-manager/actions/runs/46039876670)
-  passed for `a2e7b1c`, including the release pacing and launch recovery changes.
-  Nova was running diagnostic build `99aaa2e` when SSH became unavailable; the
-  production build still needs installation and device validation.
+  passed for `a2e7b1c`. Device tests found a regression in its release pacing,
+  so that change was removed. The launch recovery remains and needs further
+  cold-start testing.
 - Timing and logging experiments are on `test/native-clock` and other diagnostic
   branches. Do not merge their device-specific settings or instrumentation.
 - Steam composition must not be forced. Keep display handling device-independent,
@@ -156,12 +156,13 @@ also saw no discarded presentations or release-wait timeouts in one minute.
 These measurements show a substantial pacing improvement, but do not prove every
 visible wobble has been eliminated.
 
-The production HWC now applies this event-driven backpressure on hosts without
-software release fences. It bounds waits and falls back if a compositor stalls;
-release tracking and stalled state are isolated per display. The native build
-and unit tests passed CI. Test the production build on Nova and Thor, including
-hide, disconnect and recovery, because the diagnostic build is not identical.
-The fallback does not guarantee buffer ownership while releases remain stalled.
+Later tests on Nova contradicted the earlier improvement. On the title screen,
+the production build averaged about 10.1 ms per MangoHUD frame, and the earlier
+diagnostic with the wait enabled averaged about 10.2 ms. In a paired 30-second
+test, waiting averaged 10.0 ms while disabling the wait averaged 8.34 ms, though
+Gamescope still reported longer intervals in both cases. The wait can therefore
+slow Android to the compositor release cadence and has been removed from the
+production build. Buffer ownership without `/dev/sw_sync` remains unresolved.
 
 ### Remaining work
 
@@ -171,12 +172,11 @@ The fallback does not guarantee buffer ownership while releases remain stalled.
 2. Determine how the game timer interacts with Android buffer backpressure and
    physical presentation. Check other Android games before generalizing from
    Super Hexagon or adding an app-specific workaround.
-3. Verify the production release pacing under normal operation and compositor
-   stalls. It cannot provide a release fence without `/dev/sw_sync`, and its
-   bounded fallback preserves responsiveness without guaranteeing ownership
-   while stalled. Investigate a portable, copy-free fence if one is available.
-   A GPU-copy prototype cost more and did not improve the reported jitter; an
-   empty unsignaled DRM sync object could not be exported as a sync file.
+3. Investigate copy-free buffer ownership and pacing without `/dev/sw_sync`.
+   Waiting on every replacement can reduce the game rate and is not suitable as
+   a general solution. A GPU-copy prototype cost more and did not improve the
+   reported jitter; an empty unsignaled DRM sync object could not be exported as
+   a sync file.
 4. Revalidate live limiter changes, arbitrary caps, startup at 120 FPS, single
    and dual-screen shortcuts, and visual output on supported devices. Confirm
    that MangoHUD statistics continue to describe the primary screen.
