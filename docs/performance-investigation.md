@@ -8,13 +8,12 @@ fix for the issues below.
 
 - Branch: `fix/install-startup`. The audio accounting change is in `366e060`;
   its CI build integration is in `573b689`.
-- CI run [45932852257](https://github.com/Raxcoms/decky-waydroid-manager/actions/runs/45932852257)
-  passed for `c6d35f3`, which contains the buffer-cache fix. Nova is using a
-  temporary diagnostic during the current tests. Restore a verified working
-  build from `fix/install-startup` and reload it after testing.
-- The temporary timing and logging experiments are on `fix/phase-test`, not the
-  working branch. They contain a Nova-specific test value and must not be merged
-  as a production solution. `fix/audio-loop` also contains diagnostic work.
+- CI run [46039876670](https://github.com/Raxcoms/decky-waydroid-manager/actions/runs/46039876670)
+  passed for `a2e7b1c`, including the release pacing and launch recovery changes.
+  Nova was running diagnostic build `99aaa2e` when SSH became unavailable; the
+  production build still needs installation and device validation.
+- Timing and logging experiments are on `test/native-clock` and other diagnostic
+  branches. Do not merge their device-specific settings or instrumentation.
 - Steam composition must not be forced. Keep display handling device-independent,
   preserve direct scanout, avoid continuous diagnostic polling, and do not require
   installing or overlaying host system packages on immutable Armada devices.
@@ -145,6 +144,25 @@ ship the asynchronous path until ownership and synchronization are proven on
 supported image and compositor combinations. The experiment does not force
 Steam composition or copy frames.
 
+### Release pacing change
+
+Nova has no `/dev/sw_sync`, so the HWC cannot provide its usual release fence.
+A controlled 60-second comparison waited for the previous Wayland buffer release
+before returning from a replacement commit. With the wait enabled, the test saw
+no discarded presentations and MangoHUD frame-time standard deviation was about
+1.12 ms. With it disabled, variation rose to 6.79 ms and 872 frames exceeded
+12 ms. Re-enabling it returned variation to 0.88 ms. A replacement-only follow-up
+also saw no discarded presentations or release-wait timeouts in one minute.
+These measurements show a substantial pacing improvement, but do not prove every
+visible wobble has been eliminated.
+
+The production HWC now applies this event-driven backpressure on hosts without
+software release fences. It bounds waits and falls back if a compositor stalls;
+release tracking and stalled state are isolated per display. The native build
+and unit tests passed CI. Test the production build on Nova and Thor, including
+hide, disconnect and recovery, because the diagnostic build is not identical.
+The fallback does not guarantee buffer ownership while releases remain stalled.
+
 ### Remaining work
 
 1. Trace the timing from game buffer submission through Android, the Waydroid
@@ -153,13 +171,12 @@ Steam composition or copy frames.
 2. Determine how the game timer interacts with Android buffer backpressure and
    physical presentation. Check other Android games before generalizing from
    Super Hexagon or adding an app-specific workaround.
-3. Nova does not expose `/dev/sw_sync`. The current fallback restores launch
-   compatibility but cannot provide the normal Wayland release fence. A GPU-copy
-   prototype provided safer ownership at a measurable cost and did not improve
-   the user's reported jitter. Do not merge it on that evidence. Investigate
-   a portable, copy-free release-fence path and verify its cost and correctness
-   before using it. DRM sync objects are available on Nova, but an empty
-   unsignaled sync object could not be exported as a sync file in a simple test.
+3. Verify the production release pacing under normal operation and compositor
+   stalls. It cannot provide a release fence without `/dev/sw_sync`, and its
+   bounded fallback preserves responsiveness without guaranteeing ownership
+   while stalled. Investigate a portable, copy-free fence if one is available.
+   A GPU-copy prototype cost more and did not improve the reported jitter; an
+   empty unsignaled DRM sync object could not be exported as a sync file.
 4. Revalidate live limiter changes, arbitrary caps, startup at 120 FPS, single
    and dual-screen shortcuts, and visual output on supported devices. Confirm
    that MangoHUD statistics continue to describe the primary screen.
@@ -238,6 +255,11 @@ IDs. A later policy-check fix avoids repeatedly requesting an equivalent mode
 when Android retains a different ID. Nova reported matching IDs in the latest
 test, so this does not explain its slowdown.
 
-Commit `0259c8c` accepts matching resolution and refresh rate and adds
+Commit `104cdf6` accepts matching resolution and refresh rate and adds
 tests. Two Nova cold launches then succeeded without the warning. This does not
 by itself establish the cause of every intermittent activity timeout.
+
+The startup recovery in `c25478f` accepts a timed-out launch only after the
+expected activity or permission handler is top-resumed, drawn and visible on
+the target display. It has regression tests and passed CI; cold device launches
+still need validation.
