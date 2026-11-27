@@ -29,11 +29,11 @@ int main() {
     assert(primary_count == 1440);
     assert(external_count == 600);
 
-    const int64_t refresh = 1000000000LL / 120;
-    assert(waydroid_manager::is_refresh_multiple(1000000000LL / 40, refresh));
-    assert(waydroid_manager::is_refresh_multiple(1000000000LL / 12, refresh));
-    assert(!waydroid_manager::is_refresh_multiple(1000000000LL / 14, refresh));
-    assert(!waydroid_manager::is_refresh_multiple(refresh, 0));
+    const int64_t native_period = 1000000000LL / 120;
+    assert(waydroid_manager::is_refresh_multiple(1000000000LL / 40, native_period));
+    assert(waydroid_manager::is_refresh_multiple(1000000000LL / 12, native_period));
+    assert(!waydroid_manager::is_refresh_multiple(1000000000LL / 14, native_period));
+    assert(!waydroid_manager::is_refresh_multiple(native_period, 0));
 
     FrameClock arbitrary;
     const int64_t period = 1000000000LL / 47;
