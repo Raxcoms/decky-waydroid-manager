@@ -1,0 +1,76 @@
+--- a/hwcomposer/hwcomposer.cpp
++++ b/hwcomposer/hwcomposer.cpp
+@@ -28,6 +28,7 @@
+ #include <unistd.h>
+ #include <wayland-client.h>
+ #include <sys/socket.h>
++#include <sys/ioctl.h>
+ #include <new>
+ #include <sys/mman.h>
+ #include <sys/syscall.h>
+@@ -116,24 +117,10 @@
+     }
+ 
+     buffer *get_wl_buffer(waydroid_hwc_composer_device_1 *pdev, hwc_layer_1_t *layer, size_t pos, display *display, unsigned attached) {
+-        if (layer->acquireFenceFd >= 0) {
+-            const int fd = layer->acquireFenceFd;
+-            layer->acquireFenceFd = -1;
+-            // The producer may still be writing, including when SHM copies the pixels.
+-            int64_t wait_start = trace_time();
+-            int wait_result = sync_wait(fd, 100);
+-            int wait_errno = errno;
+-            trace_duration(6, trace_time() - wait_start);
+-            errno = wait_errno;
+-            if (wait_result < 0) {
+-                ALOGW("Dropping buffer after acquire fence wait failed: %s", strerror(errno));
+-                layer->releaseFenceFd = fd;
+-                return nullptr;
+-            }
+-            close(fd);
+-        }
++        const int fence = layer->acquireFenceFd;
++        layer->acquireFenceFd = -1;
+         if (!layer->handle) {
+-            ALOGE("cannot create a wayland buffer for a null handle");
++            layer->releaseFenceFd = fence;
+             return nullptr;
+         }
+ 
+@@ -148,12 +135,37 @@
+             else
+                 result = gralloc_handler.create_buffer(display, metadata, layer->handle);
+             if (!result) {
++                layer->releaseFenceFd = fence;
+                 ALOGE("failed to create a wayland buffer");
+                 return nullptr;
+             }
+             auto emplace_result = display->buffer_map.emplace(layer->handle, std::move(result));
+             assert(emplace_result.second);
+             buf = emplace_result.first->second.get();
++        }
++
++        if (fence >= 0) {
++            int64_t wait_start = trace_time();
++            bool imported = property_get_bool("waydroid.async_acquire", false) &&
++                !buf->isShm && display->gtype == GrallocType::GRALLOC_CROS;
++            if (imported) {
++                const auto *cros = reinterpret_cast<const cros_gralloc_handle *>(layer->handle);
++                imported = cros->num_planes > 0 && cros->num_planes <= DRV_MAX_PLANES &&
++                    cros->num_planes <= static_cast<uint32_t>(layer->handle->numFds);
++                struct DmabufFence { uint32_t flags; int32_t fd; } sync {2, fence};
++                constexpr unsigned long import_sync_file = _IOW('b', 3, DmabufFence);
++                for (size_t i = 0; imported && i < cros->num_planes; ++i)
++                    imported = ioctl(cros->fds[i], import_sync_file, &sync) == 0;
++            }
++            int result = imported ? 0 : sync_wait(fence, 100);
++            int wait_errno = errno;
++            trace_duration(6, trace_time() - wait_start);
++            errno = wait_errno;
++            if (result < 0) {
++                layer->releaseFenceFd = fence;
++                return nullptr;
++            }
++            close(fence);
+         }
+ 
+         buf->cache_stamp = ++display->buffer_cache_sequence;

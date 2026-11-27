@@ -242,6 +242,10 @@
     {
       "project": "hardware/waydroid",
       "file": "android/hwc/diagnostic-limiter.patch"
+    },
+    {
+      "project": "hardware/waydroid",
+      "file": "android/hwc/diagnostic-acquire.patch"
     }
   ]
 }
