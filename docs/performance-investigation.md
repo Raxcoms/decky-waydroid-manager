@@ -9,9 +9,8 @@ fix for the issues below.
 - Branch: `fix/install-startup`. The audio accounting change is in `366e060`;
   its CI build integration is in `573b689`.
 - CI run [45932852257](https://github.com/Raxcoms/decky-waydroid-manager/actions/runs/45932852257)
-  passed for `c6d35f3`, which contains the buffer-cache fix. Nova disconnected
-  after the temporary `9756f60` diagnostic was installed. Restore `c6d35f3`
-  and reload the plugin before leaving the device in normal use.
+  passed for `c6d35f3`, which contains the buffer-cache fix. Nova is restored
+  to that build and the plugin has been reloaded after the timing experiment.
 - The temporary timing and logging experiments are on `fix/phase-test`, not the
   working branch. They contain a Nova-specific test value and must not be merged
   as a production solution. `fix/audio-loop` also contains diagnostic work.
@@ -97,14 +96,21 @@ proof of physical scanout.
 
 A phase-alignment experiment did not materially improve the 40 FPS Gamescope
 query and was not merged. A separate earlier-vsync experiment, with synchronized
-Wayland feedback, was built as `9756f60` but has not been measured because Nova
-disconnected. At 120 FPS, the latest 30-second trace had 78 discarded
+Wayland feedback, was tested as `9756f60`. At 120 FPS, the baseline 30-second
+trace had 78 discarded
 presentation-feedback events among 3,485 Android submissions; longer acquire
 waits coincided with the worst intervals. Pairing feedback with submissions in
 arrival order, 61 of the 78 discards followed commits within 4 ms of the next
 measured vblank; commits with more margin were usually presented. Feedback may
 arrive out of order, so this pairing is an indication to test rather than proof
 of individual frame causality.
+
+The earlier-vsync test moved commits approximately 2 ms earlier in the display
+cycle, but also produced 78 discarded feedback events in about 3,483 submissions.
+MangoHUD frame-time standard deviation increased from 1.10 ms to 1.55 ms in
+these separate captures. This does not support shipping the phase adjustment.
+The audio service averaged about 1.9% of one CPU core during the test; longer
+validation is still required.
 
 The test initially tried every native-handle file descriptor, including a
 metadata memfd. A short ioctl trace showed that importing the metadata failed.
