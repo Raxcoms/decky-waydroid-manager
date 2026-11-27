@@ -8,9 +8,10 @@ fix for the issues below.
 
 - Branch: `fix/install-startup`. The audio accounting change is in `366e060`;
   its CI build integration is in `573b689`.
-- CI run [45898319260](https://github.com/Raxcoms/decky-waydroid-manager/actions/runs/45898319260)
-  passed for `0259c8c`. Nova was restored to this build after the latest
-  display experiment.
+- CI run [45932852257](https://github.com/Raxcoms/decky-waydroid-manager/actions/runs/45932852257)
+  passed for `c6d35f3`, which contains the buffer-cache fix. Nova disconnected
+  after the temporary `9756f60` diagnostic was installed. Restore `c6d35f3`
+  and reload the plugin before leaving the device in normal use.
 - The temporary timing and logging experiments are on `fix/phase-test`, not the
   working branch. They contain a Nova-specific test value and must not be merged
   as a production solution. `fix/audio-loop` also contains diagnostic work.
@@ -79,10 +80,27 @@ acquire-fence waits. During the worst periods, commits arrived later in the
 physical display cycle. This is evidence of a Waydroid-side bottleneck; it does
 not establish that cache churn is its sole cause.
 
-A temporary experiment on `test/frame-trace` keeps imported buffers across
-geometry updates and tracks compositor release even when software sync is not
-available. It still needs device validation, bounded cache lifetime, and a safe
-Android release fence before it can become a production solution.
+The production fix keeps imported buffers across geometry updates, validates
+backing identity before reuse, tracks compositor releases without software sync,
+and evicts unused cache entries using Android's buffer-slot limit. On Nova,
+software-sync creation attempts fell from 361 to 2 over three seconds. A normal
+Android release fence is still unavailable on hosts without `/dev/sw_sync`, so
+producer-to-compositor ownership remains an open correctness concern.
+
+At a 14 FPS cap, a 30-second synchronized trace showed Android vsync and
+submission intervals near 71.4 ms. Wayland presentation feedback was mostly
+67 or 75 ms, consistent with sampling a 120 Hz display. At 40 FPS, most
+feedback intervals were near 25 ms, with some 17/33 ms pairs. Gamescope's
+per-app query also reported short/long pairs that did not match those Wayland
+feedback timestamps. These are compositor-reported times, not independent
+proof of physical scanout.
+
+A phase-alignment experiment did not materially improve the 40 FPS Gamescope
+query and was not merged. A separate earlier-vsync experiment, with synchronized
+Wayland feedback, was built as `9756f60` but has not been measured because Nova
+disconnected. At 120 FPS, the latest 30-second trace had 78 discarded
+presentation-feedback events among 3,485 Android submissions; longer acquire
+waits coincided with the worst intervals.
 
 The test initially tried every native-handle file descriptor, including a
 metadata memfd. A short ioctl trace showed that importing the metadata failed.
