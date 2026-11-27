@@ -1,0 +1,28 @@
+--- a/hwcomposer/hwcomposer.cpp
++++ b/hwcomposer/hwcomposer.cpp
+@@ -524,6 +524,13 @@
+     });
+ }
+ 
++static void frame_probe_done(void *, wl_callback *callback, uint32_t milliseconds) {
++    record_frame(trace_time(), milliseconds, 8);
++    wl_callback_destroy(callback);
++}
++
++static const wl_callback_listener frame_probe_listener {frame_probe_done};
++
+ static int apply_hwc_layer_to_surface_context(waydroid_hwc_composer_device_1 *pdev, hwc_layer_1 *hwc_layer, size_t hwc_layer_index, surface_context &surface_context, buffer *buf = nullptr, display *display = nullptr) {
+     if (!display)
+         display = pdev->display;
+@@ -599,6 +606,11 @@
+     if (window->display->presentation) {
+         auto feedback = wp_presentation_feedback(window->display->presentation, window_layer.surface);
+         wp_presentation_feedback_add_listener(feedback,&feedback_listener, pdev);
++    }
++
++    if (property_get_bool("waydroid.frame_probe", false)) {
++        auto *callback = wl_surface_frame(window_layer.surface);
++        wl_callback_add_listener(callback, &frame_probe_listener, nullptr);
+     }
+ 
+     // Root surfaces commit once after all layer and input state is ready.

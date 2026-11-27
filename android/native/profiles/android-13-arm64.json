@@ -246,6 +246,10 @@
     {
       "project": "hardware/waydroid",
       "file": "android/hwc/diagnostic-acquire.patch"
+    },
+    {
+      "project": "hardware/waydroid",
+      "file": "android/hwc/diagnostic-frame-callback.patch"
     }
   ]
 }
