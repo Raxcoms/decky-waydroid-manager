@@ -1,0 +1,47 @@
+--- a/hwcomposer/hwcomposer.cpp
++++ b/hwcomposer/hwcomposer.cpp
+@@ -438,8 +438,10 @@
+         if (pdev->ext_display && !pdev->ext_display->connected &&
+                 pdev->ext_announced.exchange(false) && pdev->procs)
+             pdev->procs->hotplug(pdev->procs, HWC_DISPLAY_EXTERNAL, 0);
+-        if (!native_clock && pdev->active_period_ns.load() == pdev->vsync_period_ns)
+-            primary.align(now, pdev->last_vsync_ns.load());
++        if (!native_clock && pdev->active_period_ns.load() == pdev->vsync_period_ns) {
++            const bool callback_clock = property_get_bool("waydroid.callback_clock", false);
++            primary.align(now, callback_clock ? pdev->last_callback_ns.load() : pdev->last_vsync_ns.load());
++        }
+         int64_t next = primary.deadline(now, period);
+         if (external_vsync)
+             next = std::min(next, external.deadline(now, ext_period));
+@@ -524,8 +526,10 @@
+     });
+ }
+ 
+-static void frame_probe_done(void *, wl_callback *callback, uint32_t milliseconds) {
+-    record_frame(trace_time(), milliseconds, 8);
++static void frame_probe_done(void *data, wl_callback *callback, uint32_t milliseconds) {
++    const int64_t now = trace_time();
++    static_cast<waydroid_hwc_composer_device_1 *>(data)->last_callback_ns = now;
++    record_frame(now, milliseconds, 8);
+     wl_callback_destroy(callback);
+ }
+ 
+@@ -610,7 +614,7 @@
+ 
+     if (property_get_bool("waydroid.frame_probe", false)) {
+         auto *callback = wl_surface_frame(window_layer.surface);
+-        wl_callback_add_listener(callback, &frame_probe_listener, nullptr);
++        wl_callback_add_listener(callback, &frame_probe_listener, pdev);
+     }
+ 
+     // Root surfaces commit once after all layer and input state is ready.
+--- a/hwcomposer/hwcomposer.h
++++ b/hwcomposer/hwcomposer.h
+@@ -73,6 +73,7 @@
+ 
+     std::atomic<bool> vsync_callback_enabled;
+     std::atomic<int64_t> last_vsync_ns {0};
++    std::atomic<int64_t> last_callback_ns {0};
+     std::atomic<int64_t> observed_period_ns {0};
+     waydroid_manager::RefreshEstimator refresh_estimator;
+ 

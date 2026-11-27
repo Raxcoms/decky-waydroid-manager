@@ -250,6 +250,10 @@
     {
       "project": "hardware/waydroid",
       "file": "android/hwc/diagnostic-frame-callback.patch"
+    },
+    {
+      "project": "hardware/waydroid",
+      "file": "android/hwc/diagnostic-callback-clock.patch"
     }
   ]
 }
