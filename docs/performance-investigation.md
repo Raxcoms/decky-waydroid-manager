@@ -164,6 +164,27 @@ another updating layer can conceal a repeated game image. Do not equate its
 repeat count with missed game frames. Audio remained around 1.6 to 1.7% of one
 CPU core during these tests.
 
+### Input activity and capture overhead
+
+One 30-second test showed the input monitor using about 24 to 29% of one core
+for the same 16 seconds that Gamescope reported roughly 60 FPS. Both recovered
+at the same time. This is a correlation, not proof of a CPU bottleneck. The
+monitor was reacting to unrelated udev changes and rescanning input devices.
+
+Commit `54d4e65` filters those changes while preserving controller publication and
+process-exit notifications. The Linux tests and CI passed. On Nova, the
+controller node was present and a subsequent one-minute game sample showed the
+monitor near idle, audio around 2% of one core, and MangoHUD averaging about
+8.35 ms. A cold-start observation also recorded bursts of unrelated events
+without renewed monitor activity. Further device and hotplug testing is needed.
+
+For a lower-overhead comparison, the same animated game result screen was
+captured for 65 seconds with only the physical-output checksum enabled, then
+with MangoHUD logging and the Gamescope query also enabled. The two captures had
+27 and 23 repeated complete-output checksums respectively. This does not isolate
+the game plane, but does not support blaming the logging for the variation in
+that comparison.
+
 ### Release pacing change
 
 Nova has no `/dev/sw_sync`, so the HWC cannot provide its usual release fence.
@@ -183,6 +204,13 @@ test, waiting averaged 10.0 ms while disabling the wait averaged 8.34 ms, though
 Gamescope still reported longer intervals in both cases. The wait can therefore
 slow Android to the compositor release cadence and has been removed from the
 production build. Buffer ownership without `/dev/sw_sync` remains unresolved.
+
+A later diagnostic kept two or three replacement records before waiting. The
+first three-record version stalled because it waited on a later use of the same
+buffer. Tracking the release generation removed that severe stall, but another
+30-second sample still contained a prolonged slowdown while input-monitor CPU
+was high. A two-record sample at 14 FPS respected the cap. Neither experiment
+establishes safe ownership or a general pacing fix, and neither is in production.
 
 ### Remaining work
 
