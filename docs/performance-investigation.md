@@ -144,6 +144,26 @@ ship the asynchronous path until ownership and synchronization are proven on
 supported image and compositor combinations. The experiment does not force
 Steam composition or copy frames.
 
+### Clock-aligned Android and host trace
+
+On Nova, ftrace uses `CLOCK_BOOTTIME` while the Gamescope sampling process uses
+`CLOCK_MONOTONIC`. After suspend these clocks differ by hours. Convert the trace
+timestamps using the current clock offset before correlating events; do not
+assume their raw timestamps share a clock.
+
+With the clocks aligned, a 15-second title-screen trace found about 120 game
+`eglSwapBuffers` calls and 120 Android HWC present calls per second, while the
+Gamescope app query reported roughly 79 to 109 events per second. A second trace
+on the verified stage-selection screen showed the same pattern for most of the
+capture. These measurements locate the discrepancy after Android frame
+production, but the Gamescope query is not independent proof of scanout.
+
+In a separate one-minute title-screen sample, 392 of 7,203 sampled physical
+vblanks had a repeated complete-output CRC. The CRC includes every plane, so
+another updating layer can conceal a repeated game image. Do not equate its
+repeat count with missed game frames. Audio remained around 1.6 to 1.7% of one
+CPU core during these tests.
+
 ### Release pacing change
 
 Nova has no `/dev/sw_sync`, so the HWC cannot provide its usual release fence.
