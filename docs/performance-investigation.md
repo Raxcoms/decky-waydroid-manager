@@ -207,10 +207,15 @@ production build. Buffer ownership without `/dev/sw_sync` remains unresolved.
 
 A later diagnostic kept two or three replacement records before waiting. The
 first three-record version stalled because it waited on a later use of the same
-buffer. Tracking the release generation removed that severe stall, but another
-30-second sample still contained a prolonged slowdown while input-monitor CPU
-was high. A two-record sample at 14 FPS respected the cap. Neither experiment
-establishes safe ownership or a general pacing fix, and neither is in production.
+buffer. Tracking release generations removed that severe stall, but did not make
+the method reliable. In a matched comparison with input filtering active, the
+no-wait sample averaged 8.33 ms in MangoHUD; the two-record wait averaged
+11.08 ms and produced a prolonged 60 FPS period. Do not ship this queue.
+
+Another diagnostic counted uses of the same buffer while it was still marked
+in use. The path did not occur in the sampled title or gameplay runs, so the
+missing damage notification on that path does not explain these captures. The
+underlying ownership issue without `/dev/sw_sync` remains unresolved.
 
 ### Remaining work
 
