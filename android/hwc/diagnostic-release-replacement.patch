@@ -1,0 +1,66 @@
+--- a/hwcomposer/wayland-hwc.h
++++ b/hwcomposer/wayland-hwc.h
+@@ -152,6 +152,7 @@
+ void track_buffer_release(buffer *buf, struct display *owner);
+ void release_display_buffers(struct display *owner);
+ void buffer_released(struct wl_buffer *wl_buffer);
++void queue_buffer_release(struct display *owner, unsigned id);
+ bool wait_buffer_releases(const std::vector<std::pair<struct wl_buffer *, unsigned>> &buffers, int64_t timeout_ns);
+ void retire_buffers(struct display *d);
+ void purge_retired_buffers(struct display *d);
+--- a/hwcomposer/wayland-hwc.cpp
++++ b/hwcomposer/wayland-hwc.cpp
+@@ -111,6 +111,17 @@
+     if (pending && buf->release_timeline >= 0)
+         sw_sync_timeline_inc(buf->release_timeline, pending);
+     release_condition.notify_all();
++}
++
++void queue_buffer_release(struct display *owner, unsigned id) {
++    if (!id) return;
++    std::lock_guard<std::mutex> lock(release_mutex);
++    for (const auto &[proxy, buf] : released_buffers) {
++        if (buf->id == id && buf->release_timeline < 0 && buf->release_state.in_use()) {
++            owner->submitted_buffers.emplace_back(proxy, id);
++            return;
++        }
++    }
+ }
+ 
+ bool wait_buffer_releases(const std::vector<std::pair<struct wl_buffer *, unsigned>> &buffers, int64_t timeout_ns) {
+--- a/hwcomposer/hwcomposer.cpp
++++ b/hwcomposer/hwcomposer.cpp
+@@ -557,6 +557,8 @@
+         // Only the primary display owns the shared EGL copy worker.
+         if (buf->isShm)
+             pdev->gralloc_handler.update_shm_buffer(pdev->display, buf);
++        if (surface_context.attached != buf->id && property_get_bool("waydroid.wait_release", false))
++            queue_buffer_release(display, surface_context.attached);
+         surface_context.attach_buffer(*buf);
+         apply_surface_damage(hwc_layer, surface_context);
+     }
+@@ -621,8 +623,6 @@
+     if (window_layer.subsurface)
+         wl_surface_commit(window_layer.surface);
+ 
+-    if (buf->release_timeline < 0 && property_get_bool("waydroid.wait_release", false))
+-        pdev->display->submitted_buffers.emplace_back(buf->wl_buffer, buf->id);
+     window->last_layer_buffer = buf;
+ 
+     // Snapshot buffer should be detached by now, clean up
+@@ -732,7 +732,6 @@
+     mode->setup_set(pdev, contents);
+ 
+     std::unique_lock lock(pdev->display->windowsMutex);
+-    auto previous_buffers = std::move(pdev->display->submitted_buffers);
+     pdev->display->submitted_buffers.clear();
+     mode->cleanup_stale_windows(pdev, contents);
+ 
+@@ -763,6 +762,7 @@
+     }
+     wl_display_flush(pdev->display->display);
+     trace_event(1);
++    auto previous_buffers = std::move(pdev->display->submitted_buffers);
+     if (!previous_buffers.empty() && property_get_bool("waydroid.wait_release", false)) {
+         lock.unlock();
+         int64_t started = trace_time();
