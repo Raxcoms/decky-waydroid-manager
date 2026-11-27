@@ -109,7 +109,9 @@ class LaunchPolicyTests(unittest.TestCase):
         self.launch_result = None
         self.permission_activities = {}
         self.permission_queries = []
-        self.policy = LaunchPolicy(self.run_android, lambda: self.guest)
+        self.now = 0.0
+        self.policy = LaunchPolicy(self.run_android, lambda: self.guest, clock=lambda: self.now,
+                                   sleep=lambda delay: setattr(self, "now", self.now + delay))
 
     def run_android(self, command, **kwargs):
         args = command[3:]
@@ -236,6 +238,35 @@ class LaunchPolicyTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "did not confirm"):
                     self.policy.present("example.app")
 
+    def test_timed_out_splash_succeeds_only_after_the_result_activity_is_drawn(self):
+        self.launch_result = "Status: timeout\nActivity: example.app/.MainActivity"
+        self.policy.display_ready = Mock(side_effect=[False, True])
+        self.policy.save("app")
+        self.policy.present("example.app")
+        self.assertEqual(self.policy.display_ready.call_args_list,
+                         [unittest.mock.call("0", activity=None, package="example.app")] * 2)
+
+    def test_timed_out_launch_stops_waiting_when_the_guest_changes(self):
+        self.launch_result = "Status: timeout\nActivity: example.app/.MainActivity"
+        self.policy.save("app")
+
+        def changed(*args, **kwargs):
+            self.guest = (101, "replacement")
+            return False
+
+        self.policy.display_ready = Mock(side_effect=changed)
+        with self.assertRaisesRegex(RuntimeError, "did not confirm"):
+            self.policy.present("example.app")
+        self.policy.display_ready.assert_called_once()
+
+    def test_timed_out_foreign_activity_does_not_use_the_drawn_fallback(self):
+        self.launch_result = "Status: timeout\nActivity: other.app/.Activity"
+        self.policy.display_ready = Mock(return_value=True)
+        self.policy.save("app")
+        with self.assertRaisesRegex(RuntimeError, "did not confirm"):
+            self.policy.present("example.app")
+        self.policy.display_ready.assert_not_called()
+
     def test_system_permission_review_keeps_the_launch_and_prompt_visible(self):
         self.permission_activities["android.intent.action.REVIEW_PERMISSIONS"] = "system.permissions/system.permissions.ReviewActivity"
         self.launch_result = "Status: ok\nActivity: system.permissions/.ReviewActivity"
@@ -245,6 +276,16 @@ class LaunchPolicyTests(unittest.TestCase):
         self.assertIn("--user", self.permission_queries[0])
         # MATCH_SYSTEM_ONLY keeps installed apps out of permission-controller resolution.
         self.assertEqual(self.permission_queries[0][-4:], ["--query-flags", "1048576", "-a", "android.intent.action.REVIEW_PERMISSIONS"])
+
+    def test_timed_out_permission_prompt_must_be_drawn_before_showing_it(self):
+        self.permission_activities["android.intent.action.REVIEW_PERMISSIONS"] = "system.permissions/.ReviewActivity"
+        self.launch_result = "Status: timeout\nActivity: system.permissions/.ReviewActivity"
+        self.policy.display_ready = Mock(return_value=True)
+        self.policy.save("app")
+        self.policy.present("example.app")
+        self.policy.display_ready.assert_called_once_with(
+            "0", activity="system.permissions/.ReviewActivity", package=None)
+        self.assertEqual(self.writes[-1], ["setprop", "waydroid.active_apps", "Waydroid"])
 
     def test_runtime_permission_prompt_uses_the_system_handler_for_this_image(self):
         self.permission_activities["android.content.pm.action.REQUEST_PERMISSIONS"] = "vendor.permissions/.GrantActivity"
@@ -265,6 +306,23 @@ class LaunchPolicyTests(unittest.TestCase):
         self.policy.save("app")
         self.policy.present("example.app")
         self.assertEqual(self.permission_queries, [])
+
+    def test_activity_readiness_requires_matching_visible_drawn_activity(self):
+        output = """Display #0 (activities):
+ topResumedActivity=ActivityRecord{new u0 example.app/.MainActivity} t99}
+ * Hist #0: ActivityRecord{new u0 example.app/.MainActivity} t99}
+   reportedDrawn=true reportedVisible=true
+"""
+        self.policy.run = Mock(return_value=output)
+        self.assertTrue(self.policy.display_ready("0", "example.app/example.app.MainActivity"))
+        self.assertFalse(self.policy.display_ready("0", "other.app/.MainActivity"))
+        self.assertFalse(self.policy.display_ready("0", "bad-component"))
+        self.assertTrue(self.policy.display_ready("0", package="example.app"))
+        self.assertFalse(self.policy.display_ready("0", package="other.app"))
+        self.policy.run.return_value = output.replace("reportedVisible=true", "reportedVisible=false")
+        self.assertFalse(self.policy.display_ready("0", "example.app/.MainActivity"))
+        self.policy.run.return_value = output.replace("reportedDrawn=true", "reportedDrawn=false")
+        self.assertFalse(self.policy.display_ready("0", "example.app/.MainActivity"))
 
     def test_external_display_readiness_requires_its_resumed_activity_to_be_drawn(self):
         output = """Display #7 (activities):

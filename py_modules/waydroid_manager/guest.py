@@ -124,8 +124,12 @@ def set_media_volume_max(run) -> None:
 
 
 class LaunchPolicy:
-    def __init__(self, run, identify):
+    ACTIVITY_DRAW_TIMEOUT = 10.0
+    ACTIVITY_CHECK_INTERVAL = 0.25
+
+    def __init__(self, run, identify, clock=time.monotonic, sleep=time.sleep):
         self.run, self.identify = run, identify
+        self.clock, self.sleep = clock, sleep
         self.saved = None
 
     def android(self, *args: str, timeout: int = 5) -> str:
@@ -185,12 +189,19 @@ class LaunchPolicy:
         if re.search(r"^Error:", output, re.MULTILINE):
             raise RuntimeError(output.strip())
         activity = re.search(r"^Activity:\s+(\S+)", output, re.MULTILINE)
-        confirmed = bool(re.search(r"^Status:\s+ok\s*$", output, re.MULTILINE) and activity)
-        if confirmed and package and not activity[1].startswith(package + "/"):
-            confirmed = self._permission_activity(activity[1])
-            if confirmed:
-                # Permission screens belong to Android, outside the app's task crop.
-                self.android("setprop", "waydroid.active_apps", "Waydroid")
+        status = re.search(r"^Status:\s+(ok|timeout)\s*$", output, re.MULTILINE)
+        permission = False
+        allowed = bool(activity and status)
+        if allowed and package and not activity[1].startswith(package + "/"):
+            permission = self._permission_activity(activity[1])
+            allowed = permission
+        confirmed = allowed and status[1] == "ok"
+        if allowed and package and status[1] == "timeout":
+            # A splash activity can time out after handing off to the real app.
+            confirmed = self._wait_for_activity(display, activity[1] if permission else None,
+                                                None if permission else package)
+        if confirmed and permission:
+            self.android("setprop", "waydroid.active_apps", "Waydroid")
         if not confirmed:
             logging.getLogger(__name__).warning("Android launch did not confirm %s on display %s: %s",
                                               package or "Home", display, output.strip() or "no activity result")
@@ -220,20 +231,36 @@ class LaunchPolicy:
                 return [*intent, "-n", component, "--activity-reset-task-if-needed"]
         raise RuntimeError(f"Android has no launch activity for {package}")
 
-    def display_ready(self, display: str) -> bool:
+    def _wait_for_activity(self, display: str, activity: str | None, package: str | None) -> bool:
+        deadline = self.clock() + self.ACTIVITY_DRAW_TIMEOUT
+        while self.saved and self.identify() == self.saved[0]:
+            if self.display_ready(display, activity=activity, package=package):
+                return True
+            remaining = deadline - self.clock()
+            if remaining <= 0:
+                break
+            self.sleep(min(self.ACTIVITY_CHECK_INTERVAL, remaining))
+        return False
+
+    def display_ready(self, display: str, activity: str | None = None, package: str | None = None) -> bool:
         output = self.android("dumpsys", "activity", "activities")
         displays = re.split(r"^Display #(\d+).*?$", output, flags=re.MULTILINE)
         for index in range(1, len(displays), 2):
             if displays[index] != display:
                 continue
             block = displays[index + 1]
-            task = re.search(r"topResumedActivity=ActivityRecord\{(\S+)", block)
+            task = re.search(r"topResumedActivity=ActivityRecord\{(\S+)\s+u\d+\s+([A-Za-z0-9_.]+/[A-Za-z0-9_.$]+)", block)
             if task is None:
+                return False
+            expected = expanded_component(activity) if activity else None
+            if activity and (not expected or expanded_component(task[2]) != expected):
+                return False
+            if package and not task[2].startswith(package + "/"):
                 return False
             records = re.split(r"^\s*\* Hist\s+#\d+:\s*", block, flags=re.MULTILINE)
             record = next((record for record in records[1:]
                            if record.startswith(f"ActivityRecord{{{task[1]} ")), "")
-            return "reportedDrawn=true" in record
+            return "reportedDrawn=true" in record and (not (activity or package) or "reportedVisible=true" in record)
         return False
 
 
