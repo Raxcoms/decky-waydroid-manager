@@ -1,0 +1,174 @@
+--- a/hwcomposer/hwcomposer.cpp
++++ b/hwcomposer/hwcomposer.cpp
+@@ -17,6 +17,7 @@
+ 
+ #include "hwcomposer.h"
+ #include "frame_clock.h"
++#include "buffer_cache.h"
+ 
+ #include <errno.h>
+ #include <pthread.h>
+@@ -35,6 +36,7 @@
+ #include <log/log.h>
+ #include <cutils/properties.h>
+ #include <hardware/hwcomposer.h>
++#include <ui/BufferQueueDefs.h>
+ #include <libsync/sw_sync.h>
+ #include <sync/sync.h>
+ #include <drm_fourcc.h>
+@@ -92,7 +94,7 @@
+             const auto &buf = it->second;
+             bool same_storage = buf->isShm || buf->backing.matches(handle->data, handle->numFds, handle->numInts);
+             if (!same_storage || buf->metadata != metadata ||
+-                    (buf->in_use() && (buf->id != attached || buf->isShm))) {
++                    (buf->in_use() && (buf->release_timeline < 0 || buf->id != attached || buf->isShm))) {
+                 display->retired_buffers.push_back(std::move(it->second));
+                 display->buffer_map.erase(it);
+             } else {
+@@ -138,7 +140,21 @@
+             buf = emplace_result.first->second.get();
+         }
+ 
++        buf->cache_stamp = ++display->buffer_cache_sequence;
+         return buf;
++    }
++
++    void trim_import_cache(display *display, size_t layers, const window *external = nullptr) {
++        const size_t limit = std::max<size_t>(layers, 1) * android::BufferQueueDefs::NUM_BUFFER_SLOTS;
++        waydroid_manager::trim_buffer_cache(display->buffer_map, limit, [&](buffer &candidate) {
++            if (candidate.in_use() || (external && external->last_layer_buffer == &candidate))
++                return false;
++            for (const auto &entry : display->windows) {
++                if (entry.second->last_layer_buffer == &candidate)
++                    return false;
++            }
++            return true;
++        });
+     }
+ 
+     std::string property_get_string(const char *key, const char *default_value) {
+@@ -498,9 +514,6 @@
+     window *win = pdev->ext_window.get();
+ 
+     purge_retired_buffers(d);
+-    if (contents->flags & HWC_GEOMETRY_CHANGED)
+-        retire_buffers(d);
+-
+     bool shown = d->connected && show_external(pdev, pdev->ext_active);
+ 
+     for (size_t i = 0; i < contents->numHwLayers; i++) {
+@@ -523,6 +536,7 @@
+     }
+     if (d->connected)
+         wl_display_flush(d->display);
++    trim_import_cache(d, contents->numHwLayers, win);
+ }
+ 
+ // Without a framebuffer target this set's timeline point stands in.
+@@ -561,10 +575,6 @@
+         return 0;
+     }
+ 
+-    if (contents->flags & HWC_GEOMETRY_CHANGED) {
+-        retire_buffers(pdev->display);
+-    }
+-
+     auto& mode = pdev->selected_mode;
+     mode->setup_set(pdev, contents);
+ 
+@@ -597,6 +607,7 @@
+         wl_surface_commit(window->surface);
+     }
+     wl_display_flush(pdev->display->display);
++    trim_import_cache(pdev->display, contents->numHwLayers);
+ 
+     sw_sync_timeline_inc(pdev->timeline_fd, 1);
+     ++pdev->next_sync_point;
+--- a/hwcomposer/wayland-hwc.cpp
++++ b/hwcomposer/wayland-hwc.cpp
+@@ -104,19 +104,22 @@
+     if (it == released_buffers.end())
+         return;
+     buffer *buf = it->second;
+-    if (buf->released_point < buf->release_point) {
+-        sw_sync_timeline_inc(buf->release_timeline, buf->release_point - buf->released_point);
+-        buf->released_point = buf->release_point;
+-    }
++    unsigned pending = buf->release_state.release();
++    if (pending && buf->release_timeline >= 0)
++        sw_sync_timeline_inc(buf->release_timeline, pending);
+ }
+ 
+ int buffer::next_release_fence() {
+     std::lock_guard<std::mutex> lock(release_mutex);
+-    if (release_timeline < 0 || (owner && !owner->connected))
++    if (owner && !owner->connected)
+         return -1;
+-    int fence = sw_sync_fence_create(release_timeline, "wl_buffer_release", release_point + 1);
++    if (release_timeline < 0) {
++        release_state.submit();
++        return -1;
++    }
++    int fence = sw_sync_fence_create(release_timeline, "wl_buffer_release", release_state.next_point());
+     if (fence >= 0)
+-        ++release_point;
++        release_state.submit();
+     return fence;
+ }
+ 
+@@ -124,20 +127,21 @@
+     std::lock_guard<std::mutex> lock(release_mutex);
+     if (release_timeline < 0)
+         return -1;
+-    return sw_sync_fence_create(release_timeline, "wl_buffer_release", release_point);
++    return sw_sync_fence_create(release_timeline, "wl_buffer_release", release_state.current_point());
+ }
+ 
+ bool buffer::in_use() {
+     std::lock_guard<std::mutex> lock(release_mutex);
+-    return released_point < release_point;
++    return release_state.in_use();
+ }
+ 
+ void release_display_buffers(struct display *owner) {
+     std::lock_guard<std::mutex> lock(release_mutex);
+     for (auto &[proxy, buf] : released_buffers) {
+-        if (buf->owner == owner && buf->released_point < buf->release_point) {
+-            sw_sync_timeline_inc(buf->release_timeline, buf->release_point - buf->released_point);
+-            buf->released_point = buf->release_point;
++        if (buf->owner == owner) {
++            unsigned pending = buf->release_state.release();
++            if (pending && buf->release_timeline >= 0)
++                sw_sync_timeline_inc(buf->release_timeline, pending);
+         }
+     }
+ }
+--- a/hwcomposer/wayland-hwc.h
++++ b/hwcomposer/wayland-hwc.h
+@@ -29,6 +29,7 @@
+ #pragma once
+ 
+ #include "buffer_backing.h"
++#include "buffer_cache.h"
+ 
+ #include <mutex>
+ #include <cutils/native_handle.h>
+@@ -137,8 +138,8 @@
+ 
+     // Android waits on these before reusing the buffer; they signal on wl_buffer.release
+     int release_timeline = -1;
+-    unsigned release_point = 0;
+-    unsigned released_point = 0;
++    waydroid_manager::BufferReleaseState release_state;
++    uint64_t cache_stamp = 0;
+     unsigned id = 0;
+     struct display *owner = nullptr;
+     int next_release_fence();
+@@ -409,6 +410,7 @@
+     std::map<uint32_t, struct handleExt> layer_handles_ext;
+     struct handleExt target_layer_handle_ext;
+     std::unordered_map<buffer_handle_t, std::unique_ptr<buffer>> buffer_map;
++    uint64_t buffer_cache_sequence = 0;
+     // Replaced buffers the compositor has not released yet
+     std::vector<std::unique_ptr<buffer>> retired_buffers;
+     int retire_fence = -1;

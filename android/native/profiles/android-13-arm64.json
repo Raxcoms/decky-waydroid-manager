@@ -234,6 +234,10 @@
     {
       "project": "system/tools/hidl",
       "file": "android/native/host-tools.patch"
+    },
+    {
+      "project": "hardware/waydroid",
+      "file": "android/hwc/buffer-cache.patch"
     }
   ]
 }
