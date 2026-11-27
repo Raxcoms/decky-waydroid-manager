@@ -238,6 +238,10 @@
     {
       "project": "hardware/waydroid",
       "file": "android/hwc/buffer-cache.patch"
+    },
+    {
+      "project": "hardware/waydroid",
+      "file": "android/hwc/diagnostic-limiter.patch"
     }
   ]
 }
