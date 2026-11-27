@@ -254,6 +254,22 @@ class DisplayFrameLimitTests(unittest.TestCase):
         self.assertEqual(limiter.sync(144, force=True), 144)
         self.assertEqual(self.writes, [(967, 3)])
 
+    def test_policy_check_does_not_reset_an_equivalent_mode(self):
+        now = 0.0
+        dump = display_dump(88).replace("id=88, hwcId=88, resolution=1280x800, refreshRate=60.00",
+                                        "id=88, hwcId=88, resolution=1280x800, refreshRate=144.00")
+
+        def android(*args):
+            if args == ("dumpsys", "SurfaceFlinger", "--displays"):
+                return dump
+            return self.android(*args)
+
+        limiter = DisplayFrameLimiter(android, clock=lambda: now)
+        limiter.sync(144, force=True)
+        now = DisplayFrameLimiter.POLICY_CHECK_INTERVAL + 1
+        limiter.sync(144)
+        self.assertEqual(self.writes, [(967, 3)])
+
     def test_equal_refresh_at_different_resolution_is_not_equivalent(self):
         dump = display_dump(88).replace("id=88, hwcId=88, resolution=1280x800, refreshRate=60.00",
                                         "id=88, hwcId=88, resolution=640x400, refreshRate=144.00")

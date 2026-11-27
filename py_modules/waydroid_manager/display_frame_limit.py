@@ -79,7 +79,7 @@ class DisplayFrameLimiter:
         if self.original is None:
             self.original = modes.display, modes.active
         target = modes.display, selected
-        if force or self.applied != target or modes.active != selected:
+        if force or self.applied != target or not modes.matches(modes.active, selected):
             self.set_mode(*target)
             self.applied = target
             if force and not modes.matches(modes.active, selected):
