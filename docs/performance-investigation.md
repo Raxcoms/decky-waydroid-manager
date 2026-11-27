@@ -100,7 +100,11 @@ query and was not merged. A separate earlier-vsync experiment, with synchronized
 Wayland feedback, was built as `9756f60` but has not been measured because Nova
 disconnected. At 120 FPS, the latest 30-second trace had 78 discarded
 presentation-feedback events among 3,485 Android submissions; longer acquire
-waits coincided with the worst intervals.
+waits coincided with the worst intervals. Pairing feedback with submissions in
+arrival order, 60 of the 78 discards followed commits within 4 ms of the next
+measured vblank; commits with more margin were usually presented. Feedback may
+arrive out of order, so this pairing is an indication to test rather than proof
+of individual frame causality.
 
 The test initially tried every native-handle file descriptor, including a
 metadata memfd. A short ioctl trace showed that importing the metadata failed.
