@@ -9,8 +9,9 @@ fix for the issues below.
 - Branch: `fix/install-startup`. The audio accounting change is in `366e060`;
   its CI build integration is in `573b689`.
 - CI run [45932852257](https://github.com/Raxcoms/decky-waydroid-manager/actions/runs/45932852257)
-  passed for `c6d35f3`, which contains the buffer-cache fix. Nova is restored
-  to that build and the plugin has been reloaded after the timing experiment.
+  passed for `c6d35f3`, which contains the buffer-cache fix. Nova is using a
+  temporary diagnostic during the current tests. Restore a verified working
+  build from `fix/install-startup` and reload it after testing.
 - The temporary timing and logging experiments are on `fix/phase-test`, not the
   working branch. They contain a Nova-specific test value and must not be merged
   as a production solution. `fix/audio-loop` also contains diagnostic work.
@@ -112,6 +113,28 @@ these separate captures. This does not support shipping the phase adjustment.
 The audio service averaged about 1.9% of one CPU core during the test; longer
 validation is still required.
 
+A later one-minute capture matched Android game-buffer timestamps with physical
+vblank. The game averaged 8.3334 ms between ready buffers and the panel averaged
+8.3309 ms between refreshes. The buffer timing drifted through the display cycle;
+MangoHUD variation was higher in part of that cycle. This is a correlation, not
+proof that the refresh mismatch alone causes the wobble.
+
+Two nominal-clock captures and two measured-clock captures produced mixed results.
+One measured-clock sample had a prolonged drop in compositor presentations, but
+the repeat did not. A callback-aligned clock also showed the prolonged drop, and
+it continued after the alignment was disabled. Do not ship either diagnostic as
+a fix on this evidence. Gamescope frame callbacks arrived about 2 ms before the
+next measured vblank in one run. A hardware scanout checksum changed on nearly
+every refresh in a separate sample, but includes all planes and cannot establish
+the game layer's motion independently.
+
+An asynchronous acquire-fence test reduced the average HWC wait from about
+0.8 ms to 0.007 ms and reduced discarded presentation feedback in a paired run.
+MangoHUD variation was similar. The test still lacks a safe release fence and
+must not be shipped as a complete synchronization solution. An experimental
+Vulkan bridge blocked while exporting a fence for a future release point, so it
+cannot provide the required fence before the Android present call returns.
+
 The test initially tried every native-handle file descriptor, including a
 metadata memfd. A short ioctl trace showed that importing the metadata failed.
 The revised test imports only the image planes already identified by the Cros
@@ -211,6 +234,10 @@ Relevant implementation: `py_modules/waydroid_manager/display_frame_limit.py`,
 and `main.py`.
 
 The duplicate-mode warning was traced to equivalent Android modes with different
-IDs. Commit `0259c8c` accepts matching resolution and refresh rate and adds
+IDs. A later policy-check fix avoids repeatedly requesting an equivalent mode
+when Android retains a different ID. Nova reported matching IDs in the latest
+test, so this does not explain its slowdown.
+
+Commit `0259c8c` accepts matching resolution and refresh rate and adds
 tests. Two Nova cold launches then succeeded without the warning. This does not
 by itself establish the cause of every intermittent activity timeout.
