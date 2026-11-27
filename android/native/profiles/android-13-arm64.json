@@ -256,6 +256,10 @@
     {
       "project": "hardware/waydroid",
       "file": "android/hwc/diagnostic-frames.patch"
+    },
+    {
+      "project": "hardware/interfaces",
+      "file": "android/hwc/adapter-geometry.patch"
     }
   ]
 }

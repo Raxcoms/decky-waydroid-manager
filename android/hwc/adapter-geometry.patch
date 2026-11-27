@@ -1,0 +1,11 @@
+--- a/graphics/composer/2.1/utils/hwc2on1adapter/HWC2On1Adapter.cpp
++++ b/graphics/composer/2.1/utils/hwc2on1adapter/HWC2On1Adapter.cpp
+@@ -1974,6 +1974,8 @@
+ }
+ 
+ Error HWC2On1Adapter::Layer::setCompositionType(Composition type) {
++    if (mCompositionType == type)
++        return Error::None;
+     mCompositionType = type;
+     mDisplay.markGeometryChanged();
+     return Error::None;
