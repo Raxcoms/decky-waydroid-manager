@@ -42,11 +42,12 @@
          int64_t ext_period = external_period(pdev);
          primary.deadline(now, period);
          bool external_vsync = pdev->ext_display && pdev->ext_display->connected &&
-@@ -289,6 +292,11 @@
+@@ -289,7 +292,11 @@
          if (pdev->ext_display && !pdev->ext_display->connected &&
                  pdev->ext_announced.exchange(false) && pdev->procs)
              pdev->procs->hotplug(pdev->procs, HWC_DISPLAY_EXTERNAL, 0);
 -        if (period == pdev->vsync_period_ns)
+-            primary.align(now, pdev->last_vsync_ns.load());
 +        if (waydroid_manager::is_refresh_multiple(pdev->active_period_ns.load(), pdev->vsync_period_ns)) {
 +            int64_t presented = pdev->last_vsync_ns.load();
 +            if (pdev->active_period_ns.load() == pdev->vsync_period_ns && presented > period / 4)
