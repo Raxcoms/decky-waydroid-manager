@@ -35,7 +35,7 @@
 +            trace_detail(12, (same_storage ? 1 : 0) | (buf->metadata == metadata ? 2 : 0) | (in_use ? 4 : 0));
              if (!same_storage || buf->metadata != metadata ||
 -                    (buf->in_use() && (buf->id != attached || buf->isShm))) {
-+                    (in_use && (buf->release_timeline < 0 || buf->id != attached || buf->isShm))) {
++                    (in_use && (buf->id != attached || buf->isShm))) {
                  display->retired_buffers.push_back(std::move(it->second));
                  display->buffer_map.erase(it);
              } else {
@@ -112,20 +112,17 @@
      if (second < 0 || second >= 240 || duration < 0) return;
      auto &slot = trace_buckets[second];
      ++slot.count[kind];
-@@ -638,9 +692,7 @@
+@@ -638,6 +692,7 @@
          return 0;
      }
  
--    if (contents->flags & HWC_GEOMETRY_CHANGED) {
--        retire_buffers(pdev->display);
--    }
 +    trace_detail(13, contents->flags);
- 
-     auto& mode = pdev->selected_mode;
-     mode->setup_set(pdev, contents);
+     if (contents->flags & HWC_GEOMETRY_CHANGED) {
+         retire_buffers(pdev->display);
+     }
 --- a/hwcomposer/wayland-hwc.cpp
 +++ b/hwcomposer/wayland-hwc.cpp
-@@ -98,22 +98,32 @@
+@@ -98,12 +98,17 @@
      released_buffers[buf->wl_buffer] = buf;
  }
  
@@ -141,22 +138,5 @@
      buffer *buf = it->second;
 +    trace_buffer_released(buf->id);
      if (buf->released_point < buf->release_point) {
--        sw_sync_timeline_inc(buf->release_timeline, buf->release_point - buf->released_point);
-+        if (buf->release_timeline >= 0)
-+            sw_sync_timeline_inc(buf->release_timeline, buf->release_point - buf->released_point);
+         sw_sync_timeline_inc(buf->release_timeline, buf->release_point - buf->released_point);
          buf->released_point = buf->release_point;
-     }
- }
- 
- int buffer::next_release_fence() {
-     std::lock_guard<std::mutex> lock(release_mutex);
--    if (release_timeline < 0 || (owner && !owner->connected))
-+    if (owner && !owner->connected)
-         return -1;
-+    if (release_timeline < 0) {
-+        ++release_point;
-+        return -1;
-+    }
-     int fence = sw_sync_fence_create(release_timeline, "wl_buffer_release", release_point + 1);
-     if (fence >= 0)
-         ++release_point;
